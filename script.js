@@ -12,6 +12,7 @@
   const LS_SESSION = "ppr_session_v1";
   const LS_SEQ     = "ppr_seq_v1";
 
+  const GOOGLE_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbyjTZ2bbBi9cdeADomsG90jcLZ1n-ZDLRzyaeDtLNHRLxOcMkE806Oirx_gkLF5WagIrQ/exec";
   const LINE_LABEL = { filling: "Filling", press: "Press" };
 
   /* ---------------- storage helpers ---------------- */
@@ -809,6 +810,14 @@
     // Initialize Google Sheets Integration (async)
     if (window.SheetsIntegration) {
       console.log("🚀 Initializing Google Sheets Integration...");
+
+      if (GOOGLE_WEBAPP_URL && !GOOGLE_WEBAPP_URL.includes("PASTE_WEBAPP_URL_HERE")) {
+        const currentWebhook = window.SheetsIntegration.getWebhookUrl();
+        if (!currentWebhook) {
+          window.SheetsIntegration.setWebhookUrl(GOOGLE_WEBAPP_URL);
+        }
+      }
+
       window.SheetsIntegration.initialize().catch(err => {
         console.error("❌ Failed to initialize Google Sheets:", err);
         toast("⚠️ Tidak dapat terhubung ke Google Sheets, menggunakan data lokal", true);
