@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Login — Laporan Produksi Filling & Press</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="login.css">
+</head>
+<body class="login-body">
+
+<!-- ============ LOGIN SCREEN ============ -->
+<section id="loginScreen" class="login-screen">
+  <div class="login-card">
+    <div class="login-mark">
+      <span class="gear">⚙</span>
+      <div>
+        <p class="eyebrow">Line Report System</p>
+        <h1>Laporan Produksi</h1>
+      </div>
+    </div>
+    <p class="login-sub">Masuk untuk mencatat hasil pengerjaan line Filling &amp; Press.</p>
+    <form id="loginForm" class="login-form" autocomplete="off">
+      <label class="field">
+        <span>Username</span>
+        <input type="text" id="loginUsername" required placeholder="mis. admin / operator">
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input type="password" id="loginPassword" required placeholder="••••••••">
+      </label>
+      <label class="field">
+        <span>Akses sebagai</span>
+        <select id="loginRole">
+          <option value="superuser">Super User</option>
+          <option value="user">User Biasa</option>
+        </select>
+      </label>
+      <p id="loginError" class="form-error" hidden></p>
+      <button type="submit" class="btn btn-primary btn-block">Masuk</button>
+    </form>
+    <div class="login-hint">
+      <p><strong>Demo akun</strong></p>
+      <p>Super User — <code>admin</code> / <code>admin123</code></p>
+      <p>User Biasa — <code>operator</code> / <code>operator123</code></p>
+    </div>
+  </div>
+</section>
+
+<div id="toast"></div>
+
+<script src="login.js"></script>
+</body>
+</html>

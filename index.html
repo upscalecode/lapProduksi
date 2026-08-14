@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Laporan Produksi — Filling &amp; Press</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ============ MAIN APP ============ -->
+<div id="appScreen" class="app-shell">
+
+  <header class="topbar">
+    <div class="brand">
+      <span class="gear">⚙</span>
+      <div>
+        <p class="eyebrow">Line Report System</p>
+        <h1>Laporan Produksi</h1>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="device-date">
+        <span class="label">Tanggal</span>
+        <span id="deviceDateDisplay" class="mono value"></span>
+      </div>
+      <div class="user-chip">
+        <span id="userAvatar" class="avatar">U</span>
+        <div>
+          <span id="userName" class="user-name">—</span>
+          <span id="userRole" class="user-role">—</span>
+        </div>
+      </div>
+      <button id="logoutBtn" class="btn btn-ghost">Keluar</button>
+    </div>
+  </header>
+
+  <nav class="tabbar" id="mainTabbar">
+    <button class="tab-btn active" data-view="filling">FILLING</button>
+    <button class="tab-btn" data-view="press">PRESS</button>
+    <button class="tab-btn" data-view="laporan">LAPORAN</button>
+    <button class="tab-btn" data-view="master" id="masterTabBtn" hidden>KELOLA DATA</button>
+  </nav>
+
+  <main class="content">
+
+    <!-- ===== FILLING & PRESS VIEWS (template rendered twice via JS) ===== -->
+    <section class="view" id="view-filling" data-line="filling">
+      <div class="line-grid">
+        <form class="panel form-panel" id="form-filling" data-line="filling" autocomplete="off">
+          <div class="panel-head">
+            <h2>Input Pengerjaan — Filling</h2>
+            <span class="stamp" id="stamp-filling">ID otomatis</span>
+          </div>
+
+          <input type="hidden" class="f-editing-id" value="">
+
+          <label class="field">
+            <span>Tanggal</span>
+            <input type="text" class="f-tanggal mono" readonly>
+          </label>
+
+          <label class="field">
+            <span>Nama Operator</span>
+            <select class="f-operator" required><option value="">— Pilih Operator —</option></select>
+          </label>
+
+          <label class="field">
+            <span>Nama Produk</span>
+            <select class="f-produk" required><option value="">— Pilih Produk —</option></select>
+          </label>
+
+          <label class="field">
+            <span>Botol yang Digunakan</span>
+            <select class="f-botol" required><option value="">— Pilih Jenis Botol —</option></select>
+          </label>
+
+          <div class="field-row">
+            <label class="field">
+              <span>Qty Botol (Kardus)</span>
+              <input type="number" min="0" step="1" class="f-qty-kardus mono" required placeholder="0">
+            </label>
+            <label class="field">
+              <span>Qty Pengerjaan (Kardus)</span>
+              <input type="number" min="0" step="1" class="f-qty-botol mono" required placeholder="0">
+            </label>
+          </div>
+
+          <label class="field field-total">
+            <span>Total Qty Botol (otomatis)</span>
+            <input type="text" class="f-total mono" readonly value="0">
+          </label>
+
+          <div class="divider"><span>Data Kerusakan</span></div>
+
+          <label class="field">
+            <span>Botol yang Pecah (jenis)</span>
+            <select class="f-botol-pecah"><option value="">— pilih jenis —</option></select>
+          </label>
+
+          <label class="field">
+            <span>Qty Botol yang Pecah</span>
+            <input type="number" min="0" step="1" class="f-qty-pecah mono" placeholder="0" value="0">
+          </label>
+
+          <p class="form-error f-error" hidden></p>
+
+          <div class="form-actions">
+            <button type="submit" class="btn btn-primary f-submit-btn">+ Tambah List</button>
+            <button type="button" class="btn btn-ghost f-cancel-btn" hidden>Reset Input</button>
+          </div>
+        </form>
+
+        <div class="panel table-panel">
+          <div class="panel-head">
+            <h2>Daftar Pengerjaan — Filling</h2>
+            <button type="button" class="btn btn-secondary f-export-btn">⭳ Simpan / Export CSV</button>
+          </div>
+
+          <div class="search-bar">
+            <label class="field field-inline">
+              <span>Cari Operator</span>
+              <select class="f-search-operator"><option value="">Semua operator</option></select>
+            </label>
+            <label class="field field-inline">
+              <span>Cari Tanggal</span>
+              <input type="date" class="f-search-date">
+            </label>
+            <button type="button" class="btn btn-ghost f-search-reset">Reset</button>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>ID</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th>
+                  <th>Kardus</th><th>Btl/Kardus</th><th>Total Qty</th><th>Pecah</th><th>Qty Pecah</th><th>Aksi</th>
+                </tr>
+              </thead>
+              <tbody class="f-tbody"><tr><td colspan="11" class="empty-row">Belum ada data.</td></tr></tbody>
+            </table>
+          </div>
+          <p class="table-summary f-summary"></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-press" data-line="press" hidden></section>
+
+    <!-- ===== LAPORAN VIEW ===== -->
+    <section class="view" id="view-laporan" hidden>
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Laporan Hasil Pengerjaan</h2>
+        </div>
+        <div class="search-bar">
+          <label class="field field-inline">
+            <span>Line</span>
+            <select id="lap-line">
+              <option value="all">Semua Line</option>
+              <option value="filling">Filling</option>
+              <option value="press">Press</option>
+            </select>
+          </label>
+          <label class="field field-inline">
+            <span>Operator</span>
+            <select id="lap-operator"><option value="">Semua operator</option></select>
+          </label>
+          <label class="field field-inline">
+            <span>Dari Tanggal</span>
+            <input type="date" id="lap-start">
+          </label>
+          <label class="field field-inline">
+            <span>Sampai Tanggal</span>
+            <input type="date" id="lap-end">
+          </label>
+          <button type="button" class="btn btn-primary" id="lap-generate">Buat Laporan</button>
+        </div>
+
+        <div id="lap-result" class="report-block" hidden>
+          <div class="report-head">
+            <div>
+              <p class="eyebrow">Laporan Produksi</p>
+              <h3 id="lap-id" class="mono stamp stamp-lg">—</h3>
+            </div>
+            <div class="report-meta">
+              <p>Dibuat: <span id="lap-created" class="mono"></span></p>
+              <p>Oleh: <span id="lap-by" class="mono"></span></p>
+              <p>Periode: <span id="lap-period" class="mono"></span></p>
+            </div>
+          </div>
+
+          <div class="report-stats">
+            <div class="stat"><span class="stat-value" id="lap-total-entries">0</span><span class="stat-label">Total Entri</span></div>
+            <div class="stat"><span class="stat-value" id="lap-total-kardus">0</span><span class="stat-label">Total Kardus</span></div>
+            <div class="stat"><span class="stat-value" id="lap-total-qty">0</span><span class="stat-label">Total Qty Botol</span></div>
+            <div class="stat"><span class="stat-value" id="lap-total-pecah">0</span><span class="stat-label">Total Botol Pecah</span></div>
+          </div>
+
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr><th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th></tr>
+              </thead>
+              <tbody id="lap-tbody"></tbody>
+            </table>
+          </div>
+
+          <div class="form-actions">
+            <button type="button" class="btn btn-secondary" id="lap-export">⭳ Export CSV</button>
+            <button type="button" class="btn btn-ghost" id="lap-print">🖶 Cetak</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== MASTER DATA (SUPERUSER) ===== -->
+    <section class="view" id="view-master" hidden>
+      <div class="line-grid">
+        <div class="panel">
+          <div class="panel-head"><h2>Data Master (Dropdown)</h2></div>
+          <p class="hint-text">Unggah CSV dengan kolom <code>kategori,nilai</code>. Kategori: <code>operator</code>, <code>produk</code>, <code>botol</code>, <code>botolpecah</code>.</p>
+          <label class="btn btn-secondary file-btn">
+            ⭳ Unggah CSV Master
+            <input type="file" id="masterCsvInput" accept=".csv" hidden>
+          </label>
+          <button type="button" class="btn btn-ghost" id="masterCsvExport">⭳ Unduh CSV Master</button>
+
+          <div class="master-cols">
+            <div class="master-col" data-cat="operator"><h3>Operator</h3><div class="chip-list" data-cat="operator"></div><div class="chip-add" data-cat="operator"><input type="text" placeholder="Tambah operator…"><button class="btn btn-ghost">+</button></div></div>
+            <div class="master-col" data-cat="produk"><h3>Produk</h3><div class="chip-list" data-cat="produk"></div><div class="chip-add" data-cat="produk"><input type="text" placeholder="Tambah produk…"><button class="btn btn-ghost">+</button></div></div>
+            <div class="master-col" data-cat="botol"><h3>Botol Digunakan</h3><div class="chip-list" data-cat="botol"></div><div class="chip-add" data-cat="botol"><input type="text" placeholder="Tambah jenis botol…"><button class="btn btn-ghost">+</button></div></div>
+            <div class="master-col" data-cat="botolpecah"><h3>Jenis Botol Pecah</h3><div class="chip-list" data-cat="botolpecah"></div><div class="chip-add" data-cat="botolpecah"><input type="text" placeholder="Tambah jenis…"><button class="btn btn-ghost">+</button></div></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head"><h2>Kelola User</h2></div>
+          <form id="userAddForm" class="user-add-form">
+            <input type="text" id="newUserName" placeholder="Nama" required>
+            <input type="text" id="newUserUsername" placeholder="Username" required>
+            <input type="password" id="newUserPassword" placeholder="Password" required>
+            <select id="newUserRole">
+              <option value="user">User Biasa</option>
+              <option value="superuser">Super User</option>
+            </select>
+            <button type="submit" class="btn btn-primary">+ Tambah User</button>
+          </form>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Nama</th><th>Username</th><th>Role</th><th>Izin</th><th>Aksi</th></tr></thead>
+              <tbody id="userTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ============ PERMISSION MANAGEMENT MODAL ============ -->
+  <div id="permissionModal" class="modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <div class="modal-head">
+        <h3>Atur Izin Pengguna</h3>
+        <button class="btn-close" id="closePermModal">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="permUserInfo" class="perm-user-info"></div>
+        <div class="perm-grid" id="permGrid"></div>
+      </div>
+      <div class="modal-foot">
+        <button class="btn btn-ghost" id="cancelPermModal">Batal</button>
+        <button class="btn btn-primary" id="savePermModal">Simpan Izin</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="sheets-integration.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
