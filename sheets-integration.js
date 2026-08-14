@@ -8,6 +8,7 @@
 
   // Configuration
   const SHEET_ID = "1nrYP9ce2yH9IUjsOOYt90RoTMCoy2WC0CpL5qigO8gE";
+  const DEFAULT_WEBAPP_URL = "PASTE_WEBAPP_URL_HERE";
   const SHEET_NAMES = {
     operator: "Operator",
     produk: "Produk",
@@ -270,7 +271,12 @@
    * Get configured webhook URL
    */
   function getWebhookUrl() {
-    return localStorage.getItem("ppr_webhook_url") || null;
+    const savedUrl = localStorage.getItem("ppr_webhook_url");
+    if (savedUrl) return savedUrl;
+    if (DEFAULT_WEBAPP_URL && !DEFAULT_WEBAPP_URL.includes("PASTE_WEBAPP_URL_HERE")) {
+      return DEFAULT_WEBAPP_URL;
+    }
+    return null;
   }
 
   /**
