@@ -228,7 +228,12 @@
     const stamp = qs(".stamp", form);
 
     if (operator && [...operator.options].some(o => o.value === draft.operator)) operator.value = draft.operator || "";
-    if (produk && [...produk.options].some(o => o.value === draft.produk)) produk.value = draft.produk || "";
+    // if (produk && [...produk.options].some(o => o.value === draft.produk)) produk.value = draft.produk || "";
+    if (produk){
+      produk.value = state.master.produk.includes(draft.produk)
+      ? draft.produk: "";
+    }
+    
     if (botol && [...botol.options].some(o => o.value === draft.botol)) botol.value = draft.botol || "";
     if (qtyKardus) qtyKardus.value = draft.qtyKardus ?? "";
     if (qtyBotol) qtyBotol.value = draft.qtyBotolPerKardus ?? "";
@@ -607,10 +612,27 @@
     if (unique.includes(current)) select.value = current;
   }
 
+  function fillDatalist(datalist, list) {
+    if (!datalist) return;
+
+    const unique = [
+      ...new Set(
+        (list || [])
+          .map(v => String(v).trim())
+          .filter(Boolean)
+      )
+    ];
+
+    datalist.innerHTML = unique
+      .map(value => `<option value="${esc(value)}"></option>`)
+      .join("");
+  }
+
   function refreshAllDropdowns() {
     const m = state.master;
     qsa(".f-operator").forEach(s => fillSelect(s, m.operator, "— pilih operator —"));
-    qsa(".f-produk").forEach(s => fillSelect(s, m.produk, "— pilih produk —"));
+    // qsa(".f-produk").forEach(s => fillSelect(s, m.produk, "— pilih produk —"));
+    fillDatalist(el("produkMasterList"),m.produk);
     qsa(".f-botol").forEach(s => fillSelect(s, m.botol, "— pilih jenis botol —"));
     const botolSelect = document.getElementById("botolDigunakan");
     const pecahInput = document.getElementById("pecah");
@@ -937,6 +959,23 @@
         // botolPecahJenis: qs(".f-botol-pecah", form).value,
         qtyBotolPecah: Number(qtyPecah.value) || 0
       };
+
+      const produkValid = state.master.produk.some(
+        item =>
+          String(item).trim().toLowerCase() ===
+          String(payload.produk).trim().toLowerCase()
+        );
+
+        if (!produkValid) {
+          errorEl.textContent =
+            "Nama Produk tidak ditemukan di Master Data. Silakan pilih produk dari daftar.";
+
+          errorEl.hidden = false;
+
+          qs(".f-produk", form).focus();
+
+          return;
+        }
 
       if (!payload.operator || !payload.produk || !payload.botol ||
           !Number.isFinite(payload.qtyKardus) || payload.qtyKardus < 0 ||
