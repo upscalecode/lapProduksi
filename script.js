@@ -1,828 +1,1909 @@
 /* =========================================================
    Laporan Produksi — script.js
-   Semua data disimpan di localStorage (tanpa reload/server).
+   Frontend Google Sheets + Google Apps Script Web App
+   - login.html terpisah dari index.html
+   - request tanpa custom header / JSON preflight
+   - form input di atas tabel
+   - pagination 20 baris per halaman
    ========================================================= */
+
+// let currentPage = 1;
+// const rowPerPage = 4;
+
+// const passwordInput = document.getElementById("loginPassword");
+// const togglePassword = document.getElementById("togglePassword");
+
+// togglePassword.addEventListener("click", function () {
+//     if (passwordInput.type === "password") {
+//         passwordInput.type = "text";
+//         togglePassword.textContent = "🙈";
+//     } else {
+//         passwordInput.type = "password";
+//         togglePassword.textContent = "👁";
+//     }
+// })
+   
 (function () {
   "use strict";
 
-  /* ---------------- storage keys ---------------- */
-  const LS_USERS   = "ppr_users_v1";
-  const LS_MASTER  = "ppr_master_v1";
-  const LS_ENTRIES = "ppr_entries_v1";
-  const LS_SESSION = "ppr_session_v1";
-  const LS_SEQ     = "ppr_seq_v1";
+  const CONFIG = {
+    URL_KEY: "ppr_apps_script_url_v3",
+    TOKEN_KEY: "ppr_session_token_v3",
+    USER_KEY: "ppr_session_user_v3",
+    MASTER_KEY: "ppr_master_cache_v3",
+    PREVIEW_KEY: "ppr_preview_cache_v4",
+    FORM_DRAFT_KEY: "ppr_form_draft_v4",
+    REQUEST_TIMEOUT: 12000, // gagal lebih cepat jika Apps Script tidak merespons
+    PAGE_SIZE: 20,
 
-  const GOOGLE_WEBAPP_URL = "https://script.google.com/macros/s/AKfycbyjTZ2bbBi9cdeADomsG90jcLZ1n-ZDLRzyaeDtLNHRLxOcMkE806Oirx_gkLF5WagIrQ/exec";
+    // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
+    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbzCqP-jUcWobPQUhhLIqEV2YU6H9cnxzVdnCNQFl0Jni5gzYavSubjqvtM5Qcwk6ic19Q/exec"
+  };
+
   const LINE_LABEL = { filling: "Filling", press: "Press" };
 
-  /* ---------------- storage helpers ---------------- */
-  function lsGet(key, fallback) {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : fallback;
-    } catch (e) { return fallback; }
-  }
-  function lsSet(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
-
-  /* ================= role permissions ================= */
-  const rolePermissions = {
+  // Fallback client-side. Backend tetap menjadi sumber keamanan utama.
+  const ROLE_ACCESS = {
     superuser: {
-      canCreate: true,
-      canUpdateOwn: true,
-      canUpdateOthers: true,
-      canDeleteOwn: true,
-      canDeleteOthers: true,
-      canManageMaster: true,
-      canManageUsers: true
+      filling: true, press: true, report: true, master: true, users: true,
+      viewAllEntries: true, editOwnEntries: true, editAllEntries: true,
+      deleteOwnEntries: true, deleteAllEntries: true
     },
     user: {
-      canCreate: true,
-      canUpdateOwn: true,
-      canUpdateOthers: false,
-      canDeleteOwn: false,  // dapat diubah sesuai konfigurasi
-      canDeleteOthers: false,
-      canManageMaster: false,
-      canManageUsers: false
+      filling: true, press: true, report: false, master: false, users: false,
+      viewAllEntries: false, editOwnEntries: true, editAllEntries: false,
+      deleteOwnEntries: false, deleteAllEntries: false
     }
   };
 
-  /* ---------------- seed defaults ---------------- */
-  function seedIfEmpty() {
-    if (!localStorage.getItem(LS_USERS)) {
-      lsSet(LS_USERS, [
-        { name: "Administrator", username: "admin", password: "admin123", role: "superuser", permissions: rolePermissions.superuser },
-        { name: "User Operator", username: "operator", password: "operator123", role: "user", permissions: rolePermissions.user }
-      ]);
-    } else {
-      // Upgrade existing users dengan permissions jika belum ada
-      const users = lsGet(LS_USERS, []);
-      let updated = false;
-      users.forEach(u => {
-        if (!u.permissions) {
-          u.permissions = rolePermissions[u.role] || rolePermissions.user;
-          updated = true;
-        }
-      });
-      if (updated) lsSet(LS_USERS, users);
-    }
-    if (!localStorage.getItem(LS_MASTER)) {
-      const botolList = ["Botol PET 600ml", "Botol PET 1500ml", "Botol Kaca 620ml"];
-      lsSet(LS_MASTER, {
-        operator: ["Budi Santoso", "Siti Aminah", "Rudi Hartono", "Dewi Lestari"],
-        produk: ["Air Mineral 600ml", "Air Mineral 1500ml", "Sirup Botol 620ml"],
-        botol: botolList,
-        botolpecah: botolList.slice()
-      });
-    }
-    if (!localStorage.getItem(LS_ENTRIES)) lsSet(LS_ENTRIES, []);
-    if (!localStorage.getItem(LS_SEQ)) lsSet(LS_SEQ, {});
-  }
-  seedIfEmpty();
+  const USER_PERMISSION_KEYS = [
+    "filling", "press", "report", "master", "viewAllEntries",
+    "editOwnEntries", "editAllEntries", "deleteOwnEntries", "deleteAllEntries"
+  ];
 
-  /* ---------------- small utils ---------------- */
-  function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+  const pageType = document.body.dataset.page || "app";
+
+  const state = {
+    token: localStorage.getItem(CONFIG.TOKEN_KEY) || "",
+    currentUser: null,
+    master: { operator: [], produk: [], botol: [], botolpecah: [] },
+    entries: [],
+    preview: { filling: [], press: [] },
+    users: [],
+    search: {
+      filling: { operator: "", date: "" },
+      press: { operator: "", date: "" }
+    },
+    pages: { filling: 1, press: 1, laporan: 1 },
+    lastLaporan: null
+  };
+
+  // Antrean tulis: UI tetap instan, request Spreadsheet dikirim satu per satu
+  // agar input cepat berulang tidak saling berebut LockService di Apps Script.
+  let writeQueue = Promise.resolve();
+
+  function enqueueWrite(task) {
+    const run = writeQueue.then(task, task);
+    writeQueue = run.catch(() => {});
+    return run;
+  }
+
+  function makeClientRequestId() {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return window.crypto.randomUUID();
+    }
+    return `client-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+  }
+
+  function el(id) { return document.getElementById(id); }
+  function qs(selector, root = document) { return root.querySelector(selector); }
+  function qsa(selector, root = document) { return Array.from(root.querySelectorAll(selector)); }
+
+  function normalizeRole(role) {
+    return String(role || "user").trim().toLowerCase().replace(/[\s_-]+/g, "") === "superuser"
+      ? "superuser"
+      : "user";
+  }
+
+  function hasAccess(permission) {
+    const user = state.currentUser;
+    if (!user) return false;
+
+    // Gunakan permission dari server bila tersedia.
+    if (user.permissions && typeof user.permissions[permission] === "boolean") {
+      return user.permissions[permission];
+    }
+
+    const role = normalizeRole(user.role);
+    return !!(ROLE_ACCESS[role] && ROLE_ACCESS[role][permission]);
+  }
+
+  function enforceVisibleDefaultTab() {
+    const active = qs("#mainTabbar .tab-btn.active");
+    if (active && !active.hidden) return;
+
+    const firstVisible = qsa("#mainTabbar .tab-btn").find(btn => !btn.hidden);
+    if (!firstVisible) return;
+
+    qsa("#mainTabbar .tab-btn").forEach(btn => btn.classList.toggle("active", btn === firstVisible));
+    qsa(".content > .view").forEach(view => {
+      view.hidden = view.id !== "view-" + firstVisible.dataset.view;
+    });
+  }
+
+  /* ------------------------- LOCAL DRAFT / PREVIEW CACHE ------------------------- */
+  function storageOwner() {
+    const user = state.currentUser;
+    if (user && user.username) return String(user.username).trim().toLowerCase();
+    try {
+      const cached = JSON.parse(localStorage.getItem(CONFIG.USER_KEY) || "null");
+      if (cached && cached.username) return String(cached.username).trim().toLowerCase();
+    } catch (_) {}
+    return "anonymous";
+  }
+
+  function userStorageKey(baseKey) {
+    return `${baseKey}:${storageOwner()}`;
+  }
+
+  function persistPreview() {
+    try {
+      localStorage.setItem(userStorageKey(CONFIG.PREVIEW_KEY), JSON.stringify(state.preview));
+    } catch (err) {
+      console.warn("Gagal menyimpan preview lokal:", err);
+    }
+  }
+
+  function loadPersistedPreview() {
+    try {
+      const raw = localStorage.getItem(userStorageKey(CONFIG.PREVIEW_KEY));
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      if (!saved || typeof saved !== "object") return;
+      state.preview = {
+        filling: Array.isArray(saved.filling) ? saved.filling : [],
+        press: Array.isArray(saved.press) ? saved.press : []
+      };
+    } catch (err) {
+      console.warn("Preview lokal tidak dapat dibaca:", err);
+    }
+  }
+
+  function getFormDrafts() {
+    try {
+      const raw = localStorage.getItem(userStorageKey(CONFIG.FORM_DRAFT_KEY));
+      const parsed = raw ? JSON.parse(raw) : {};
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch (_) {
+      return {};
+    }
+  }
+
+  function saveFormDraft(line, form) {
+    if (!form) return;
+    try {
+      const drafts = getFormDrafts();
+      drafts[line] = {
+        operator: qs(".f-operator", form)?.value || "",
+        produk: qs(".f-produk", form)?.value || "",
+        botol: qs(".f-botol", form)?.value || "",
+        qtyKardus: qs(".f-qty-kardus", form)?.value || "",
+        qtyBotolPerKardus: qs(".f-qty-botol", form)?.value || "",
+        qtyBotolPecah: qs(".f-qty-pecah", form)?.value || "0",
+        editingId: qs(".f-editing-id", form)?.value || "",
+        savedAt: nowIso()
+      };
+      localStorage.setItem(userStorageKey(CONFIG.FORM_DRAFT_KEY), JSON.stringify(drafts));
+    } catch (err) {
+      console.warn("Gagal menyimpan draft form:", err);
+    }
+  }
+
+  function clearFormDraft(line) {
+    try {
+      const drafts = getFormDrafts();
+      delete drafts[line];
+      localStorage.setItem(userStorageKey(CONFIG.FORM_DRAFT_KEY), JSON.stringify(drafts));
+    } catch (_) {}
+  }
+
+  function restoreFormDraft(line) {
+    const section = el("view-" + line);
+    const form = section ? qs(".form-panel", section) : null;
+    if (!form) return;
+    const draft = getFormDrafts()[line];
+    if (!draft) return;
+
+    const operator = qs(".f-operator", form);
+    const produk = qs(".f-produk", form);
+    const botol = qs(".f-botol", form);
+    const qtyKardus = qs(".f-qty-kardus", form);
+    const qtyBotol = qs(".f-qty-botol", form);
+    const qtyPecah = qs(".f-qty-pecah", form);
+    const botolPecah = qs(".f-botol-pecah", form);
+    const total = qs(".f-total", form);
+    const editing = qs(".f-editing-id", form);
+    const submitBtn = qs(".f-submit-btn", form);
+    const cancelBtn = qs(".f-cancel-btn", form);
+    const stamp = qs(".stamp", form);
+
+    if (operator && [...operator.options].some(o => o.value === draft.operator)) operator.value = draft.operator || "";
+    if (produk && [...produk.options].some(o => o.value === draft.produk)) produk.value = draft.produk || "";
+    if (botol && [...botol.options].some(o => o.value === draft.botol)) botol.value = draft.botol || "";
+    if (qtyKardus) qtyKardus.value = draft.qtyKardus ?? "";
+    if (qtyBotol) qtyBotol.value = draft.qtyBotolPerKardus ?? "";
+    if (qtyPecah) qtyPecah.value = draft.qtyBotolPecah ?? "0";
+    if (botolPecah) botolPecah.value = (botol && botol.value) || "-";
+    if (total) total.value = ((Number(qtyKardus?.value) || 0) * (Number(qtyBotol?.value) || 0)).toLocaleString("id-ID");
+
+    // Jika sebelumnya sedang edit preview, pulihkan mode edit hanya bila item masih ada.
+    const editId = draft.editingId || "";
+    const editExists = editId && (state.preview[line] || []).some(item => item.id === editId);
+    if (editing) editing.value = editExists ? editId : "";
+    if (editExists) {
+      if (submitBtn) submitBtn.textContent = "Simpan Perubahan";
+      if (cancelBtn) cancelBtn.hidden = false;
+      if (stamp) stamp.textContent = "EDIT PREVIEW";
+    }
+  }
+
+  function normalizeWebAppUrl(value) {
+    return String(value || "").trim().replace(/\/$/, "");
+  }
+
+  function isValidWebAppUrl(url) {
+    return /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec(?:\?.*)?$/i.test(url);
+  }
+
+  function getWebhookUrl() {
+    return normalizeWebAppUrl(localStorage.getItem(CONFIG.URL_KEY) || CONFIG.WEB_APP_URL || "");
+  }
+
+  function setWebhookUrl(url) {
+    const clean = normalizeWebAppUrl(url);
+    if (!isValidWebAppUrl(clean)) {
+      throw new Error("URL tidak valid. Gunakan URL Web App Apps Script yang berakhir /exec.");
+    }
+    localStorage.setItem(CONFIG.URL_KEY, clean);
+    setConnection("idle", "URL Apps Script tersimpan");
+    return clean;
+  }
+
+  function clearWebhookUrl() {
+    localStorage.removeItem(CONFIG.URL_KEY);
+  }
+
+  function requireWebhookUrl() {
+    const url = getWebhookUrl();
+    if (!url || !isValidWebAppUrl(url)) {
+      throw new Error("URL Apps Script belum benar. Tempel URL deployment Web App /exec pada CONFIG.WEB_APP_URL.");
+    }
+    return url;
+  }
+
+  async function fetchWithTimeout(url, options) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), CONFIG.REQUEST_TIMEOUT);
+    try {
+      return await fetch(url, { ...options, signal: controller.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function parseApiResponse(response) {
+    const text = await response.text();
+    const trimmed = text.trim();
+
+    if (!response.ok) {
+      throw new Error(`Server mengembalikan HTTP ${response.status}.`);
+    }
+    if (!trimmed) {
+      throw new Error("Apps Script tidak mengembalikan data.");
+    }
+    if (/^<!doctype html/i.test(trimmed) || /^<html/i.test(trimmed) || /accounts\.google\.com/i.test(trimmed)) {
+      throw new Error("Apps Script mengembalikan halaman Google, bukan JSON. Deploy sebagai Web App: Execute as = Me dan akses = Anyone.");
+    }
+
+    let data;
+    try {
+      data = JSON.parse(trimmed);
+    } catch (_) {
+      throw new Error("Respons Apps Script bukan JSON valid. Pastikan Code.gs dan deployment sudah diperbarui.");
+    }
+
+    if (!data || data.ok !== true) {
+      throw new Error((data && data.message) || "Permintaan ke Apps Script gagal.");
+    }
+    return data;
+  }
+
+  function normalizeApiError(err) {
+    if (err && err.name === "AbortError") {
+      return new Error("Koneksi ke Apps Script terlalu lama. Periksa internet dan deployment Web App.");
+    }
+    const msg = err && err.message ? err.message : String(err || "Terjadi kesalahan.");
+    if (/Failed to fetch|NetworkError|Load failed|CORS/i.test(msg)) {
+      return new Error("Tidak dapat menghubungi Apps Script. Gunakan URL /exec terbaru, deploy dengan akses Anyone, dan jangan memakai request JSON/custom header.");
+    }
+    return err instanceof Error ? err : new Error(msg);
+  }
+
+  function setConnection(mode, text) {
+    const status = el("connectionStatus");
+    const label = el("connectionText");
+    const loginLabel = el("loginConnectionText");
+    if (status) status.dataset.state = mode;
+    if (label) label.textContent = text;
+    if (loginLabel) loginLabel.textContent = text;
+  }
+
+  async function apiGet(action, params = {}, withToken = true) {
+    const base = requireWebhookUrl();
+    const query = new URLSearchParams();
+    query.set("action", action);
+    query.set("_ts", String(Date.now()));
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) query.set(key, String(value));
+    });
+    if (withToken && state.token) query.set("token", state.token);
+
+    setConnection("loading", "Menghubungkan…");
+    try {
+      const response = await fetchWithTimeout(`${base}?${query.toString()}`, {
+        method: "GET",
+        mode: "cors",
+        cache: "no-store",
+        redirect: "follow",
+        credentials: "omit"
+      });
+      const data = await parseApiResponse(response);
+      setConnection("online", "Aktif");
+      return data;
+    } catch (err) {
+      setConnection("error", "Koneksi gagal");
+      throw normalizeApiError(err);
+    }
+  }
+
+  async function apiPost(action, payload = {}, withToken = true) {
+    const base = requireWebhookUrl();
+
+    // URLSearchParams menghasilkan application/x-www-form-urlencoded,
+    // termasuk CORS-safelisted request sehingga tidak memicu preflight JSON.
+    const body = new URLSearchParams();
+    body.set("action", action);
+    if (withToken && state.token) body.set("token", state.token);
+    Object.entries(payload).forEach(([key, value]) => {
+      if (value === undefined || value === null) return;
+      body.set(key, typeof value === "object" ? JSON.stringify(value) : String(value));
+    });
+
+    setConnection("loading", action === "login" ? "Memeriksa login…" : "Menyimpan cepat…");
+    try {
+      const response = await fetchWithTimeout(base, {
+        method: "POST",
+        mode: "cors",
+        body,
+        cache: "no-store",
+        redirect: "follow",
+        credentials: "omit"
+      });
+      const data = await parseApiResponse(response);
+      setConnection("online", "Spreadsheet terhubung");
+      return data;
+    } catch (err) {
+      setConnection("error", "Koneksi gagal");
+      throw normalizeApiError(err);
+    }
+  }
+
+  window.SheetsIntegration = {
+    setWebhookUrl,
+    getWebhookUrl,
+    clearWebhookUrl,
+    testConnection: () => apiGet("ping", {}, false)
+  };
+
   function todayStr() {
     const d = new Date();
     const p = n => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
+
   function nowIso() { return new Date().toISOString(); }
+
   function fmtDateTime(iso) {
-    const d = new Date(iso);
-    return d.toLocaleString("id-ID", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" });
-  }
-  function pad3(n) { return String(n).padStart(3, "0"); }
-  function nextSeq(key) {
-    const seq = lsGet(LS_SEQ, {});
-    seq[key] = (seq[key] || 0) + 1;
-    lsSet(LS_SEQ, seq);
-    return seq[key];
-  }
-  function genEntryId(line) {
-    const d = todayStr().replace(/-/g, "");
-    const prefix = line === "filling" ? "FIL" : "PRS";
-    return `${prefix}-${d}-${pad3(nextSeq(line + "-" + todayStr()))}`;
-  }
-  function genLaporanId() {
-    const d = todayStr().replace(/-/g, "");
-    return `LAP-${d}-${pad3(nextSeq("laporan-" + todayStr()))}`;
-  }
-  function esc(s) {
-    return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  }
-
-  /* ---------------- toast ---------------- */
-  const toastEl = document.createElement("div");
-  toastEl.id = "toast";
-  document.body.appendChild(toastEl);
-  let toastTimer = null;
-  function toast(msg, isErr) {
-    toastEl.textContent = msg;
-    toastEl.className = isErr ? "err show" : "show";
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { toastEl.className = ""; }, 2600);
-  }
-
-  /* ---------------- CSV helpers ---------------- */
-  function parseCSV(text) {
-    const lines = text.replace(/\r/g, "").split("\n").map(l => l.trim()).filter(Boolean);
-    const rows = [];
-    lines.forEach(line => {
-      const idx = line.indexOf(",");
-      if (idx === -1) return;
-      const a = line.slice(0, idx).trim().replace(/^"|"$/g, "");
-      const b = line.slice(idx + 1).trim().replace(/^"|"$/g, "");
-      if (a.toLowerCase() === "kategori") return; // skip header
-      if (!a || !b) return;
-      rows.push({ kategori: a.toLowerCase(), nilai: b });
+    return new Date(iso).toLocaleString("id-ID", {
+      day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
     });
-    return rows;
   }
+
+  function esc(value) {
+    return String(value == null ? "" : value).replace(/[&<>"']/g, c => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
   function toCSV(headers, rows) {
-    const esc2 = v => {
-      v = String(v == null ? "" : v);
-      return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    const quote = value => {
+      const text = String(value == null ? "" : value);
+      return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
     };
-    const lines = [headers.map(esc2).join(",")];
-    rows.forEach(r => lines.push(r.map(esc2).join(",")));
-    return lines.join("\n");
+    return [headers.map(quote).join(","), ...rows.map(row => row.map(quote).join(","))].join("\n");
   }
+
   function downloadText(filename, text) {
-    const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
+    const blob = new Blob(["\uFEFF", text], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-  }
-  function normalizeCategory(raw) {
-    const s = raw.toLowerCase().replace(/[^a-z]/g, "");
-    if (s.includes("operator")) return "operator";
-    if (s.includes("produk") || s.includes("product")) return "produk";
-    if (s.includes("pecah")) return "botolpecah";
-    if (s.includes("botol")) return "botol";
-    return null;
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  /* ================= state ================= */
-  let currentUser = null;
-  const searchState = { filling: { operator: "", date: "" }, press: { operator: "", date: "" } };
-  let lastLaporan = null;
-
-  /* ================= DOM refs ================= */
-  const appScreen = document.getElementById("appScreen");
-  const deviceDateDisplay = document.getElementById("deviceDateDisplay");
-  const userAvatar = document.getElementById("userAvatar");
-  const userNameEl = document.getElementById("userName");
-  const userRoleEl = document.getElementById("userRole");
-  const logoutBtn = document.getElementById("logoutBtn");
-  const masterTabBtn = document.getElementById("masterTabBtn");
-  const mainTabbar = document.getElementById("mainTabbar");
-
-  /* ================= build press view by cloning filling view ================= */
-  function buildLineViews() {
-    const fillingSection = document.getElementById("view-filling");
-    fillingSection.querySelectorAll("[id]").forEach(el => el.removeAttribute("id")); // avoid dup ids on clone
-    const pressClone = fillingSection.cloneNode(true);
-    pressClone.id = "view-press";
-    pressClone.dataset.line = "press";
-    pressClone.hidden = true;
-    pressClone.querySelectorAll("[data-line]").forEach(el => (el.dataset.line = "press"));
-    pressClone.querySelectorAll("h2").forEach(h => (h.textContent = h.textContent.replace("Filling", "Press")));
-    document.getElementById("view-press").replaceWith(pressClone);
-  }
-  buildLineViews();
-
-  /* ================= dropdown refresh ================= */
-  function refreshAllDropdowns() {
-    const master = lsGet(LS_MASTER, {});
-    document.querySelectorAll(".f-operator").forEach(s => fillSelectKeepPlaceholder(s, master.operator || [], "— Pilih operator —"));
-    document.querySelectorAll(".f-produk").forEach(s => fillSelectKeepPlaceholder(s, master.produk || [], "— Pilih produk —"));
-    document.querySelectorAll(".f-botol").forEach(s => fillSelectKeepPlaceholder(s, master.botol || [], "— Pilih jenis botol —"));
-    document.querySelectorAll(".f-botol-pecah").forEach(s => fillSelectKeepPlaceholder(s, master.botolpecah || [], "— Pilih jenis —"));
-    document.querySelectorAll(".f-search-operator").forEach(s => fillSelectKeepPlaceholder(s, master.operator || [], "Semua operator"));
-    const lapOp = document.getElementById("lap-operator");
-    if (lapOp) fillSelectKeepPlaceholder(lapOp, master.operator || [], "Semua operator");
-  }
-  function fillSelectKeepPlaceholder(select, list, placeholderText) {
-    const cur = select.value;
-    select.innerHTML = "";
-    const ph = document.createElement("option");
-    ph.value = ""; ph.textContent = placeholderText;
-    select.appendChild(ph);
-    list.forEach(v => {
-      const o = document.createElement("option");
-      o.value = v; o.textContent = v;
-      select.appendChild(o);
-    });
-    if (list.includes(cur)) select.value = cur;
+  function genLaporanId() {
+    const d = new Date();
+    const p = n => String(n).padStart(2, "0");
+    return `LAP-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
 
-  /* ================= line view wiring (form + table) ================= */
-  function wireLineView(line) {
-    const section = document.getElementById("view-" + line);
-    const form = section.querySelector(".form-panel");
-    const editingIdInput = form.querySelector(".f-editing-id");
-    const tanggalInput = form.querySelector(".f-tanggal");
-    const totalInput = form.querySelector(".f-total");
-    const qtyKardus = form.querySelector(".f-qty-kardus");
-    const qtyBotol = form.querySelector(".f-qty-botol");
-    const submitBtn = form.querySelector(".f-submit-btn");
-    const cancelBtn = form.querySelector(".f-cancel-btn");
-    const errorEl = form.querySelector(".f-error");
-    const stampEl = form.querySelector(".stamp");
-
-    tanggalInput.value = todayStr();
-
-    function recalcTotal() {
-      const k = parseFloat(qtyKardus.value) || 0;
-      const b = parseFloat(qtyBotol.value) || 0;
-      totalInput.value = (k * b).toLocaleString("id-ID");
+  let toastEl = null;
+  let toastTimer = null;
+  function toast(message, isError = false) {
+    if (!toastEl) {
+      toastEl = document.createElement("div");
+      toastEl.id = "toast";
+      document.body.appendChild(toastEl);
     }
-    qtyKardus.addEventListener("input", recalcTotal);
-    qtyBotol.addEventListener("input", recalcTotal);
+    toastEl.textContent = message;
+    toastEl.className = isError ? "err show" : "show";
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { toastEl.className = ""; }, 3500);
+  }
+
+  function pageNumbers(current, total) {
+    if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+    const values = [1];
+    const start = Math.max(2, current - 1);
+    const end = Math.min(total - 1, current + 1);
+    if (start > 2) values.push("…");
+    for (let i = start; i <= end; i++) values.push(i);
+    if (end < total - 1) values.push("…");
+    values.push(total);
+    return values;
+  }
+
+  function renderPagination(container, current, total, onChange) {
+    if (!container) return;
+    if (total <= 1) {
+      container.innerHTML = "";
+      return;
+    }
+
+    const prev = `<button type="button" class="page-btn" data-page="${current - 1}" ${current <= 1 ? "disabled" : ""}>‹</button>`;
+    const numbers = pageNumbers(current, total).map(item => {
+      if (item === "…") return '<span class="page-ellipsis">…</span>';
+      return `<button type="button" class="page-btn ${item === current ? "active" : ""}" data-page="${item}">${item}</button>`;
+    }).join("");
+    const next = `<button type="button" class="page-btn" data-page="${current + 1}" ${current >= total ? "disabled" : ""}>›</button>`;
+    container.innerHTML = prev + numbers + next;
+
+    container.onclick = event => {
+      const btn = event.target.closest("button[data-page]");
+      if (!btn || btn.disabled) return;
+      const target = Number(btn.dataset.page);
+      if (target >= 1 && target <= total && target !== current) onChange(target);
+    };
+  }
+
+  /* ------------------------- LOGIN PAGE ------------------------- */
+  async function initLoginPage() {
+    const form = el("loginForm");
+    if (!form) return;
+
+    // Jangan menunggu ping/bootstrap di halaman login.
+    // Jika token ada, aplikasi utama yang memvalidasi sesi.
+    if (state.token) {
+      window.location.replace("index.html");
+      return;
+    }
+
+    setConnection("idle", "Siap untuk login");
+
+    // Event login dipasang langsung saat DOM/script siap.
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const errorEl = el("loginError");
+      const submit = el("loginSubmit");
+      errorEl.hidden = true;
+      submit.disabled = true;
+      submit.textContent = "Masuk…";
+
+      try {
+        const data = await apiPost("login", {
+          username: el("loginUsername").value.trim(),
+          password: el("loginPassword").value
+        }, false);
+
+        state.token = data.token;
+        state.currentUser = data.user || null;
+        localStorage.setItem(CONFIG.TOKEN_KEY, state.token);
+        if (data.user) {
+          localStorage.setItem(CONFIG.USER_KEY, JSON.stringify(data.user));
+        }
+
+        // Begitu kredensial terkonfirmasi, langsung pindah.
+        window.location.replace("index.html");
+      } catch (err) {
+        state.token = "";
+        state.currentUser = null;
+        localStorage.removeItem(CONFIG.TOKEN_KEY);
+        localStorage.removeItem(CONFIG.USER_KEY);
+        errorEl.textContent = err.message;
+        errorEl.hidden = false;
+        submit.disabled = false;
+        submit.textContent = "Masuk";
+      }
+    });
+  }
+
+  /* ------------------------- APP COMMON ------------------------- */
+  function buildPressView() {
+    const filling = el("view-filling");
+    const oldPress = el("view-press");
+    if (!filling || !oldPress) return;
+
+    const clone = filling.cloneNode(true);
+    qsa("[id]", clone).forEach(node => node.removeAttribute("id"));
+    clone.id = "view-press";
+    clone.dataset.line = "press";
+    clone.hidden = true;
+    qsa("[data-line]", clone).forEach(node => { node.dataset.line = "press"; });
+    qsa("h2", clone).forEach(h => { h.textContent = h.textContent.replace(/Filling/g, "Press"); });
+    oldPress.replaceWith(clone);
+  }
+
+  function applyBootstrap(data) {
+    if (data.user) state.currentUser = data.user;
+    if (data.master) {
+      state.master = data.master;
+      try { localStorage.setItem(CONFIG.MASTER_KEY, JSON.stringify(data.master)); } catch (_) {}
+    }
+    if (Array.isArray(data.entries)) state.entries = data.entries;
+    if (Array.isArray(data.users)) state.users = data.users;
+
+    refreshAllDropdowns();
+    loadPersistedPreview();
+    restoreFormDraft("filling");
+    restoreFormDraft("press");
+    renderPreview("filling");
+    renderPreview("press");
+    renderMasterChips();
+    renderUsers();
+    renderUserHeader();
+  }
+
+  async function loadBootstrap() {
+    const data = await apiGet("bootstrap");
+    applyBootstrap(data);
+    return data;
+  }
+
+  async function loadAppData() {
+    const data = await apiGet("appdata");
+    applyBootstrap(data);
+    return data;
+  }
+
+  function fillSelect(select, list, placeholder) {
+    if (!select) return;
+    const current = select.value;
+    const unique = [...new Set((list || []).map(v => String(v).trim()).filter(Boolean))];
+    select.innerHTML = `<option value="">${esc(placeholder)}</option>` + unique.map(value => `<option value="${esc(value)}">${esc(value)}</option>`).join("");
+    if (unique.includes(current)) select.value = current;
+  }
+
+  function refreshAllDropdowns() {
+    const m = state.master;
+    qsa(".f-operator").forEach(s => fillSelect(s, m.operator, "— pilih operator —"));
+    qsa(".f-produk").forEach(s => fillSelect(s, m.produk, "— pilih produk —"));
+    qsa(".f-botol").forEach(s => fillSelect(s, m.botol, "— pilih jenis botol —"));
+    const botolSelect = document.getElementById("botolDigunakan");
+    const pecahInput = document.getElementById("pecah");
+    document.addEventListener("change", function (event){
+      if(event.target.id === "botolDigunakan") {
+        const selectedBotol = event.target.value;
+        if (pecahInput) {
+          pecahInput.value = selectedBotol || "-";
+        }
+      }
+    });
+    qsa(".f-botol-pecah").forEach(s => fillSelect(s, m.botolpecah && m.botolpecah.length ? m.botolpecah : m.botol, "— pilih jenis —"));
+    qsa(".f-search-operator").forEach(s => fillSelect(s, m.operator, "Semua operator"));
+    fillSelect(el("lap-operator"), m.operator, "Semua operator");
+  }
+
+  function renderUserHeader() {
+    const user = state.currentUser;
+    if (!user) return;
+    const avatar = el("userAvatar");
+    if (avatar) avatar.textContent = (user.name || user.username || "U").trim().charAt(0).toUpperCase();
+    if (el("userName")) el("userName").textContent = user.name || user.username;
+    const role = normalizeRole(user.role);
+    if (el("userRole")) {
+      if (role === "superuser") {
+        el("userRole").textContent = "Super User • Akses Penuh";
+      } else {
+        el("userRole").textContent = user.dataScope === "all"
+          ? "User Biasa • Akses Custom • Semua Data"
+          : "User Biasa • Akses Custom • Data Sendiri";
+      }
+    }
+
+    if (el("fillingTabBtn")) el("fillingTabBtn").hidden = !hasAccess("filling");
+    if (el("pressTabBtn")) el("pressTabBtn").hidden = !hasAccess("press");
+    if (el("laporanTabBtn")) el("laporanTabBtn").hidden = !hasAccess("report");
+    if (el("masterTabBtn")) el("masterTabBtn").hidden = !hasAccess("master");
+
+    // Lapisan UI: section yang tidak diizinkan ikut disembunyikan.
+    if (el("view-filling") && !hasAccess("filling")) el("view-filling").hidden = true;
+    if (el("view-press") && !hasAccess("press")) el("view-press").hidden = true;
+    if (el("view-laporan") && !hasAccess("report")) el("view-laporan").hidden = true;
+    if (el("view-master") && !hasAccess("master")) el("view-master").hidden = true;
+    if (el("userManagementPanel")) el("userManagementPanel").hidden = !hasAccess("users");
+    enforceVisibleDefaultTab();
+
+    if (el("deviceDateDisplay")) {
+      el("deviceDateDisplay").textContent = new Date().toLocaleDateString("id-ID", {
+        weekday: "long", day: "2-digit", month: "long", year: "numeric"
+      });
+    }
+  }
+
+  function filteredEntries(line) {
+    const filter = state.search[line];
+    return state.entries
+      .filter(e => e.tab === line)
+      .filter(e => !filter.operator || e.operator === filter.operator)
+      .filter(e => !filter.date || e.tanggal === filter.date)
+      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  }
+
+  function filteredPreviewEntries(line) {
+    const filter = state.search[line];
+    const rows = state.preview && state.preview[line] ? state.preview[line] : [];
+    return rows
+      .filter(e => !filter.operator || e.operator === filter.operator)
+      .filter(e => !filter.date || e.tanggal === filter.date)
+      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+  }
+
+  function upsertEntry(entry) {
+    if (!entry || !entry.id) return;
+    const index = state.entries.findIndex(x => x.id === entry.id);
+    if (index >= 0) state.entries[index] = entry;
+    else state.entries.push(entry);
+  }
+
+  function renderEntryRow(entry) {
+    const syncState = entry._syncState || "";
+    const isPending = syncState === "pending";
+    const isError = syncState === "error";
+    const isOwner = state.currentUser &&
+      String(entry.createdBy || "").trim().toLowerCase() === String(state.currentUser.username || "").trim().toLowerCase();
+    const canEdit = !syncState && state.currentUser &&
+      (isOwner ? hasAccess("editOwnEntries") : hasAccess("editAllEntries"));
+    const canDelete = !syncState && state.currentUser &&
+      (isOwner ? hasAccess("deleteOwnEntries") : hasAccess("deleteAllEntries"));
+
+    let idCell = `<span class="id-badge">${esc(entry.reportId)}</span>`;
+    if (isPending) {
+      idCell = '<span class="sync-badge pending"><span class="sync-spinner"></span>Menyimpan…</span>';
+    } else if (isError) {
+      idCell = '<span class="sync-badge error">Gagal disimpan</span>';
+    }
+
+    return `
+      <tr class="${isPending ? "pending-row" : isError ? "sync-error-row" : ""}">
+        <td>${idCell}</td>
+        <td>${esc(entry.tanggal)}</td>
+        <td>${esc(entry.operator)}</td>
+        <td>${esc(entry.produk)}</td>
+        <td>${esc(entry.botol)}</td>
+        <td>${Number(entry.qtyKardus) || 0}</td>
+        <td>${Number(entry.qtyBotolPerKardus) || 0}</td>
+        <td><strong>${Number(entry.totalQty) || 0}</strong></td>
+        <td>${esc(entry.botolPecahJenis || "—")}</td>
+        <td class="${Number(entry.qtyBotolPecah) > 0 ? "pecah-tag" : ""}">${Number(entry.qtyBotolPecah) || 0}</td>
+        <td class="row-actions">
+          ${isPending ? '<span class="sync-note">Diproses</span>' : ""}
+          ${isError ? `<button type="button" class="btn btn-secondary btn-retry" data-id="${esc(entry.id)}">Coba Lagi</button>` : ""}
+          ${canEdit ? `<button type="button" class="btn btn-ghost btn-edit" data-id="${esc(entry.id)}">Update</button>` : ""}
+          ${canDelete ? `<button type="button" class="btn btn-danger btn-delete" data-id="${esc(entry.id)}">Hapus</button>` : ""}
+        </td>
+      </tr>`;
+  }
+
+  function renderEntries(line) {
+    const section = el("view-" + line);
+    if (!section) return;
+    const tbody = qs(".f-tbody", section);
+    const summary = qs(".f-summary", section);
+    const pagination = qs(".f-pagination", section);
+    const rows = filteredEntries(line);
+
+    const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PAGE_SIZE));
+    state.pages[line] = Math.min(Math.max(1, state.pages[line]), totalPages);
+    const page = state.pages[line];
+    const start = (page - 1) * CONFIG.PAGE_SIZE;
+    const visibleRows = rows.slice(start, start + CONFIG.PAGE_SIZE);
+
+    tbody.innerHTML = visibleRows.length
+      ? visibleRows.map(renderEntryRow).join("")
+      : '<tr><td colspan="11" class="empty-row">Belum ada data.</td></tr>';
+
+    const totalQty = rows.reduce((sum, e) => sum + (Number(e.totalQty) || 0), 0);
+    const totalPecah = rows.reduce((sum, e) => sum + (Number(e.qtyBotolPecah) || 0), 0);
+    const from = rows.length ? start + 1 : 0;
+    const to = Math.min(start + CONFIG.PAGE_SIZE, rows.length);
+    const pendingCount = rows.filter(e => e._syncState === "pending").length;
+    const errorCount = rows.filter(e => e._syncState === "error").length;
+    const syncInfo = [
+      pendingCount ? `${pendingCount} sedang disimpan` : "",
+      errorCount ? `${errorCount} gagal` : ""
+    ].filter(Boolean).join(" · ");
+    summary.textContent = `${from}–${to} dari ${rows.length} entri · Total Qty Botol: ${totalQty.toLocaleString("id-ID")} · Total Botol Pecah: ${totalPecah.toLocaleString("id-ID")}${syncInfo ? ` · ${syncInfo}` : ""}`;
+
+    renderPagination(pagination, page, totalPages, nextPage => {
+      state.pages[line] = nextPage;
+      renderEntries(line);
+      qs(".table-panel", section)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+  
+
+  function renderPreview(line) {
+    const section = el("view-" + line);
+    if (!section) return;
+
+    const tbody = qs(".f-tbody", section);
+    const summary = qs(".f-summary", section);
+    const pagination = qs(".f-pagination", section);
+    const saveBtn = qs(".f-save-btn", section);
+    if (!tbody) return;
+
+    const rows = filteredPreviewEntries(line);
+    const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PAGE_SIZE));
+    state.pages[line] = Math.min(Math.max(1, state.pages[line]), totalPages);
+    const page = state.pages[line];
+    const start = (page - 1) * CONFIG.PAGE_SIZE;
+    const visibleRows = rows.slice(start, start + CONFIG.PAGE_SIZE);
+
+    tbody.innerHTML = visibleRows.length ? visibleRows.map(entry => `
+      <tr>
+        <td><span class="id-badge">PREVIEW</span></td>
+        <td>${esc(entry.tanggal)}</td>
+        <td>${esc(entry.operator)}</td>
+        <td>${esc(entry.produk)}</td>
+        <td>${esc(entry.botol)}</td>
+        <td>${Number(entry.qtyKardus) || 0}</td>
+        <td>${Number(entry.qtyBotolPerKardus) || 0}</td>
+        <td><strong>${Number(entry.totalQty) || 0}</strong></td>
+        <td>${esc(entry.botolPecahJenis || "—")}</td>
+        <td class="${Number(entry.qtyBotolPecah) > 0 ? "pecah-tag" : ""}">${Number(entry.qtyBotolPecah) || 0}</td>
+        <td class="row-actions">
+          <button type="button" class="btn btn-ghost btn-preview-edit" data-id="${esc(entry.id)}">Edit</button>
+          <button type="button" class="btn btn-danger btn-preview-delete" data-id="${esc(entry.id)}">Hapus</button>
+        </td>
+      </tr>`).join("")
+      : '<tr><td colspan="11" class="empty-row">Belum ada data yang diinput untuk preview</td></tr>';
+
+    const totalQty = rows.reduce((sum, e) => sum + (Number(e.totalQty) || 0), 0);
+    const totalPecah = rows.reduce((sum, e) => sum + (Number(e.qtyBotolPecah) || 0), 0);
+    const from = rows.length ? start + 1 : 0;
+    const to = Math.min(start + CONFIG.PAGE_SIZE, rows.length);
+    if (summary) {
+      summary.textContent = `${from}–${to} dari ${rows.length} data preview · Total Qty Botol: ${totalQty.toLocaleString("id-ID")} · Total Botol Pecah: ${totalPecah.toLocaleString("id-ID")}`;
+    }
+
+    if (saveBtn) {
+      saveBtn.disabled = rows.length === 0;
+      saveBtn.textContent = rows.length ? `Simpan (${rows.length})` : "Simpan";
+    }
+
+    renderPagination(pagination, page, totalPages, nextPage => {
+      state.pages[line] = nextPage;
+      renderPreview(line);
+    });
+  }
+
+  function wireLineView(line) {
+    const section = el("view-" + line);
+    if (!section) return;
+    const form = qs(".form-panel", section);
+    if (!form) return;
+
+    const botol = qs(".f-botol", form);
+    const botolPecah = qs(".f-botol-pecah", form);
+    const editing = qs(".f-editing-id", form);
+    const tanggal = qs(".f-tanggal", form);
+    const qtyKardus = qs(".f-qty-kardus", form);
+    const qtyBotol = qs(".f-qty-botol", form);
+    const total = qs(".f-total", form);
+    const qtyPecah = qs(".f-qty-pecah", form);
+    const submitBtn = qs(".f-submit-btn", form);
+    const cancelBtn = qs(".f-cancel-btn", form);
+    const errorEl = qs(".f-error", form);
+    const stamp = qs(".stamp", form);
+    tanggal.value = todayStr();
+
+    function recalc() {
+      total.value = ((Number(qtyKardus.value) || 0) * (Number(qtyBotol.value) || 0)).toLocaleString("id-ID");
+    }
+
+    function syncBotolPecah() {
+      if (botolPecah) botolPecah.value = botol.value || "-";
+    }
 
     function resetForm() {
+      if (botolPecah) botolPecah.value = "-";
       form.reset();
-      editingIdInput.value = "";
-      tanggalInput.value = todayStr();
-      totalInput.value = "0";
+      editing.value = "";
+      tanggal.value = todayStr();
+      total.value = "0";
+      qtyPecah.value = "0";
       submitBtn.textContent = "+ Tambah List";
+      submitBtn.disabled = false;
       cancelBtn.hidden = true;
-      stampEl.textContent = "ID otomatis";
+      stamp.textContent = "ID otomatis";
       errorEl.hidden = true;
-      form.querySelector(".f-qty-pecah").value = "0";
+      clearFormDraft(line);
     }
+
+    botol.addEventListener("change", syncBotolPecah);
+    qtyKardus.addEventListener("input", recalc);
+    qtyBotol.addEventListener("input", recalc);
     cancelBtn.addEventListener("click", resetForm);
 
-    form.addEventListener("submit", function (e) {
-      e.preventDefault();
-      errorEl.hidden = true;
-      const operator = form.querySelector(".f-operator").value;
-      const produk = form.querySelector(".f-produk").value;
-      const botol = form.querySelector(".f-botol").value;
-      const kardus = parseFloat(qtyKardus.value);
-      const botolPerKardus = parseFloat(qtyBotol.value);
-      const botolPecahJenis = form.querySelector(".f-botol-pecah").value;
-      const qtyPecah = parseFloat(form.querySelector(".f-qty-pecah").value) || 0;
+    // Simpan draft form setiap ada perubahan agar refresh tidak menghapus input.
+    form.addEventListener("input", () => saveFormDraft(line, form));
+    form.addEventListener("change", () => saveFormDraft(line, form));
 
-      if (!operator || !produk || !botol || isNaN(kardus) || kardus < 0 || isNaN(botolPerKardus) || botolPerKardus < 0) {
-        errorEl.textContent = "Lengkapi Operator, Produk, Botol, Qty Kardus, dan Qty Botol per Kardus dengan benar.";
+    function buildOptimisticEntry(payload, clientRequestId) {
+      const createdAt = nowIso();
+      return {
+        id: clientRequestId,
+        reportId: "Menyimpan…",
+        tab: line,
+        tanggal: payload.tanggal,
+        operator: payload.operator,
+        produk: payload.produk,
+        botol: payload.botol,
+        qtyKardus: payload.qtyKardus,
+        qtyBotolPerKardus: payload.qtyBotolPerKardus,
+        totalQty: payload.qtyKardus * payload.qtyBotolPerKardus,
+        botolPecahJenis: payload.botolPecahJenis || "",
+        qtyBotolPecah: payload.qtyBotolPecah || 0,
+        createdBy: state.currentUser ? state.currentUser.username : "",
+        createdByName: state.currentUser ? (state.currentUser.name || state.currentUser.username) : "",
+        createdAt,
+        updatedAt: createdAt,
+        _syncState: "pending",
+        _syncPayload: { ...payload, clientRequestId }
+      };
+    }
+
+    function queueOptimisticSave(entry) {
+      entry._syncState = "pending";
+      entry.reportId = "Menyimpan…";
+      renderEntries(line);
+
+      enqueueWrite(() => apiPost("entry.create", { data: entry._syncPayload }))
+        .then(response => {
+          // Backend memakai clientRequestId yang sama sebagai ID, sehingga retry aman
+          // dan baris sementara langsung diganti oleh data resmi Spreadsheet.
+          upsertEntry(response.entry);
+          renderEntries(line);
+          toast(`Tersimpan — ${response.entry.reportId}`);
+        })
+        .catch(err => {
+          const current = state.entries.find(x => x.id === entry.id);
+          if (current) {
+            current._syncState = "error";
+            current._syncError = err.message;
+            current.reportId = "Gagal disimpan";
+          }
+          renderEntries(line);
+          toast(`Gagal menyimpan: ${err.message}`, true);
+        });
+    }
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      errorEl.hidden = true;
+      const payload = {
+        line,
+        tanggal: todayStr(),
+        operator: qs(".f-operator", form).value,
+        produk: qs(".f-produk", form).value,
+        botol: qs(".f-botol", form).value,
+        qtyKardus: Number(qtyKardus.value),
+        qtyBotolPerKardus: Number(qtyBotol.value),
+        botolPecahJenis: botolPecah && botolPecah.value !== "-" ? botolPecah.value : "",
+        // botolPecahJenis: qs(".f-botol-pecah", form).value,
+        qtyBotolPecah: Number(qtyPecah.value) || 0
+      };
+
+      if (!payload.operator || !payload.produk || !payload.botol ||
+          !Number.isFinite(payload.qtyKardus) || payload.qtyKardus < 0 ||
+          !Number.isFinite(payload.qtyBotolPerKardus) || payload.qtyBotolPerKardus < 0 ||
+          payload.qtyBotolPecah < 0) {
+        errorEl.textContent = "Lengkapi Operator, Produk, Botol, dan Qty dengan benar.";
         errorEl.hidden = false;
         return;
       }
 
-      const editingId = editingIdInput.value;
-      let entries = lsGet(LS_ENTRIES, []);
+      const id = editing.value;
 
-      if (editingId) {
-        const idx = entries.findIndex(x => x.id === editingId);
-        if (idx === -1) { toast("Data tidak ditemukan.", true); resetForm(); return; }
-        const target = entries[idx];
-        const userPerms = currentUser.permissions || rolePermissions[currentUser.role];
-        const isOwner = target.createdBy === currentUser.username;
-        const canUpdate = (isOwner && userPerms.canUpdateOwn) || (!isOwner && userPerms.canUpdateOthers);
-        if (!canUpdate) {
-          toast("Anda tidak berhak mengubah data ini.", true);
+      // UPDATE data preview saja. Belum menyentuh Spreadsheet.
+      if (id) {
+        const index = state.preview[line].findIndex(item => item.id === id);
+        if (index >= 0) {
+          state.preview[line][index] = {
+            ...state.preview[line][index],
+            tanggal: payload.tanggal,
+            operator: payload.operator,
+            produk: payload.produk,
+            botol: payload.botol,
+            qtyKardus: payload.qtyKardus,
+            qtyBotolPerKardus: payload.qtyBotolPerKardus,
+            totalQty: payload.qtyKardus * payload.qtyBotolPerKardus,
+            botolPecahJenis: payload.botolPecahJenis || "",
+            qtyBotolPecah: payload.qtyBotolPecah || 0
+          };
+          state.pages[line] = 1;
+          persistPreview();
+          resetForm();
+          renderPreview(line);
+          toast("Data preview berhasil diperbarui.");
           return;
         }
-        entries[idx] = {
-          ...target,
-          operator, produk, botol,
-          qtyKardus: kardus, qtyBotolPerKardus: botolPerKardus,
-          totalQty: kardus * botolPerKardus,
-          botolPecahJenis, qtyBotolPecah: qtyPecah,
-          updatedAt: nowIso()
-        };
-        lsSet(LS_ENTRIES, entries);
-        
-        // 📤 Kirim update ke Google Sheets jika webhook sudah dikonfigurasi
-        const webhookUrl = window.SheetsIntegration.getWebhookUrl();
-        if (webhookUrl) {
-          window.SheetsIntegration.appendEntry(entries[idx], webhookUrl).catch(err => {
-            console.warn("⚠️ Gagal update Google Sheets, tapi data sudah disimpan locally", err);
-          });
-        }
-        
-        toast("Perubahan disimpan.");
-      } else {
-        const entry = {
-          id: uid(),
-          reportId: genEntryId(line),
-          tab: line,
-          tanggal: todayStr(),
-          operator, produk, botol,
-          qtyKardus: kardus, qtyBotolPerKardus: botolPerKardus,
-          totalQty: kardus * botolPerKardus,
-          botolPecahJenis, qtyBotolPecah: qtyPecah,
-          createdBy: currentUser.username,
-          createdByName: currentUser.name,
-          createdAt: nowIso(), updatedAt: nowIso()
-        };
-        entries.push(entry);
-        lsSet(LS_ENTRIES, entries);
-        
-        // 📤 Kirim data ke Google Sheets jika webhook sudah dikonfigurasi
-        const webhookUrl = window.SheetsIntegration.getWebhookUrl();
-        if (webhookUrl) {
-          window.SheetsIntegration.appendEntry(entry, webhookUrl).catch(err => {
-            console.warn("⚠️ Gagal mengirim ke Google Sheets, tapi data sudah disimpan locally", err);
-          });
-        }
-        
-        toast(`Data ditambahkan — ID ${entry.reportId}`);
       }
+
+      // CREATE hanya masuk ke preview lokal. Belum dikirim ke Spreadsheet.
+      const previewId = makeClientRequestId();
+      state.preview[line].push({
+        id: previewId,
+        tab: line,
+        tanggal: payload.tanggal,
+        operator: payload.operator,
+        produk: payload.produk,
+        botol: payload.botol,
+        qtyKardus: payload.qtyKardus,
+        qtyBotolPerKardus: payload.qtyBotolPerKardus,
+        totalQty: payload.qtyKardus * payload.qtyBotolPerKardus,
+        botolPecahJenis: payload.botolPecahJenis || "",
+        qtyBotolPecah: payload.qtyBotolPecah || 0,
+        createdAt: nowIso()
+      });
+      state.pages[line] = 1;
+      persistPreview();
       resetForm();
-      renderEntries(line);
+      renderPreview(line);
+      toast("Data ditambahkan ke preview. Belum disimpan ke Spreadsheet.");
     });
 
-    // search
-    const searchOperator = section.querySelector(".f-search-operator");
-    const searchDate = section.querySelector(".f-search-date");
-    const searchReset = section.querySelector(".f-search-reset");
-    searchOperator.addEventListener("change", () => { searchState[line].operator = searchOperator.value; renderEntries(line); });
-    searchDate.addEventListener("change", () => { searchState[line].date = searchDate.value; renderEntries(line); });
-    searchReset.addEventListener("click", () => {
-      searchState[line] = { operator: "", date: "" };
-      searchOperator.value = ""; searchDate.value = "";
-      renderEntries(line);
+    const searchOperator = qs(".f-search-operator", section);
+    const searchDate = qs(".f-search-date", section);
+    const resetSearch = qs(".f-search-reset", section);
+
+    searchOperator.addEventListener("change", () => {
+      state.search[line].operator = searchOperator.value;
+      state.pages[line] = 1;
+      renderPreview(line);
+    });
+    searchDate.addEventListener("change", () => {
+      state.search[line].date = searchDate.value;
+      state.pages[line] = 1;
+      renderPreview(line);
+    });
+    resetSearch.addEventListener("click", () => {
+      state.search[line] = { operator: "", date: "" };
+      state.pages[line] = 1;
+      searchOperator.value = "";
+      searchDate.value = "";
+      renderPreview(line);
     });
 
-    // export
-    section.querySelector(".f-export-btn").addEventListener("click", () => {
-      const rows = filteredEntries(line);
-      if (!rows.length) { toast("Tidak ada data untuk diexport.", true); return; }
+    const saveBtn = qs(".f-save-btn", section);
+    if (saveBtn) {
+      saveBtn.addEventListener("click", async () => {
+        const previewRows = [...(state.preview[line] || [])];
+        if (!previewRows.length) {
+          toast("Belum ada data preview.", true);
+          return;
+        }
+
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Menyimpan...";
+        const failed = [];
+        let successCount = 0;
+
+        for (const item of previewRows) {
+          try {
+            const response = await enqueueWrite(() => apiPost("entry.create", {
+              data: {
+                line: item.tab,
+                tanggal: item.tanggal,
+                operator: item.operator,
+                produk: item.produk,
+                botol: item.botol,
+                qtyKardus: Number(item.qtyKardus) || 0,
+                qtyBotolPerKardus: Number(item.qtyBotolPerKardus) || 0,
+                botolPecahJenis: item.botolPecahJenis || "",
+                qtyBotolPecah: Number(item.qtyBotolPecah) || 0,
+                clientRequestId: item.id
+              }
+            }));
+            if (response.entry) upsertEntry(response.entry);
+            successCount++;
+          } catch (err) {
+            failed.push({ ...item, _saveError: err.message });
+          }
+        }
+
+        state.preview[line] = failed;
+        state.pages[line] = 1;
+        persistPreview();
+        renderPreview(line);
+
+        if (successCount) toast(`${successCount} data berhasil disimpan ke Spreadsheet.`);
+        if (failed.length) toast(`${failed.length} data gagal disimpan. Silakan klik Simpan lagi.`, true);
+      });
+    }
+
+    qs(".f-export-btn", section).addEventListener("click", () => {
+      const rows = filteredPreviewEntries(line);
+      if (!rows.length) return toast("Belum ada data preview untuk diexport.", true);
       const csv = toCSV(
-        ["ID Pengerjaan", "Line", "Tanggal", "Operator", "Produk", "Botol Digunakan", "Qty Kardus", "Qty Botol per Kardus", "Total Qty", "Jenis Botol Pecah", "Qty Botol Pecah", "Dibuat Oleh"],
-        rows.map(e => [e.reportId, LINE_LABEL[e.tab], e.tanggal, e.operator, e.produk, e.botol, e.qtyKardus, e.qtyBotolPerKardus, e.totalQty, e.botolPecahJenis || "", e.qtyBotolPecah, e.createdByName || e.createdBy])
+        ["ID Pengerjaan", "Line", "Tanggal", "Operator", "Produk", "Botol", "Qty Kardus", "Botol/Kardus", "Total Qty", "Botol Pecah", "Qty Pecah", "Dibuat Oleh"],
+        rows.map(e => [e.reportId, LINE_LABEL[e.tab], e.tanggal, e.operator, e.produk, e.botol, e.qtyKardus, e.qtyBotolPerKardus, e.totalQty, e.botolPecahJenis || "", e.qtyBotolPecah, e.createdByName || e.createdBy || "PREVIEW"])
       );
       downloadText(`laporan-${line}-${todayStr()}.csv`, csv);
-      toast("File CSV diunduh (tersimpan sebagai spreadsheet).");
     });
 
-    // table action delegation
-    const tbody = section.querySelector(".f-tbody");
-    tbody.addEventListener("click", e => {
-      const editBtn = e.target.closest(".btn-edit");
-      const delBtn = e.target.closest(".btn-delete");
+    qs(".f-tbody", section).addEventListener("click", event => {
+      const editBtn = event.target.closest(".btn-preview-edit");
+      const deleteBtn = event.target.closest(".btn-preview-delete");
+
       if (editBtn) {
-        const entries = lsGet(LS_ENTRIES, []);
-        const entry = entries.find(x => x.id === editBtn.dataset.id);
+        const entry = state.preview[line].find(x => x.id === editBtn.dataset.id);
         if (!entry) return;
-        const userPerms = currentUser.permissions || rolePermissions[currentUser.role];
-        const isOwner = entry.createdBy === currentUser.username;
-        const canUpdate = (isOwner && userPerms.canUpdateOwn) || (!isOwner && userPerms.canUpdateOthers);
-        if (!canUpdate) {
-          toast("Anda tidak berhak mengubah data ini.", true); return;
-        }
-        editingIdInput.value = entry.id;
-        tanggalInput.value = entry.tanggal;
-        form.querySelector(".f-operator").value = entry.operator;
-        form.querySelector(".f-produk").value = entry.produk;
-        form.querySelector(".f-botol").value = entry.botol;
+        editing.value = entry.id;
+        tanggal.value = entry.tanggal;
+        qs(".f-operator", form).value = entry.operator;
+        qs(".f-produk", form).value = entry.produk;
+        qs(".f-botol", form).value = entry.botol;
         qtyKardus.value = entry.qtyKardus;
         qtyBotol.value = entry.qtyBotolPerKardus;
-        form.querySelector(".f-botol-pecah").value = entry.botolPecahJenis || "";
-        form.querySelector(".f-qty-pecah").value = entry.qtyBotolPecah;
-        recalcTotal();
+        if (botolPecah) botolPecah.value = entry.botolPecahJenis || entry.botol || "-";
+        qtyPecah.value = entry.qtyBotolPecah || 0;
+        recalc();
         submitBtn.textContent = "Simpan Perubahan";
         cancelBtn.hidden = false;
-        stampEl.textContent = entry.reportId;
+        stamp.textContent = "EDIT PREVIEW";
+        saveFormDraft(line, form);
         form.scrollIntoView({ behavior: "smooth", block: "start" });
-      } else if (delBtn) {
-        const entries = lsGet(LS_ENTRIES, []);
-        const entry = entries.find(x => x.id === delBtn.dataset.id);
-        const userPerms = currentUser.permissions || rolePermissions[currentUser.role];
-        const isOwner = entry.createdBy === currentUser.username;
-        const canDelete = (isOwner && userPerms.canDeleteOwn) || (!isOwner && userPerms.canDeleteOthers);
-        if (!canDelete) { 
-          toast("Anda tidak berhak menghapus data ini.", true); 
-          return; 
-        }
-        if (!confirm("Hapus data pengerjaan ini? Tindakan tidak dapat dibatalkan.")) return;
-        let allEntries = lsGet(LS_ENTRIES, []);
-        allEntries = allEntries.filter(x => x.id !== delBtn.dataset.id);
-        lsSet(LS_ENTRIES, allEntries);
-        toast("Data dihapus.");
-        renderEntries(line);
-      }
-    });
-  }
-
-  function filteredEntries(line) {
-    const entries = lsGet(LS_ENTRIES, []).filter(e => e.tab === line);
-    const f = searchState[line];
-    return entries
-      .filter(e => !f.operator || e.operator === f.operator)
-      .filter(e => !f.date || e.tanggal === f.date)
-      .sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
-  }
-
-  function renderEntries(line) {
-    const section = document.getElementById("view-" + line);
-    const tbody = section.querySelector(".f-tbody");
-    const rows = filteredEntries(line);
-    if (!rows.length) {
-      tbody.innerHTML = `<tr><td colspan="11" class="empty-row">Belum ada data untuk kriteria ini.</td></tr>`;
-    } else {
-      const userPerms = currentUser.permissions || rolePermissions[currentUser.role];
-      tbody.innerHTML = rows.map(e => {
-        const isOwner = e.createdBy === currentUser.username;
-        const canEdit = (isOwner && userPerms.canUpdateOwn) || (!isOwner && userPerms.canUpdateOthers);
-        const canDelete = (isOwner && userPerms.canDeleteOwn) || (!isOwner && userPerms.canDeleteOthers);
-        return `<tr>
-          <td><span class="id-badge">${esc(e.reportId)}</span></td>
-          <td>${esc(e.tanggal)}</td>
-          <td>${esc(e.operator)}</td>
-          <td>${esc(e.produk)}</td>
-          <td>${esc(e.botol)}</td>
-          <td>${e.qtyKardus}</td>
-          <td>${e.qtyBotolPerKardus}</td>
-          <td><strong>${e.totalQty}</strong></td>
-          <td>${esc(e.botolPecahJenis || "—")}</td>
-          <td class="${e.qtyBotolPecah > 0 ? "pecah-tag" : ""}">${e.qtyBotolPecah}</td>
-          <td class="row-actions">
-            ${canEdit ? `<button class="btn btn-ghost btn-edit" data-id="${e.id}">Ubah</button>` : ""}
-            ${canDelete ? `<button class="btn btn-danger btn-delete" data-id="${e.id}">Hapus</button>` : ""}
-          </td>
-        </tr>`;
-      }).join("");
-    }
-    const totalQty = rows.reduce((s, e) => s + e.totalQty, 0);
-    const totalPecah = rows.reduce((s, e) => s + e.qtyBotolPecah, 0);
-    section.querySelector(".f-summary").textContent =
-      `${rows.length} entri ditampilkan · Total Qty Botol: ${totalQty.toLocaleString("id-ID")} · Total Botol Pecah: ${totalPecah.toLocaleString("id-ID")}`;
-  }
-
-  /* ================= tabs ================= */
-  mainTabbar.addEventListener("click", e => {
-    const btn = e.target.closest(".tab-btn");
-    if (!btn) return;
-    const view = btn.dataset.view;
-    if (view === "master" && currentUser.role !== "superuser") return;
-    mainTabbar.querySelectorAll(".tab-btn").forEach(b => b.classList.toggle("active", b === btn));
-    document.querySelectorAll(".content > .view").forEach(v => {
-      v.hidden = v.id !== "view-" + view;
-    });
-  });
-
-  /* ================= laporan ================= */
-  function initLaporan() {
-    document.getElementById("lap-generate").addEventListener("click", () => {
-      const lineSel = document.getElementById("lap-line").value;
-      const opSel = document.getElementById("lap-operator").value;
-      const start = document.getElementById("lap-start").value;
-      const end = document.getElementById("lap-end").value;
-
-      let rows = lsGet(LS_ENTRIES, []);
-      if (lineSel !== "all") rows = rows.filter(e => e.tab === lineSel);
-      if (opSel) rows = rows.filter(e => e.operator === opSel);
-      if (start) rows = rows.filter(e => e.tanggal >= start);
-      if (end) rows = rows.filter(e => e.tanggal <= end);
-      rows = rows.sort((a, b) => (a.tanggal < b.tanggal ? -1 : 1));
-
-      const resultBlock = document.getElementById("lap-result");
-      if (!rows.length) {
-        resultBlock.hidden = true;
-        toast("Tidak ada data yang cocok dengan kriteria laporan.", true);
         return;
       }
 
-      const lapId = genLaporanId();
-      lastLaporan = { id: lapId, rows };
-
-      document.getElementById("lap-id").textContent = lapId;
-      document.getElementById("lap-created").textContent = fmtDateTime(nowIso());
-      document.getElementById("lap-by").textContent = `${currentUser.name} (${currentUser.role === "superuser" ? "Super User" : "User"})`;
-      document.getElementById("lap-period").textContent = (start || end) ? `${start || "…"} s/d ${end || "…"}` : "Semua tanggal";
-
-      document.getElementById("lap-total-entries").textContent = rows.length;
-      document.getElementById("lap-total-kardus").textContent = rows.reduce((s, e) => s + e.qtyKardus, 0).toLocaleString("id-ID");
-      document.getElementById("lap-total-qty").textContent = rows.reduce((s, e) => s + e.totalQty, 0).toLocaleString("id-ID");
-      document.getElementById("lap-total-pecah").textContent = rows.reduce((s, e) => s + e.qtyBotolPecah, 0).toLocaleString("id-ID");
-
-      document.getElementById("lap-tbody").innerHTML = rows.map(e => `<tr>
-          <td><span class="id-badge">${esc(e.reportId)}</span></td>
-          <td>${LINE_LABEL[e.tab]}</td>
-          <td>${esc(e.tanggal)}</td>
-          <td>${esc(e.operator)}</td>
-          <td>${esc(e.produk)}</td>
-          <td>${esc(e.botol)}</td>
-          <td>${e.qtyKardus}</td>
-          <td><strong>${e.totalQty}</strong></td>
-          <td class="${e.qtyBotolPecah > 0 ? "pecah-tag" : ""}">${e.qtyBotolPecah}</td>
-        </tr>`).join("");
-
-      resultBlock.hidden = false;
-      toast(`Laporan dibuat — ${lapId}`);
+      if (deleteBtn) {
+        state.preview[line] = state.preview[line].filter(x => x.id !== deleteBtn.dataset.id);
+        state.pages[line] = 1;
+        persistPreview();
+        renderPreview(line);
+        toast("Data dihapus dari preview.");
+      }
     });
 
-    document.getElementById("lap-export").addEventListener("click", () => {
-      if (!lastLaporan) return;
+  }
+
+  function initTabs() {
+    const tabbar = el("mainTabbar");
+    if (!tabbar) return;
+    tabbar.addEventListener("click", event => {
+      const btn = event.target.closest(".tab-btn");
+      if (!btn || !state.currentUser) return;
+      const view = btn.dataset.view;
+      if ((view === "filling" || view === "press") && !hasAccess(view)) {
+        toast(`Anda tidak memiliki akses ke ${LINE_LABEL[view] || view}.`, true);
+        return;
+      }
+      if (view === "laporan" && !hasAccess("report")) {
+        toast("Anda tidak memiliki akses ke menu Laporan.", true);
+        return;
+      }
+      if (view === "master" && !hasAccess("master")) {
+        toast("Anda tidak memiliki akses ke menu Setting.", true);
+        return;
+      }
+
+      qsa(".tab-btn", tabbar).forEach(node => node.classList.toggle("active", node === btn));
+      qsa(".content > .view").forEach(node => { node.hidden = node.id !== "view-" + view; });
+    });
+  }
+
+  /* ------------------------- LAPORAN ------------------------- */
+  function renderLaporanRows() {
+    if (!state.lastLaporan) return;
+    const rows = state.lastLaporan.rows;
+    const tbody = el("lap-tbody");
+    const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PAGE_SIZE));
+    state.pages.laporan = Math.min(Math.max(1, state.pages.laporan), totalPages);
+    const page = state.pages.laporan;
+    const start = (page - 1) * CONFIG.PAGE_SIZE;
+    const visible = rows.slice(start, start + CONFIG.PAGE_SIZE);
+
+    tbody.innerHTML = visible.map(e => `
+      <tr>
+        <td><span class="id-badge">${esc(e.reportId)}</span></td>
+        <td>${esc(LINE_LABEL[e.tab] || e.tab)}</td>
+        <td>${esc(e.tanggal)}</td>
+        <td>${esc(e.operator)}</td>
+        <td>${esc(e.produk)}</td>
+        <td>${esc(e.botol)}</td>
+        <td>${Number(e.qtyKardus) || 0}</td>
+        <td><strong>${Number(e.totalQty) || 0}</strong></td>
+        <td>${Number(e.qtyBotolPecah) || 0}</td>
+      </tr>`).join("");
+
+    const from = rows.length ? start + 1 : 0;
+    const to = Math.min(start + CONFIG.PAGE_SIZE, rows.length);
+    el("lap-page-summary").textContent = `${from}–${to} dari ${rows.length} entri · Halaman ${page} dari ${totalPages}`;
+    renderPagination(el("lap-pagination"), page, totalPages, nextPage => {
+      state.pages.laporan = nextPage;
+      renderLaporanRows();
+    });
+  }
+
+  function initLaporan() {
+    const generate = el("lap-generate");
+    if (!generate) return;
+
+    generate.addEventListener("click", () => {
+      if (!hasAccess("report")) {
+        toast("Akun ini tidak memiliki akses membuat Laporan.", true);
+        return;
+      }
+      const line = el("lap-line").value;
+      const operator = el("lap-operator").value;
+      const start = el("lap-start").value;
+      const end = el("lap-end").value;
+      // Laporan hanya memakai data yang sudah benar-benar dikonfirmasi Spreadsheet.
+      let rows = state.entries.filter(e => !e._syncState);
+
+      if (line !== "all") rows = rows.filter(e => e.tab === line);
+      if (operator) rows = rows.filter(e => e.operator === operator);
+      if (start) rows = rows.filter(e => e.tanggal >= start);
+      if (end) rows = rows.filter(e => e.tanggal <= end);
+      rows.sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)));
+
+      const result = el("lap-result");
+      if (!rows.length) {
+        result.hidden = true;
+        toast("Tidak ada data yang cocok dengan filter laporan.", true);
+        return;
+      }
+
+      const id = genLaporanId();
+      state.lastLaporan = { id, rows };
+      state.pages.laporan = 1;
+      el("lap-id").textContent = id;
+      el("lap-created").textContent = fmtDateTime(nowIso());
+      el("lap-by").textContent = `${state.currentUser.name} (${normalizeRole(state.currentUser.role) === "superuser" ? "Super User" : "User Biasa"})`;
+      el("lap-period").textContent = (start || end) ? `${start || "…"} s/d ${end || "…"}` : "Semua tanggal";
+      el("lap-total-entries").textContent = rows.length;
+      el("lap-total-kardus").textContent = rows.reduce((s, e) => s + (Number(e.qtyKardus) || 0), 0).toLocaleString("id-ID");
+      el("lap-total-qty").textContent = rows.reduce((s, e) => s + (Number(e.totalQty) || 0), 0).toLocaleString("id-ID");
+      el("lap-total-pecah").textContent = rows.reduce((s, e) => s + (Number(e.qtyBotolPecah) || 0), 0).toLocaleString("id-ID");
+      renderLaporanRows();
+      result.hidden = false;
+    });
+
+    el("lap-export")?.addEventListener("click", () => {
+      if (!state.lastLaporan) return;
       const csv = toCSV(
         ["ID Laporan", "ID Pengerjaan", "Line", "Tanggal", "Operator", "Produk", "Botol", "Qty Kardus", "Total Qty", "Qty Pecah"],
-        lastLaporan.rows.map(e => [lastLaporan.id, e.reportId, LINE_LABEL[e.tab], e.tanggal, e.operator, e.produk, e.botol, e.qtyKardus, e.totalQty, e.qtyBotolPecah])
+        state.lastLaporan.rows.map(e => [state.lastLaporan.id, e.reportId, LINE_LABEL[e.tab], e.tanggal, e.operator, e.produk, e.botol, e.qtyKardus, e.totalQty, e.qtyBotolPecah])
       );
-      downloadText(`${lastLaporan.id}.csv`, csv);
-      toast("Laporan diexport ke CSV.");
+      downloadText(`${state.lastLaporan.id}.csv`, csv);
     });
-    document.getElementById("lap-print").addEventListener("click", () => window.print());
+
+    el("lap-print")?.addEventListener("click", () => window.print());
   }
 
-  /* ================= master data (superuser) ================= */
-  function renderMasterChips() {
-    const master = lsGet(LS_MASTER, {});
-    ["operator", "produk", "botol", "botolpecah"].forEach(cat => {
-      const list = master[cat] || [];
-      const wrap = document.querySelector(`.chip-list[data-cat="${cat}"]`);
-      wrap.innerHTML = list.length
-        ? list.map((v, i) => `<span class="chip">${esc(v)}<button data-cat="${cat}" data-idx="${i}" title="Hapus">✕</button></span>`).join("")
-        : `<span style="color:var(--ink-faint); font-size:12px;">Belum ada data.</span>`;
-    });
-  }
-  function initMasterData() {
-    renderMasterChips();
+  /* ------------------------- MASTER ------------------------- */
 
-    document.querySelectorAll(".chip-list").forEach(wrap => {
-      wrap.addEventListener("click", e => {
-        const btn = e.target.closest("button");
-        if (!btn) return;
-        const master = lsGet(LS_MASTER, {});
-        master[btn.dataset.cat].splice(Number(btn.dataset.idx), 1);
-        lsSet(LS_MASTER, master);
-        renderMasterChips();
-        refreshAllDropdowns();
-        toast("Item master dihapus.");
-      });
-    });
+  /* =========================================================
+   SEE MORE MASTER DATA
+   Hanya untuk Operator dan Produk
+   ========================================================= */
+  function updateMasterSeeMore(category, wrap) {
 
-    document.querySelectorAll(".chip-add").forEach(wrap => {
-      const cat = wrap.dataset.cat;
-      const input = wrap.querySelector("input");
-      const btn = wrap.querySelector("button");
-      function add() {
-        const val = input.value.trim();
-        if (!val) return;
-        const master = lsGet(LS_MASTER, {});
-        master[cat] = master[cat] || [];
-        if (master[cat].some(v => v.toLowerCase() === val.toLowerCase())) {
-          toast("Item sudah ada di daftar.", true); return;
-        }
-        master[cat].push(val);
-        lsSet(LS_MASTER, master);
-        input.value = "";
-        renderMasterChips();
-        refreshAllDropdowns();
-        toast("Item master ditambahkan.");
-      }
-      btn.addEventListener("click", add);
-      input.addEventListener("keydown", e => { if (e.key === "Enter") { e.preventDefault(); add(); } });
-    });
+    // Hanya Operator dan Produk yang dibatasi
+    const isLimited =
+      category === "operator" ||
+      category === "produk";
 
-    document.getElementById("masterCsvInput").addEventListener("change", function () {
-      const file = this.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const rows = parseCSV(String(reader.result));
-        const master = lsGet(LS_MASTER, {});
-        let count = 0;
-        rows.forEach(r => {
-          const cat = normalizeCategory(r.kategori);
-          if (!cat) return;
-          master[cat] = master[cat] || [];
-          if (!master[cat].some(v => v.toLowerCase() === r.nilai.toLowerCase())) {
-            master[cat].push(r.nilai);
-            count++;
-          }
-        });
-        lsSet(LS_MASTER, master);
-        renderMasterChips();
-        refreshAllDropdowns();
-        toast(`${count} item master diimpor dari CSV.`);
-        this.value = "";
-      };
-      reader.readAsText(file);
-    });
-
-    document.getElementById("masterCsvExport").addEventListener("click", () => {
-      const master = lsGet(LS_MASTER, {});
-      const rows = [];
-      Object.keys(master).forEach(cat => (master[cat] || []).forEach(v => rows.push([cat, v])));
-      downloadText(`master-data-${todayStr()}.csv`, toCSV(["kategori", "nilai"], rows));
-      toast("Data master diunduh sebagai CSV.");
-    });
-  }
-
-  /* ================= user management (superuser) ================= */
-  let editingUserForPerms = null;
-  let tempPermissions = {};
-
-  const permissionDescriptions = {
-    canCreate: { label: "Buat Data", desc: "Membuat data baru" },
-    canUpdateOwn: { label: "Update Milik Sendiri", desc: "Mengubah data sendiri" },
-    canUpdateOthers: { label: "Update Milik Orang", desc: "Mengubah data orang lain" },
-    canDeleteOwn: { label: "Hapus Milik Sendiri", desc: "Menghapus data sendiri" },
-    canDeleteOthers: { label: "Hapus Milik Orang", desc: "Menghapus data orang lain" },
-    canManageMaster: { label: "Kelola Master", desc: "Mengelola data master" },
-    canManageUsers: { label: "Kelola User", desc: "Mengelola user sistem" }
-  };
-
-  function openPermissionModal(username) {
-    const users = lsGet(LS_USERS, []);
-    const user = users.find(u => u.username === username);
-    if (!user) return;
-    if (user.role === "superuser") {
-      toast("Super User memiliki semua izin.", true);
+    if (!isLimited) {
+      wrap.classList.remove("limit-6", "show-all");
       return;
     }
 
-    editingUserForPerms = user;
-    tempPermissions = JSON.parse(JSON.stringify(user.permissions || rolePermissions.user));
+    // Aktifkan CSS pembatas 6 item
+    wrap.classList.add("limit-6");
 
-    const modal = document.getElementById("permissionModal");
-    const userInfo = document.getElementById("permUserInfo");
-    const permGrid = document.getElementById("permGrid");
+    const parent = wrap.parentElement;
+    if (!parent) return;
 
-    userInfo.innerHTML = `<strong>${esc(user.name)}</strong> (${esc(user.username)})`;
+    // Cari tombol jika sebelumnya sudah pernah dibuat
+    let button = parent.querySelector(
+      `.see-more-btn[data-see-more="${category}"]`
+    );
 
-    permGrid.innerHTML = Object.entries(permissionDescriptions).map(([key, desc]) => {
-      const checked = tempPermissions[key] || false;
-      return `<label class="perm-item">
-        <input type="checkbox" name="perm-${key}" value="${key}" ${checked ? "checked" : ""}>
-        <div>
-          <span class="perm-name">${desc.label}</span>
-          <span class="perm-desc">${desc.desc}</span>
-        </div>
-      </label>`;
-    }).join("");
+    // Kalau belum ada, buat otomatis
+    if (!button) {
 
-    modal.hidden = false;
+      button = document.createElement("button");
+
+      button.type = "button";
+      button.className = "see-more-btn";
+      button.dataset.seeMore = category;
+
+      // Letakkan setelah daftar chip
+      wrap.insertAdjacentElement("afterend", button);
+
+      button.addEventListener("click", () => {
+
+        const isOpen = wrap.classList.toggle("show-all");
+
+        const total = wrap.querySelectorAll(".chip").length;
+        const remaining = Math.max(0, total - 6);
+
+        button.textContent = isOpen
+          ? "Sembunyikan"
+          : `Lihat lainnya (${remaining})`;
+      });
+    }
+
+    // Hitung jumlah data
+    const total = wrap.querySelectorAll(".chip").length;
+
+    if (total > 6) {
+
+      button.hidden = false;
+
+      const remaining = total - 6;
+
+      button.textContent =
+        wrap.classList.contains("show-all")
+          ? "Sembunyikan"
+          : `Lihat lainnya (${remaining})`;
+
+    } else {
+
+      // Kalau data <= 6, tombol tidak perlu ditampilkan
+      wrap.classList.remove("show-all");
+      button.hidden = true;
+    }
   }
 
-  function closePermissionModal() {
-    const modal = document.getElementById("permissionModal");
-    modal.hidden = true;
-    editingUserForPerms = null;
-    tempPermissions = {};
-  }
+  function renderMasterChips() {
 
-  function savePermissions() {
-    if (!editingUserForPerms) return;
+  ["operator", "produk", "botol", "botolpecah"].forEach(category => {
 
-    const checkboxes = document.querySelectorAll("#permGrid input[type='checkbox']");
-    checkboxes.forEach(cb => {
-      const key = cb.value;
-      tempPermissions[key] = cb.checked;
+    const wrap = qs(`.chip-list[data-cat="${category}"]`);
+
+    if (!wrap) return;
+
+    const values = state.master[category] || [];
+
+    wrap.innerHTML = values.length
+      ? values.map(value => {
+
+          const readonly = category === "botolpecah";
+
+          return `
+            <span class="chip">
+              ${esc(value)}
+              ${
+                readonly
+                  ? ""
+                  : `
+                    <button
+                      type="button"
+                      data-cat="${category}"
+                      data-value="${esc(value)}"
+                      title="Hapus"
+                    >
+                      ✕
+                    </button>
+                  `
+              }
+            </span>
+          `;
+
+        }).join("")
+
+      : `
+        <span style="
+          color:var(--ink-faint);
+          font-size:12px;
+        ">
+          Belum ada data.
+        </span>
+      `;
+
+
+    /* =========================================
+       UPDATE SEE MORE
+       ========================================= */
+    updateMasterSeeMore(category, wrap);
+
+  });
+
+}
+
+  // function renderMasterChips() {
+  //   ["operator", "produk", "botol", "botolpecah"].forEach(category => {
+  //     const wrap = qs(`.chip-list[data-cat="${category}"]`);
+  //     if (!wrap) return;
+  //     const values = state.master[category] || [];
+  //     wrap.innerHTML = values.length ? values.map(value => {
+  //       const readonly = category === "botolpecah";
+  //       return `<span class="chip">${esc(value)}${readonly ? "" : `<button type="button" data-cat="${category}" data-value="${esc(value)}" title="Hapus">✕</button>`}</span>`;
+  //     }).join("") : '<span style="color:var(--ink-faint);font-size:12px">Belum ada data.</span>';
+  //   });
+  //     /* =========================================
+  //       UPDATE SEE MORE
+  //       ========================================= */
+  //     updateMasterSeeMore(category, wrap);
+  // }
+
+  function initMasterData() {
+    qsa(".chip-list").forEach(wrap => {
+      wrap.addEventListener("click", async event => {
+        const btn = event.target.closest("button[data-cat]");
+        if (!btn) return;
+        if (!hasAccess("master")) return toast("Akun ini tidak memiliki akses mengubah Master Data.", true);
+        if (!confirm(`Hapus "${btn.dataset.value}" dari master?`)) return;
+        try {
+          const data = await apiPost("master.remove", { category: btn.dataset.cat, value: btn.dataset.value });
+          state.master = data.master;
+          renderMasterChips();
+          refreshAllDropdowns();
+          toast("Master data berhasil dihapus.");
+        } catch (err) { toast(err.message, true); }
+      });
     });
 
-    const users = lsGet(LS_USERS, []);
-    const user = users.find(u => u.username === editingUserForPerms.username);
-    if (user) {
-      user.permissions = tempPermissions;
-      lsSet(LS_USERS, users);
-      renderUsers();
-      closePermissionModal();
-      toast(`Izin untuk "${user.name}" telah diperbarui.`);
-    }
+    qsa(".chip-add").forEach(wrap => {
+      const category = wrap.dataset.cat;
+      if (category === "botolpecah") return;
+      const input = qs("input", wrap);
+      const btn = qs("button", wrap);
+      if (!input || !btn) return;
+
+      async function addMaster() {
+        if (!hasAccess("master")) return toast("Akun ini tidak memiliki akses mengubah Master Data.", true);
+        const value = input.value.trim();
+        if (!value) return;
+        btn.disabled = true;
+        try {
+          const data = await apiPost("master.add", { category, value });
+          state.master = data.master;
+          input.value = "";
+          renderMasterChips();
+          refreshAllDropdowns();
+          toast("Master data berhasil ditambahkan.");
+        } catch (err) { toast(err.message, true); }
+        finally { btn.disabled = false; }
+      }
+
+      btn.addEventListener("click", addMaster);
+      input.addEventListener("keydown", event => {
+        if (event.key === "Enter") { event.preventDefault(); addMaster(); }
+      });
+    });
+
+    el("masterReload")?.addEventListener("click", async event => {
+      const btn = event.currentTarget;
+      btn.disabled = true;
+      try { await loadBootstrap(); await loadAppData(); toast("Data terbaru sudah dimuat dari Spreadsheet."); }
+      catch (err) { toast(err.message, true); }
+      finally { btn.disabled = false; }
+    });
+
+    el("masterCsvExport")?.addEventListener("click", () => {
+      const op = state.master.operator || [];
+      const produk = state.master.produk || [];
+      const botol = state.master.botol || [];
+      const max = Math.max(op.length, produk.length, botol.length);
+      const rows = Array.from({ length: max }, (_, i) => [op[i] || "", produk[i] || "", botol[i] || ""]);
+      downloadText(`master-data-${todayStr()}.csv`, toCSV(["Nama Operator", "Nama Produk", "Nama Botol"], rows));
+    });
+  }
+
+  /* ------------------------- USERS / CUSTOM PERMISSION ------------------------- */
+  function permissionSummary(user) {
+    const role = normalizeRole(user.role);
+    if (role === "superuser") return "Akses penuh";
+
+    const p = user.permissions || {};
+    const labels = [];
+    if (p.filling) labels.push("Filling");
+    if (p.press) labels.push("Press");
+    if (p.report) labels.push("Laporan");
+    if (p.master) labels.push("Master");
+    labels.push(p.viewAllEntries ? "Semua Data" : "Data Sendiri");
+    return labels.join(" • ");
   }
 
   function renderUsers() {
-    const users = lsGet(LS_USERS, []);
-    document.getElementById("userTbody").innerHTML = users.map(u => {
-      const perms = u.permissions || rolePermissions[u.role];
-      const updateIcon = perms.canUpdateOwn ? "✓" : "✗";
-      const deleteIcon = perms.canDeleteOwn ? "✓" : "✗";
-      const permissionsInfo = `${updateIcon} Ubah | ${deleteIcon} Hapus`;
-      return `<tr>
-        <td>${esc(u.name)}</td>
-        <td class="mono">${esc(u.username)}</td>
-        <td><span class="role-tag ${u.role}">${u.role === "superuser" ? "Super User" : "User Biasa"}</span></td>
-        <td><span class="role-permissions" title="Update Milik Sendiri | Hapus Milik Sendiri">${permissionsInfo}</span></td>
-        <td>${u.username === currentUser.username ? "" : `<button class="btn btn-ghost btn-edit-perms" data-username="${esc(u.username)}">Atur Izin</button> <button class="btn btn-danger btn-del-user" data-username="${esc(u.username)}">Hapus</button>`}</td>
-      </tr>`;
+    const tbody = el("userTbody");
+    if (!tbody) return;
+    if (!state.currentUser || !hasAccess("users")) {
+      tbody.innerHTML = "";
+      return;
+    }
+
+    tbody.innerHTML = state.users.map(user => {
+      const isCurrent = String(user.username).toLowerCase() === String(state.currentUser.username).toLowerCase();
+      const role = normalizeRole(user.role);
+      const canCustomize = !isCurrent && role === "user";
+
+      return `
+        <tr>
+          <td>${esc(user.name)}</td>
+          <td class="mono">${esc(user.username)}</td>
+          <td>
+            ${isCurrent
+              ? `<span class="role-tag ${esc(role)}">${role === "superuser" ? "Super User" : "User Biasa"}</span>`
+              : `<select class="user-role-select" data-username="${esc(user.username)}">
+                  <option value="user" ${role === "user" ? "selected" : ""}>User Biasa</option>
+                  <option value="superuser" ${role === "superuser" ? "selected" : ""}>Super User</option>
+                </select>`
+            }
+          </td>
+          <td>
+            <span class="hint-text">${esc(permissionSummary(user))}</span>
+            ${canCustomize
+              ? `<div style="margin-top:6px"><button type="button" class="btn btn-ghost btn-permission-user" data-username="${esc(user.username)}">Atur Akses</button></div>`
+              : ""
+            }
+          </td>
+          <td>
+            ${isCurrent ? '<span class="hint-text">Akun aktif</span>' : `
+              <button type="button" class="btn btn-secondary btn-role-user" data-username="${esc(user.username)}">Simpan Role</button>
+              <button type="button" class="btn btn-ghost btn-reset-password" data-username="${esc(user.username)}">Reset Password</button>
+              <button type="button" class="btn btn-danger btn-del-user" data-username="${esc(user.username)}">Hapus</button>
+            `}
+          </td>
+        </tr>`;
     }).join("");
   }
 
+  function openPermissionEditor(username) {
+    const user = state.users.find(item =>
+      String(item.username).toLowerCase() === String(username).toLowerCase()
+    );
+    const editor = el("permissionEditor");
+    if (!user || !editor) return;
+
+    if (normalizeRole(user.role) !== "user") {
+      toast("Super User selalu memiliki akses penuh dan tidak memerlukan custom permission.", true);
+      return;
+    }
+
+    el("permissionUsername").value = user.username;
+    el("permissionUserLabel").textContent = `${user.name} (${user.username})`;
+
+    const permissions = user.permissions || ROLE_ACCESS.user;
+    qsa(".permission-check", editor).forEach(input => {
+      input.checked = permissions[input.dataset.permission] === true;
+    });
+
+    editor.hidden = false;
+    editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function closePermissionEditor() {
+    const editor = el("permissionEditor");
+    if (editor) editor.hidden = true;
+    if (el("permissionUsername")) el("permissionUsername").value = "";
+  }
+
+  function readPermissionEditor() {
+    const result = {};
+    USER_PERMISSION_KEYS.forEach(key => { result[key] = false; });
+    qsa(".permission-check", el("permissionEditor") || document).forEach(input => {
+      result[input.dataset.permission] = !!input.checked;
+    });
+    return result;
+  }
+
+  function applyDefaultUserPermissionsToEditor() {
+    const editor = el("permissionEditor");
+    if (!editor) return;
+    qsa(".permission-check", editor).forEach(input => {
+      input.checked = ROLE_ACCESS.user[input.dataset.permission] === true;
+    });
+  }
+
   function initUserManagement() {
-    renderUsers();
+    const form = el("userAddForm");
+    const tbody = el("userTbody");
+    if (!form || !tbody) return;
 
-    // Modal controls
-    document.getElementById("closePermModal").addEventListener("click", closePermissionModal);
-    document.getElementById("cancelPermModal").addEventListener("click", closePermissionModal);
-    document.getElementById("savePermModal").addEventListener("click", savePermissions);
-
-    // Close modal on backdrop click
-    document.querySelector(".modal-backdrop").addEventListener("click", closePermissionModal);
-
-    document.getElementById("userAddForm").addEventListener("submit", e => {
-      e.preventDefault();
-      const name = document.getElementById("newUserName").value.trim();
-      const username = document.getElementById("newUserUsername").value.trim();
-      const password = document.getElementById("newUserPassword").value;
-      const role = document.getElementById("newUserRole").value;
-      if (!name || !username || !password) return;
-      const users = lsGet(LS_USERS, []);
-      if (users.some(u => u.username.toLowerCase() === username.toLowerCase())) {
-        toast("Username sudah digunakan.", true); return;
+    form.addEventListener("submit", async event => {
+      if (!hasAccess("users")) {
+        event.preventDefault();
+        toast("Kelola user hanya dapat dilakukan Super User.", true);
+        return;
       }
-      users.push({ name, username, password, role, permissions: rolePermissions[role] });
-      lsSet(LS_USERS, users);
-      e.target.reset();
-      renderUsers();
-      refreshAllDropdowns();
-      toast("User baru ditambahkan.");
-    });
-
-    document.getElementById("userTbody").addEventListener("click", e => {
-      const delBtn = e.target.closest(".btn-del-user");
-      const editBtn = e.target.closest(".btn-edit-perms");
-      if (delBtn) {
-        let users = lsGet(LS_USERS, []);
-        const target = users.find(u => u.username === delBtn.dataset.username);
-        const superusersLeft = users.filter(u => u.role === "superuser").length;
-        if (target.role === "superuser" && superusersLeft <= 1) {
-          toast("Minimal harus ada satu Super User.", true); return;
-        }
-        if (!confirm(`Hapus user "${target.name}"?`)) return;
-        users = users.filter(u => u.username !== delBtn.dataset.username);
-        lsSet(LS_USERS, users);
+      event.preventDefault();
+      const submit = qs('button[type="submit"]', form);
+      submit.disabled = true;
+      try {
+        const data = await apiPost("user.add", {
+          name: el("newUserName").value.trim(),
+          username: el("newUserUsername").value.trim(),
+          password: el("newUserPassword").value,
+          role: el("newUserRole").value
+        });
+        state.users = data.users || [];
+        form.reset();
         renderUsers();
-        toast("User dihapus.");
-      } else if (editBtn) {
-        openPermissionModal(editBtn.dataset.username);
+        toast("User berhasil ditambahkan. User Biasa dapat dikustom melalui Atur Akses.");
+      } catch (err) { toast(err.message, true); }
+      finally { submit.disabled = false; }
+    });
+
+    tbody.addEventListener("click", async event => {
+      if (!hasAccess("users")) {
+        toast("Kelola user hanya dapat dilakukan Super User.", true);
+        return;
+      }
+
+      const permissionBtn = event.target.closest(".btn-permission-user");
+      if (permissionBtn) {
+        openPermissionEditor(permissionBtn.dataset.username);
+        return;
+      }
+
+      const resetPasswordBtn = event.target.closest(".btn-reset-password");
+      if (resetPasswordBtn) {
+        openResetPasswordDialog(resetPasswordBtn.dataset.username);
+        return;
+      }
+
+      const roleBtn = event.target.closest(".btn-role-user");
+      if (roleBtn) {
+        const username = roleBtn.dataset.username;
+        const select = qsa(".user-role-select", tbody).find(node => node.dataset.username === username);
+        if (!select) return;
+
+        roleBtn.disabled = true;
+        try {
+          const data = await apiPost("user.role", {
+            username,
+            role: select.value
+          });
+          state.users = data.users || [];
+          closePermissionEditor();
+          renderUsers();
+          toast(`Role ${username} berhasil diperbarui.`);
+        } catch (err) {
+          toast(err.message, true);
+        } finally {
+          roleBtn.disabled = false;
+        }
+        return;
+      }
+
+      const btn = event.target.closest(".btn-del-user");
+      if (!btn) return;
+      if (!confirm(`Hapus user "${btn.dataset.username}"?`)) return;
+      try {
+        const data = await apiPost("user.remove", { username: btn.dataset.username });
+        state.users = data.users || [];
+        closePermissionEditor();
+        renderUsers();
+        toast("User berhasil dihapus.");
+      } catch (err) { toast(err.message, true); }
+    });
+
+    el("permissionCancelBtn")?.addEventListener("click", closePermissionEditor);
+    el("permissionResetBtn")?.addEventListener("click", applyDefaultUserPermissionsToEditor);
+
+    el("permissionSaveBtn")?.addEventListener("click", async event => {
+      if (!hasAccess("users")) {
+        toast("Hak akses hanya dapat diatur oleh Super User.", true);
+        return;
+      }
+
+      const username = el("permissionUsername")?.value || "";
+      if (!username) return toast("Pilih user terlebih dahulu.", true);
+
+      const btn = event.currentTarget;
+      btn.disabled = true;
+      try {
+        const data = await apiPost("user.permissions", {
+          username,
+          permissions: readPermissionEditor()
+        });
+        state.users = data.users || [];
+        renderUsers();
+        closePermissionEditor();
+        toast(`Hak akses ${username} berhasil disimpan. User harus login kembali.`);
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        btn.disabled = false;
       }
     });
   }
 
-  /* ================= auth ================= */
-  function showApp() {
-    userAvatar.textContent = currentUser.name.trim().charAt(0).toUpperCase();
-    userNameEl.textContent = currentUser.name;
-    userRoleEl.textContent = currentUser.role === "superuser" ? "Super User" : "User Biasa";
-    masterTabBtn.hidden = currentUser.role !== "superuser";
-    deviceDateDisplay.textContent = new Date().toLocaleDateString("id-ID", { weekday: "long", day: "2-digit", month: "long", year: "numeric" });
-
-    refreshAllDropdowns();
-    renderEntries("filling");
-    renderEntries("press");
+  /* ------------------------- PASSWORD MANAGEMENT ------------------------- */
+  function openDialog(dialog) {
+    if (!dialog) return;
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
   }
 
-  logoutBtn.addEventListener("click", () => {
-    localStorage.removeItem(LS_SESSION);
-    currentUser = null;
-    window.location.href = "login.html";
-  });
+  function closeDialog(dialog) {
+    if (!dialog) return;
+    if (typeof dialog.close === "function") dialog.close();
+    else dialog.removeAttribute("open");
+  }
 
-  /* ================= Google Sheets Integration Listener ================= */
-  window.addEventListener('masterDataUpdated', (event) => {
-    console.log("🔄 Master data dari Google Sheets received:", event.detail);
-    // Update localStorage dengan data dari Google Sheets
-    lsSet(LS_MASTER, event.detail);
-    // Refresh semua dropdown dengan data terbaru
-    refreshAllDropdowns();
-    renderMasterChips();
-    toast("📡 Data Master berhasil disinkronkan dari Google Sheets");
-  });
+  function clearOwnPasswordForm() {
+    const form = el("changePasswordForm");
+    if (form) form.reset();
+    const error = el("changePasswordError");
+    if (error) {
+      error.hidden = true;
+      error.textContent = "";
+    }
+  }
 
-  /* ================= init ================= */
-  function init() {
-    const session = lsGet(LS_SESSION, null);
-    if (!session) {
-      window.location.href = "login.html";
+  function openResetPasswordDialog(username) {
+    if (!hasAccess("users")) {
+      toast("Reset password user hanya dapat dilakukan Super User.", true);
       return;
     }
-    const users = lsGet(LS_USERS, []);
-    const found = users.find(u => u.username === session.username);
-    if (!found) {
-      localStorage.removeItem(LS_SESSION);
-      window.location.href = "login.html";
+
+    const user = state.users.find(item =>
+      String(item.username).toLowerCase() === String(username).toLowerCase()
+    );
+    if (!user) return toast("User tidak ditemukan.", true);
+
+    const form = el("resetPasswordForm");
+    if (form) form.reset();
+    el("resetPasswordUsername").value = user.username;
+    el("resetPasswordUserLabel").textContent = `${user.name} (${user.username})`;
+
+    const error = el("resetPasswordError");
+    if (error) {
+      error.hidden = true;
+      error.textContent = "";
+    }
+    openDialog(el("resetPasswordDialog"));
+  }
+
+  function initPasswordManagement() {
+    const ownDialog = el("changePasswordDialog");
+    const ownForm = el("changePasswordForm");
+    const resetDialog = el("resetPasswordDialog");
+    const resetForm = el("resetPasswordForm");
+
+    el("changePasswordBtn")?.addEventListener("click", () => {
+      clearOwnPasswordForm();
+      openDialog(ownDialog);
+    });
+
+    ["changePasswordCloseBtn", "changePasswordCancelBtn"].forEach(id => {
+      el(id)?.addEventListener("click", () => {
+        closeDialog(ownDialog);
+        clearOwnPasswordForm();
+      });
+    });
+
+    ownForm?.addEventListener("submit", async event => {
+      event.preventDefault();
+      const error = el("changePasswordError");
+      const submit = el("changePasswordSaveBtn");
+      const oldPassword = el("currentPassword")?.value || "";
+      const newPassword = el("newOwnPassword")?.value || "";
+      const confirmPassword = el("confirmOwnPassword")?.value || "";
+
+      if (error) error.hidden = true;
+      if (newPassword.length < 6) {
+        if (error) {
+          error.textContent = "Password baru minimal 6 karakter.";
+          error.hidden = false;
+        }
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        if (error) {
+          error.textContent = "Konfirmasi password baru tidak sama.";
+          error.hidden = false;
+        }
+        return;
+      }
+      if (oldPassword === newPassword) {
+        if (error) {
+          error.textContent = "Password baru harus berbeda dari password lama.";
+          error.hidden = false;
+        }
+        return;
+      }
+
+      if (submit) {
+        submit.disabled = true;
+        submit.textContent = "Menyimpan…";
+      }
+      try {
+        await apiPost("password.change", { oldPassword, newPassword });
+        closeDialog(ownDialog);
+        state.token = "";
+        state.currentUser = null;
+        localStorage.removeItem(CONFIG.TOKEN_KEY);
+        localStorage.removeItem(CONFIG.USER_KEY);
+        alert("Password berhasil diubah. Silakan login kembali menggunakan password baru.");
+        window.location.replace("login.html");
+      } catch (err) {
+        if (error) {
+          error.textContent = err.message;
+          error.hidden = false;
+        }
+      } finally {
+        if (submit) {
+          submit.disabled = false;
+          submit.textContent = "Simpan Password";
+        }
+      }
+    });
+
+    ["resetPasswordCloseBtn", "resetPasswordCancelBtn"].forEach(id => {
+      el(id)?.addEventListener("click", () => closeDialog(resetDialog));
+    });
+
+    resetForm?.addEventListener("submit", async event => {
+      event.preventDefault();
+      if (!hasAccess("users")) return toast("Reset password hanya dapat dilakukan Super User.", true);
+
+      const username = el("resetPasswordUsername")?.value || "";
+      const newPassword = el("resetNewPassword")?.value || "";
+      const confirmPassword = el("resetConfirmPassword")?.value || "";
+      const error = el("resetPasswordError");
+      const submit = el("resetPasswordSaveBtn");
+
+      if (error) error.hidden = true;
+      if (!username) return toast("User belum dipilih.", true);
+      if (newPassword.length < 6) {
+        if (error) {
+          error.textContent = "Password baru minimal 6 karakter.";
+          error.hidden = false;
+        }
+        return;
+      }
+      if (newPassword !== confirmPassword) {
+        if (error) {
+          error.textContent = "Konfirmasi password baru tidak sama.";
+          error.hidden = false;
+        }
+        return;
+      }
+
+      if (submit) {
+        submit.disabled = true;
+        submit.textContent = "Mereset…";
+      }
+      try {
+        const data = await apiPost("password.reset", { username, newPassword });
+        if (Array.isArray(data.users)) state.users = data.users;
+        renderUsers();
+        closeDialog(resetDialog);
+        toast(`Password ${username} berhasil direset. User harus login kembali.`);
+      } catch (err) {
+        if (error) {
+          error.textContent = err.message;
+          error.hidden = false;
+        }
+      } finally {
+        if (submit) {
+          submit.disabled = false;
+          submit.textContent = "Reset Password";
+        }
+      }
+    });
+  }
+
+  function initLogout() {
+    el("logoutBtn")?.addEventListener("click", async () => {
+      try { if (state.token) await apiPost("logout"); } catch (_) {}
+      state.token = "";
+      localStorage.removeItem(CONFIG.TOKEN_KEY);
+      localStorage.removeItem(CONFIG.USER_KEY);
+      window.location.replace("login.html");
+    });
+  }
+
+  async function initAppPage() {
+    if (!state.token) {
+      window.location.replace("login.html");
       return;
     }
-    currentUser = found;
+
+    buildPressView();
     wireLineView("filling");
     wireLineView("press");
+    initTabs();
     initLaporan();
     initMasterData();
     initUserManagement();
-    showApp();
-    
-    // Initialize Google Sheets Integration (async)
-    if (window.SheetsIntegration) {
-      console.log("🚀 Initializing Google Sheets Integration...");
+    initPasswordManagement();
+    initLogout();
 
-      if (GOOGLE_WEBAPP_URL && !GOOGLE_WEBAPP_URL.includes("PASTE_WEBAPP_URL_HERE")) {
-        const currentWebhook = window.SheetsIntegration.getWebhookUrl();
-        if (!currentWebhook) {
-          window.SheetsIntegration.setWebhookUrl(GOOGLE_WEBAPP_URL);
-        }
+    // Tampilkan aplikasi langsung memakai profil + master cache terakhir.
+    // Validasi server tetap berjalan segera setelahnya.
+    try {
+      const cachedUser = JSON.parse(localStorage.getItem(CONFIG.USER_KEY) || "null");
+      const cachedMaster = JSON.parse(localStorage.getItem(CONFIG.MASTER_KEY) || "null");
+      if (cachedUser && cachedUser.username) {
+        state.currentUser = cachedUser;
+        if (cachedMaster) state.master = cachedMaster;
+        refreshAllDropdowns();
+        loadPersistedPreview();
+        restoreFormDraft("filling");
+        restoreFormDraft("press");
+        renderPreview("filling");
+        renderPreview("press");
+        renderUserHeader();
+        el("appScreen").hidden = false;
+        setConnection("loading", "Menyegarkan data…");
       }
+    } catch (_) {}
 
-      window.SheetsIntegration.initialize().catch(err => {
-        console.error("❌ Failed to initialize Google Sheets:", err);
-        toast("⚠️ Tidak dapat terhubung ke Google Sheets, menggunakan data lokal", true);
+    try {
+      // Bootstrap sekarang ringan: hanya validasi user + master dropdown.
+      await loadBootstrap();
+      if (state.currentUser) {
+        localStorage.setItem(CONFIG.USER_KEY, JSON.stringify(state.currentUser));
+      }
+      el("appScreen").hidden = false;
+
+      // Daftar pengerjaan/users dimuat setelah halaman sudah bisa dipakai.
+      loadAppData().catch(err => {
+        setConnection("error", "Daftar data gagal dimuat");
+        toast(err.message, true);
       });
+    } catch (err) {
+      state.token = "";
+      state.currentUser = null;
+      localStorage.removeItem(CONFIG.TOKEN_KEY);
+      localStorage.removeItem(CONFIG.USER_KEY);
+      alert(`Sesi/koneksi tidak valid: ${err.message}`);
+      window.location.replace("login.html");
     }
   }
-  init();
+
+  if (pageType === "login") initLoginPage();
+  else initAppPage();
 })();
