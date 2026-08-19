@@ -654,11 +654,42 @@ function pressBalanceForKey_(produk, botol) {
   return { filling: filling, press: press, closed: closed, remaining: filling - press - closed };
 }
 
+function historicalPressBalancePair_(produkInput, botolInput) {
+  const produkRaw = String(produkInput || '').trim();
+  const botolRaw = String(botolInput || '').trim();
+  if (!produkRaw || !botolRaw) {
+    throw new Error('Produk dan Botol untuk penutupan sisa Press wajib diisi.');
+  }
+
+  const key = balanceKey_(produkRaw, botolRaw);
+  const entries = getEntries_();
+
+  // Penutupan adalah tindakan atas saldo historis, jadi referensi yang sah
+  // adalah data Filling yang memang pernah tersimpan — bukan Master saat ini.
+  // Ini memungkinkan produk/botol lama tetap ditutup setelah dihapus dari Master,
+  // tetapi mencegah request membuat penutupan untuk kombinasi fiktif.
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.tab === 'filling' && balanceKey_(entry.produk, entry.botol) === key) {
+      return {
+        produk: String(entry.produk || '').trim(),
+        botol: String(entry.botol || '').trim()
+      };
+    }
+  }
+
+  throw new Error('Data Filling historis untuk ' + produkRaw + ' / ' + botolRaw + ' tidak ditemukan.');
+}
+
 function closePressRemainder_(user, data) {
   if (!data) throw new Error('Data penutupan sisa Press kosong.');
-  const master = getMaster_();
-  const produk = canonicalMasterValue_(master.produk, data.produk, 'Produk');
-  const botol = canonicalMasterValue_(master.botol, data.botol, 'Botol');
+
+  // JANGAN validasi ke Master di sini. Master hanya membatasi INPUT BARU.
+  // Tutup Sisa harus tetap dapat memproses saldo historis yang produknya
+  // sudah dihapus dari Master.
+  const historicalPair = historicalPressBalancePair_(data.produk, data.botol);
+  const produk = historicalPair.produk;
+  const botol = historicalPair.botol;
   const alasan = String(data.alasan || '').trim();
   if (alasan.length < 5) throw new Error('Alasan Tutup Sisa wajib diisi minimal 5 karakter.');
   if (alasan.length > 500) throw new Error('Alasan Tutup Sisa maksimal 500 karakter.');

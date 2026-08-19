@@ -21,3 +21,10 @@ PEMASANGAN:
 - Deploy ulang Web App Apps Script (Manage deployments > Edit/New version > Deploy).
 - Sheet "Penutupan Press" akan dibuat otomatis saat penutupan pertama dilakukan.
   Anda juga boleh menjalankan setupSpreadsheet() satu kali untuk membuat sheet tersebut lebih awal.
+
+
+UPDATE HISTORIS MASTER:
+- Tombol Tutup Sisa tetap dapat digunakan untuk Produk/Botol yang sudah dihapus dari Master.
+- Backend memvalidasi penutupan terhadap data Filling historis, bukan Master aktif.
+- Tombol Gunakan dinonaktifkan bila Produk/Botol sudah tidak ada di Master, karena input Press baru tetap wajib menggunakan Master aktif.
+- Jika ingin melanjutkan pengerjaan Press untuk item lama, tambahkan kembali Produk/Botol tersebut ke Master.

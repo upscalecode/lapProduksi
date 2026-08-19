@@ -37,7 +37,7 @@
     PAGE_SIZE: 20,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
-    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbxXK8_K0Mvp2WXk0YIORp3L2Ez5JyDHIUqKJPHvT-kDdsRxgUrmCF0VkOFerleW0VqZDw/exec"
+    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbwhPdhaZ2Q1VrkasN_e0EXARua3uVIBcltKcq3l8E87c59QQMXvmxSThmtPjy1_mvGq1Q/exec"
   };
 
   const LINE_LABEL = { filling: "Filling", press: "Press" };
@@ -980,10 +980,18 @@
 
     const allRows = getPressBalanceRows();
     const rows = allRows.filter(row => row.remaining > 0);
-    tbody.innerHTML = rows.length ? rows.map(row => `
+    tbody.innerHTML = rows.length ? rows.map(row => {
+      const produkAktif = isMasterValue("produk", row.produk);
+      const botolAktif = isMasterValue("botol", row.botol);
+      const bisaDigunakan = produkAktif && botolAktif;
+      const masterStatus = bisaDigunakan
+        ? ""
+        : '<div class="press-master-history">Tidak ada di Master</div>';
+
+      return `
       <tr>
-        <td>${esc(row.produk)}</td>
-        <td>${esc(row.botol)}</td>
+        <td>${esc(row.produk)}${!produkAktif ? masterStatus : ""}</td>
+        <td>${esc(row.botol)}${produkAktif && !botolAktif ? masterStatus : ""}</td>
         <td>${row.fillingTotal.toLocaleString("id-ID")}</td>
         <td>${row.pressSaved.toLocaleString("id-ID")}</td>
         <td>${row.adjustedClosed.toLocaleString("id-ID")}</td>
@@ -991,11 +999,13 @@
         <td><strong>${row.remaining.toLocaleString("id-ID")}</strong></td>
         <td><div class="press-balance-actions">
           <button type="button" class="btn btn-ghost press-balance-use"
-            data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}">Gunakan</button>
+            data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}"
+            ${!bisaDigunakan ? 'disabled title="Produk/Botol sudah tidak ada di Master. Tambahkan kembali ke Master jika ingin melanjutkan Press."' : ""}>Gunakan</button>
           <button type="button" class="btn btn-danger press-balance-close"
             data-key="${esc(row.key)}" ${row.pressPreview > 0 ? "disabled title=\"Simpan/hapus Preview Press terlebih dahulu\"" : ""}>Tutup Sisa</button>
         </div></td>
-      </tr>`).join("")
+      </tr>`;
+    }).join("")
       : '<tr><td colspan="8" class="empty-row">Tidak ada sisa pekerjaan Filling yang menunggu Press.</td></tr>';
 
     const remainingTotal = rows.reduce((sum, row) => sum + row.remaining, 0);
