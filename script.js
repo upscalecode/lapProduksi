@@ -37,30 +37,10 @@
     PAGE_SIZE: 20,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
-    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbzCqP-jUcWobPQUhhLIqEV2YU6H9cnxzVdnCNQFl0Jni5gzYavSubjqvtM5Qcwk6ic19Q/exec"
+    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbwhPdhaZ2Q1VrkasN_e0EXARua3uVIBcltKcq3l8E87c59QQMXvmxSThmtPjy1_mvGq1Q/exec"
   };
 
   const LINE_LABEL = { filling: "Filling", press: "Press" };
-
-  // Fallback client-side. Backend tetap menjadi sumber keamanan utama.
-  const ROLE_ACCESS = {
-    superuser: {
-      filling: true, press: true, report: true, master: true, users: true,
-      viewAllEntries: true, editOwnEntries: true, editAllEntries: true,
-      deleteOwnEntries: true, deleteAllEntries: true
-    },
-    user: {
-      filling: true, press: true, report: false, master: false, users: false,
-      viewAllEntries: false, editOwnEntries: true, editAllEntries: false,
-      deleteOwnEntries: false, deleteAllEntries: false
-    }
-  };
-
-  const USER_PERMISSION_KEYS = [
-    "filling", "press", "report", "master", "viewAllEntries",
-    "editOwnEntries", "editAllEntries", "deleteOwnEntries", "deleteAllEntries"
-  ];
-
   const pageType = document.body.dataset.page || "app";
 
   const state = {
@@ -98,38 +78,6 @@
   function el(id) { return document.getElementById(id); }
   function qs(selector, root = document) { return root.querySelector(selector); }
   function qsa(selector, root = document) { return Array.from(root.querySelectorAll(selector)); }
-
-  function normalizeRole(role) {
-    return String(role || "user").trim().toLowerCase().replace(/[\s_-]+/g, "") === "superuser"
-      ? "superuser"
-      : "user";
-  }
-
-  function hasAccess(permission) {
-    const user = state.currentUser;
-    if (!user) return false;
-
-    // Gunakan permission dari server bila tersedia.
-    if (user.permissions && typeof user.permissions[permission] === "boolean") {
-      return user.permissions[permission];
-    }
-
-    const role = normalizeRole(user.role);
-    return !!(ROLE_ACCESS[role] && ROLE_ACCESS[role][permission]);
-  }
-
-  function enforceVisibleDefaultTab() {
-    const active = qs("#mainTabbar .tab-btn.active");
-    if (active && !active.hidden) return;
-
-    const firstVisible = qsa("#mainTabbar .tab-btn").find(btn => !btn.hidden);
-    if (!firstVisible) return;
-
-    qsa("#mainTabbar .tab-btn").forEach(btn => btn.classList.toggle("active", btn === firstVisible));
-    qsa(".content > .view").forEach(view => {
-      view.hidden = view.id !== "view-" + firstVisible.dataset.view;
-    });
-  }
 
   /* ------------------------- LOCAL DRAFT / PREVIEW CACHE ------------------------- */
   function storageOwner() {
@@ -227,14 +175,9 @@
     const cancelBtn = qs(".f-cancel-btn", form);
     const stamp = qs(".stamp", form);
 
-    if (operator && [...operator.options].some(o => o.value === draft.operator)) operator.value = draft.operator || "";
-    // if (produk && [...produk.options].some(o => o.value === draft.produk)) produk.value = draft.produk || "";
-    if (produk){
-      produk.value = state.master.produk.includes(draft.produk)
-      ? draft.produk: "";
-    }
-    
-    if (botol && [...botol.options].some(o => o.value === draft.botol)) botol.value = draft.botol || "";
+    if (operator && isMasterValue("operator", draft.operator)) operator.value = canonicalMasterValue("operator", draft.operator);
+    if (produk && isMasterValue("produk", draft.produk)) produk.value = canonicalMasterValue("produk", draft.produk);
+    if (botol && isMasterValue("botol", draft.botol)) botol.value = canonicalMasterValue("botol", draft.botol);
     if (qtyKardus) qtyKardus.value = draft.qtyKardus ?? "";
     if (qtyBotol) qtyBotol.value = draft.qtyBotolPerKardus ?? "";
     if (qtyPecah) qtyPecah.value = draft.qtyBotolPecah ?? "0";
@@ -363,7 +306,7 @@
         credentials: "omit"
       });
       const data = await parseApiResponse(response);
-      setConnection("online", "Aktif");
+      setConnection("online", "Spreadsheet terhubung");
       return data;
     } catch (err) {
       setConnection("error", "Koneksi gagal");
@@ -569,7 +512,63 @@
     clone.hidden = true;
     qsa("[data-line]", clone).forEach(node => { node.dataset.line = "press"; });
     qsa("h2", clone).forEach(h => { h.textContent = h.textContent.replace(/Filling/g, "Press"); });
+
+    const stack = qs(".line-stack", clone);
+    const form = qs(".form-panel", clone);
+    if (stack && form) {
+      const balancePanel = document.createElement("section");
+      balancePanel.className = "panel table-panel press-balance-panel";
+      balancePanel.innerHTML = `
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Balance Filling → Press</p>
+            <h2>Sisa Pengerjaan yang Menunggu Press</h2>
+            <p class="press-balance-note">Saldo dihitung dari seluruh tanggal: Total Filling tersimpan − Total Press tersimpan − preview Press.</p>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Produk</th><th>Botol</th><th>Total Filling</th><th>Press Tersimpan</th>
+                <th>Preview Press</th><th>Sisa Qty</th><th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody class="press-balance-tbody">
+              <tr><td colspan="7" class="empty-row">Memuat saldo Filling…</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-footer"><p class="table-summary press-balance-summary"></p></div>`;
+      stack.insertBefore(balancePanel, form);
+
+      const hint = document.createElement("p");
+      hint.className = "press-available-hint";
+      hint.dataset.state = "empty";
+      hint.textContent = "Pilih Produk dan Botol dari data master untuk melihat sisa Qty Filling.";
+      const error = qs(".f-error", form);
+      if (error) error.insertAdjacentElement("beforebegin", hint);
+      else form.appendChild(hint);
+    }
+
+    clone.addEventListener("click", event => {
+      const btn = event.target.closest(".press-balance-use");
+      if (!btn) return;
+      const pressForm = qs(".form-panel", clone);
+      if (!pressForm) return;
+      const produk = qs(".f-produk", pressForm);
+      const botol = qs(".f-botol", pressForm);
+      if (produk) produk.value = btn.dataset.produk || "";
+      if (botol) botol.value = btn.dataset.botol || "";
+      if (botol) botol.dispatchEvent(new Event("change", { bubbles: true }));
+      if (produk) produk.dispatchEvent(new Event("change", { bubbles: true }));
+      updatePressAvailabilityHint(pressForm);
+      saveFormDraft("press", pressForm);
+      pressForm.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
     oldPress.replaceWith(clone);
+    initMasterSearches(clone);
   }
 
   function applyBootstrap(data) {
@@ -587,6 +586,7 @@
     restoreFormDraft("press");
     renderPreview("filling");
     renderPreview("press");
+    renderPressBalance();
     renderMasterChips();
     renderUsers();
     renderUserHeader();
@@ -612,41 +612,158 @@
     if (unique.includes(current)) select.value = current;
   }
 
-  function fillDatalist(datalist, list) {
-    if (!datalist) return;
 
-    const unique = [
-      ...new Set(
-        (list || [])
-          .map(v => String(v).trim())
-          .filter(Boolean)
-      )
-    ];
+  function masterValues(category) {
+    return [...new Set((state.master[category] || [])
+      .map(value => String(value || "").trim())
+      .filter(Boolean))];
+  }
 
-    datalist.innerHTML = unique
-      .map(value => `<option value="${esc(value)}"></option>`)
-      .join("");
+  function canonicalMasterValue(category, value) {
+    const target = String(value || "").trim().toLowerCase();
+    if (!target) return "";
+    return masterValues(category).find(item => item.toLowerCase() === target) || "";
+  }
+
+  function isMasterValue(category, value) {
+    return Boolean(canonicalMasterValue(category, value));
+  }
+
+  function validateMasterInput(input, allowPartial = false) {
+    if (!input || !input.dataset.master) return true;
+    const value = String(input.value || "").trim();
+
+    // Filter operator boleh kosong/partial karena fungsinya memang mencari.
+    if (allowPartial || input.classList.contains("filter-master-search")) {
+      input.setCustomValidity("");
+      input.classList.remove("is-invalid");
+      return true;
+    }
+
+    if (!value) {
+      input.setCustomValidity("Field ini wajib dipilih dari data master.");
+      input.classList.add("is-invalid");
+      return false;
+    }
+
+    const canonical = canonicalMasterValue(input.dataset.master, value);
+    if (!canonical) {
+      input.setCustomValidity("Pilih nilai yang tersedia pada data master.");
+      input.classList.add("is-invalid");
+      return false;
+    }
+
+    input.value = canonical;
+    input.setCustomValidity("");
+    input.classList.remove("is-invalid");
+    return true;
+  }
+
+  function closeMasterSuggestions(exceptInput = null) {
+    qsa(".master-suggest").forEach(list => {
+      if (!exceptInput || list._ownerInput !== exceptInput) list.hidden = true;
+    });
+  }
+
+  function attachMasterSearch(input) {
+    if (!input || input.dataset.masterSearchReady === "1") return;
+    input.dataset.masterSearchReady = "1";
+
+    const field = input.closest(".field") || input.parentElement;
+    if (!field) return;
+
+    const list = document.createElement("div");
+    list.className = "master-suggest";
+    list.hidden = true;
+    list._ownerInput = input;
+    field.appendChild(list);
+
+    function renderList() {
+      const query = String(input.value || "").trim().toLowerCase();
+      const values = masterValues(input.dataset.master)
+        .filter(value => !query || value.toLowerCase().includes(query))
+        .slice(0, 50);
+
+      if (!values.length) {
+        list.innerHTML = '<div class="master-suggest-empty">Tidak ada data master yang cocok.</div>';
+      } else {
+        list.innerHTML = values.map(value =>
+          `<button type="button" data-value="${esc(value)}">${esc(value)}</button>`
+        ).join("");
+      }
+      list.hidden = false;
+    }
+
+    input.addEventListener("focus", renderList);
+    input.addEventListener("input", () => {
+      if (!input.classList.contains("filter-master-search")) {
+        input.setCustomValidity("");
+        input.classList.remove("is-invalid");
+      }
+      renderList();
+    });
+    input.addEventListener("keydown", event => {
+      if (event.key === "Escape") {
+        list.hidden = true;
+        input.blur();
+      } else if (event.key === "ArrowDown" && !list.hidden) {
+        event.preventDefault();
+        const first = list.querySelector("button");
+        if (first) first.focus();
+      }
+    });
+    input.addEventListener("blur", () => {
+      setTimeout(() => {
+        list.hidden = true;
+        validateMasterInput(input);
+      }, 120);
+    });
+
+    list.addEventListener("keydown", event => {
+      const buttons = qsa("button", list);
+      const index = buttons.indexOf(document.activeElement);
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        (buttons[index + 1] || buttons[0])?.focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        if (index <= 0) input.focus();
+        else buttons[index - 1]?.focus();
+      } else if (event.key === "Escape") {
+        list.hidden = true;
+        input.focus();
+      }
+    });
+
+    list.addEventListener("mousedown", event => {
+      const btn = event.target.closest("button[data-value]");
+      if (!btn) return;
+      event.preventDefault();
+      input.value = btn.dataset.value;
+      input.setCustomValidity("");
+      input.classList.remove("is-invalid");
+      list.hidden = true;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      input.focus();
+    });
+  }
+
+  function initMasterSearches(root = document) {
+    qsa(".master-search-input", root).forEach(attachMasterSearch);
   }
 
   function refreshAllDropdowns() {
-    const m = state.master;
-    qsa(".f-operator").forEach(s => fillSelect(s, m.operator, "— pilih operator —"));
-    // qsa(".f-produk").forEach(s => fillSelect(s, m.produk, "— pilih produk —"));
-    fillDatalist(el("produkMasterList"),m.produk);
-    qsa(".f-botol").forEach(s => fillSelect(s, m.botol, "— pilih jenis botol —"));
-    const botolSelect = document.getElementById("botolDigunakan");
-    const pecahInput = document.getElementById("pecah");
-    document.addEventListener("change", function (event){
-      if(event.target.id === "botolDigunakan") {
-        const selectedBotol = event.target.value;
-        if (pecahInput) {
-          pecahInput.value = selectedBotol || "-";
-        }
-      }
+    // Form Filling/Press memakai autocomplete custom. Data suggestion dibaca
+    // langsung dari state.master sehingga tidak perlu membuat <option>.
+    initMasterSearches();
+
+    // Filter laporan tetap select karena tidak diminta diubah.
+    fillSelect(el("lap-operator"), state.master.operator, "Semua operator");
+
+    // Setelah master diperbarui, validasi ulang input form yang sudah terisi.
+    qsa(".master-search-input:not(.filter-master-search)").forEach(input => {
+      if (input.value) validateMasterInput(input);
     });
-    qsa(".f-botol-pecah").forEach(s => fillSelect(s, m.botolpecah && m.botolpecah.length ? m.botolpecah : m.botol, "— pilih jenis —"));
-    qsa(".f-search-operator").forEach(s => fillSelect(s, m.operator, "Semua operator"));
-    fillSelect(el("lap-operator"), m.operator, "Semua operator");
   }
 
   function renderUserHeader() {
@@ -655,30 +772,8 @@
     const avatar = el("userAvatar");
     if (avatar) avatar.textContent = (user.name || user.username || "U").trim().charAt(0).toUpperCase();
     if (el("userName")) el("userName").textContent = user.name || user.username;
-    const role = normalizeRole(user.role);
-    if (el("userRole")) {
-      if (role === "superuser") {
-        el("userRole").textContent = "Super User • Akses Penuh";
-      } else {
-        el("userRole").textContent = user.dataScope === "all"
-          ? "User Biasa • Akses Custom • Semua Data"
-          : "User Biasa • Akses Custom • Data Sendiri";
-      }
-    }
-
-    if (el("fillingTabBtn")) el("fillingTabBtn").hidden = !hasAccess("filling");
-    if (el("pressTabBtn")) el("pressTabBtn").hidden = !hasAccess("press");
-    if (el("laporanTabBtn")) el("laporanTabBtn").hidden = !hasAccess("report");
-    if (el("masterTabBtn")) el("masterTabBtn").hidden = !hasAccess("master");
-
-    // Lapisan UI: section yang tidak diizinkan ikut disembunyikan.
-    if (el("view-filling") && !hasAccess("filling")) el("view-filling").hidden = true;
-    if (el("view-press") && !hasAccess("press")) el("view-press").hidden = true;
-    if (el("view-laporan") && !hasAccess("report")) el("view-laporan").hidden = true;
-    if (el("view-master") && !hasAccess("master")) el("view-master").hidden = true;
-    if (el("userManagementPanel")) el("userManagementPanel").hidden = !hasAccess("users");
-    enforceVisibleDefaultTab();
-
+    if (el("userRole")) el("userRole").textContent = user.role === "superuser" ? "Super User" : "User Biasa";
+    if (el("masterTabBtn")) el("masterTabBtn").hidden = user.role !== "superuser";
     if (el("deviceDateDisplay")) {
       el("deviceDateDisplay").textContent = new Date().toLocaleDateString("id-ID", {
         weekday: "long", day: "2-digit", month: "long", year: "numeric"
@@ -690,7 +785,7 @@
     const filter = state.search[line];
     return state.entries
       .filter(e => e.tab === line)
-      .filter(e => !filter.operator || e.operator === filter.operator)
+      .filter(e => !filter.operator || String(e.operator || "").toLowerCase().includes(String(filter.operator).toLowerCase()))
       .filter(e => !filter.date || e.tanggal === filter.date)
       .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   }
@@ -699,7 +794,7 @@
     const filter = state.search[line];
     const rows = state.preview && state.preview[line] ? state.preview[line] : [];
     return rows
-      .filter(e => !filter.operator || e.operator === filter.operator)
+      .filter(e => !filter.operator || String(e.operator || "").toLowerCase().includes(String(filter.operator).toLowerCase()))
       .filter(e => !filter.date || e.tanggal === filter.date)
       .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   }
@@ -711,16 +806,129 @@
     else state.entries.push(entry);
   }
 
+
+  function balanceKey(produk, botol) {
+    return `${String(produk || "").trim().toLowerCase()}||${String(botol || "").trim().toLowerCase()}`;
+  }
+
+  function getPressBalanceRows(options = {}) {
+    const excludePreviewId = options.excludePreviewId || "";
+    const map = new Map();
+
+    function ensure(produk, botol) {
+      const key = balanceKey(produk, botol);
+      if (!map.has(key)) {
+        map.set(key, {
+          key,
+          produk: String(produk || "").trim(),
+          botol: String(botol || "").trim(),
+          fillingTotal: 0,
+          pressSaved: 0,
+          pressPreview: 0,
+          remaining: 0
+        });
+      }
+      return map.get(key);
+    }
+
+    state.entries
+      .filter(entry => !entry._syncState)
+      .forEach(entry => {
+        const row = ensure(entry.produk, entry.botol);
+        if (entry.tab === "filling") row.fillingTotal += Number(entry.totalQty) || 0;
+        if (entry.tab === "press") row.pressSaved += Number(entry.totalQty) || 0;
+      });
+
+    (state.preview.press || []).forEach(entry => {
+      if (entry.id === excludePreviewId) return;
+      const row = ensure(entry.produk, entry.botol);
+      row.pressPreview += Number(entry.totalQty) || 0;
+    });
+
+    return Array.from(map.values()).map(row => ({
+      ...row,
+      remaining: row.fillingTotal - row.pressSaved - row.pressPreview
+    })).sort((a, b) => {
+      if (a.remaining !== b.remaining) return b.remaining - a.remaining;
+      return a.produk.localeCompare(b.produk, "id");
+    });
+  }
+
+  function getPressAvailable(produk, botol, excludePreviewId = "") {
+    const key = balanceKey(produk, botol);
+    const row = getPressBalanceRows({ excludePreviewId }).find(item => item.key === key);
+    return row ? row.remaining : 0;
+  }
+
+  function renderPressBalance() {
+    const section = el("view-press");
+    if (!section) return;
+    const tbody = qs(".press-balance-tbody", section);
+    const summary = qs(".press-balance-summary", section);
+    if (!tbody) return;
+
+    const allRows = getPressBalanceRows();
+    const rows = allRows.filter(row => row.remaining > 0);
+    tbody.innerHTML = rows.length ? rows.map(row => `
+      <tr>
+        <td>${esc(row.produk)}</td>
+        <td>${esc(row.botol)}</td>
+        <td>${row.fillingTotal.toLocaleString("id-ID")}</td>
+        <td>${row.pressSaved.toLocaleString("id-ID")}</td>
+        <td>${row.pressPreview.toLocaleString("id-ID")}</td>
+        <td><strong>${row.remaining.toLocaleString("id-ID")}</strong></td>
+        <td><button type="button" class="btn btn-ghost press-balance-use"
+          data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}">Gunakan</button></td>
+      </tr>`).join("")
+      : '<tr><td colspan="7" class="empty-row">Tidak ada sisa pekerjaan Filling yang menunggu Press.</td></tr>';
+
+    const remainingTotal = rows.reduce((sum, row) => sum + row.remaining, 0);
+    if (summary) {
+      summary.textContent = `${rows.length} kombinasi Produk/Botol belum balance · Sisa ${remainingTotal.toLocaleString("id-ID")} botol`;
+    }
+
+    const form = qs(".form-panel", section);
+    updatePressAvailabilityHint(form);
+  }
+
+  function updatePressAvailabilityHint(form) {
+    if (!form || form.dataset.line !== "press") return;
+    const produk = qs(".f-produk", form)?.value || "";
+    const botol = qs(".f-botol", form)?.value || "";
+    const editingId = qs(".f-editing-id", form)?.value || "";
+    const hint = qs(".press-available-hint", form);
+    if (!hint) return;
+
+    if (!isMasterValue("produk", produk) || !isMasterValue("botol", botol)) {
+      hint.dataset.state = "empty";
+      hint.textContent = "Pilih Produk dan Botol dari data master untuk melihat sisa Qty Filling.";
+      return;
+    }
+
+    const available = getPressAvailable(produk, botol, editingId);
+    hint.dataset.state = available > 0 ? "ok" : "empty";
+    hint.textContent = available > 0
+      ? `Sisa Qty Filling yang tersedia untuk Press: ${available.toLocaleString("id-ID")} botol.`
+      : "Produk/Botol ini sudah balance atau belum memiliki Qty Filling tersimpan.";
+  }
+
+  function validatePressPayload(payload, editingId = "") {
+    if (payload.line !== "press") return "";
+    const requested = (Number(payload.qtyKardus) || 0) * (Number(payload.qtyBotolPerKardus) || 0);
+    const available = getPressAvailable(payload.produk, payload.botol, editingId);
+    if (requested > available) {
+      return `Qty Press ${requested.toLocaleString("id-ID")} botol melebihi sisa Filling ${Math.max(0, available).toLocaleString("id-ID")} botol untuk ${payload.produk} / ${payload.botol}.`;
+    }
+    if (requested <= 0) return "Total Qty Press harus lebih dari 0 botol.";
+    return "";
+  }
+
   function renderEntryRow(entry) {
     const syncState = entry._syncState || "";
     const isPending = syncState === "pending";
     const isError = syncState === "error";
-    const isOwner = state.currentUser &&
-      String(entry.createdBy || "").trim().toLowerCase() === String(state.currentUser.username || "").trim().toLowerCase();
-    const canEdit = !syncState && state.currentUser &&
-      (isOwner ? hasAccess("editOwnEntries") : hasAccess("editAllEntries"));
-    const canDelete = !syncState && state.currentUser &&
-      (isOwner ? hasAccess("deleteOwnEntries") : hasAccess("deleteAllEntries"));
+    const canEdit = !syncState && state.currentUser && (state.currentUser.role === "superuser" || entry.createdBy === state.currentUser.username);
+    const canDelete = !syncState && state.currentUser && state.currentUser.role === "superuser";
 
     let idCell = `<span class="id-badge">${esc(entry.reportId)}</span>`;
     if (isPending) {
@@ -849,6 +1057,8 @@
     const form = qs(".form-panel", section);
     if (!form) return;
 
+    const operator = qs(".f-operator", form);
+    const produk = qs(".f-produk", form);
     const botol = qs(".f-botol", form);
     const botolPecah = qs(".f-botol-pecah", form);
     const editing = qs(".f-editing-id", form);
@@ -865,6 +1075,7 @@
 
     function recalc() {
       total.value = ((Number(qtyKardus.value) || 0) * (Number(qtyBotol.value) || 0)).toLocaleString("id-ID");
+      if (line === "press") updatePressAvailabilityHint(form);
     }
 
     function syncBotolPecah() {
@@ -883,10 +1094,27 @@
       cancelBtn.hidden = true;
       stamp.textContent = "ID otomatis";
       errorEl.hidden = true;
+      qsa(".master-search-input", form).forEach(input => {
+        input.setCustomValidity("");
+        input.classList.remove("is-invalid");
+      });
       clearFormDraft(line);
+      if (line === "press") updatePressAvailabilityHint(form);
     }
 
-    botol.addEventListener("change", syncBotolPecah);
+    botol.addEventListener("change", () => {
+      syncBotolPecah();
+      if (line === "press") updatePressAvailabilityHint(form);
+    });
+    produk?.addEventListener("change", () => {
+      if (line === "press") updatePressAvailabilityHint(form);
+    });
+    produk?.addEventListener("input", () => {
+      if (line === "press") updatePressAvailabilityHint(form);
+    });
+    botol.addEventListener("input", () => {
+      if (line === "press") updatePressAvailabilityHint(form);
+    });
     qtyKardus.addEventListener("input", recalc);
     qtyBotol.addEventListener("input", recalc);
     cancelBtn.addEventListener("click", resetForm);
@@ -960,33 +1188,36 @@
         qtyBotolPecah: Number(qtyPecah.value) || 0
       };
 
-      const produkValid = state.master.produk.some(
-        item =>
-          String(item).trim().toLowerCase() ===
-          String(payload.produk).trim().toLowerCase()
-        );
+      const masterInputs = [operator, produk, botol];
+      const masterValid = masterInputs.every(input => validateMasterInput(input));
+      if (!masterValid) {
+        errorEl.textContent = "Operator, Produk, dan Botol harus dipilih dari data master yang tersedia.";
+        errorEl.hidden = false;
+        masterInputs.find(input => !input.checkValidity())?.reportValidity();
+        return;
+      }
 
-        if (!produkValid) {
-          errorEl.textContent =
-            "Nama Produk tidak ditemukan di Master Data. Silakan pilih produk dari daftar.";
+      // Gunakan penulisan canonical dari master, bukan teks bebas hasil ketikan.
+      payload.operator = canonicalMasterValue("operator", operator.value);
+      payload.produk = canonicalMasterValue("produk", produk.value);
+      payload.botol = canonicalMasterValue("botol", botol.value);
+      payload.botolPecahJenis = payload.botol;
 
-          errorEl.hidden = false;
-
-          qs(".f-produk", form).focus();
-
-          return;
-        }
-
-      if (!payload.operator || !payload.produk || !payload.botol ||
-          !Number.isFinite(payload.qtyKardus) || payload.qtyKardus < 0 ||
+      if (!Number.isFinite(payload.qtyKardus) || payload.qtyKardus < 0 ||
           !Number.isFinite(payload.qtyBotolPerKardus) || payload.qtyBotolPerKardus < 0 ||
           payload.qtyBotolPecah < 0) {
-        errorEl.textContent = "Lengkapi Operator, Produk, Botol, dan Qty dengan benar.";
+        errorEl.textContent = "Lengkapi Qty dengan benar.";
         errorEl.hidden = false;
         return;
       }
 
       const id = editing.value;
+      const pressError = validatePressPayload(payload, id);
+      if (pressError) {
+        errorEl.textContent = pressError;
+        errorEl.hidden = false;
+        return;
+      }
 
       // UPDATE data preview saja. Belum menyentuh Spreadsheet.
       if (id) {
@@ -1008,6 +1239,7 @@
           persistPreview();
           resetForm();
           renderPreview(line);
+          if (line === "press") renderPressBalance();
           toast("Data preview berhasil diperbarui.");
           return;
         }
@@ -1033,6 +1265,7 @@
       persistPreview();
       resetForm();
       renderPreview(line);
+      if (line === "press") renderPressBalance();
       toast("Data ditambahkan ke preview. Belum disimpan ke Spreadsheet.");
     });
 
@@ -1040,8 +1273,13 @@
     const searchDate = qs(".f-search-date", section);
     const resetSearch = qs(".f-search-reset", section);
 
+    searchOperator.addEventListener("input", () => {
+      state.search[line].operator = searchOperator.value.trim();
+      state.pages[line] = 1;
+      renderPreview(line);
+    });
     searchOperator.addEventListener("change", () => {
-      state.search[line].operator = searchOperator.value;
+      state.search[line].operator = searchOperator.value.trim();
       state.pages[line] = 1;
       renderPreview(line);
     });
@@ -1099,6 +1337,7 @@
         state.pages[line] = 1;
         persistPreview();
         renderPreview(line);
+        renderPressBalance();
 
         if (successCount) toast(`${successCount} data berhasil disimpan ke Spreadsheet.`);
         if (failed.length) toast(`${failed.length} data gagal disimpan. Silakan klik Simpan lagi.`, true);
@@ -1136,6 +1375,7 @@
         cancelBtn.hidden = false;
         stamp.textContent = "EDIT PREVIEW";
         saveFormDraft(line, form);
+        if (line === "press") updatePressAvailabilityHint(form);
         form.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
@@ -1145,6 +1385,7 @@
         state.pages[line] = 1;
         persistPreview();
         renderPreview(line);
+        if (line === "press") renderPressBalance();
         toast("Data dihapus dari preview.");
       }
     });
@@ -1158,18 +1399,7 @@
       const btn = event.target.closest(".tab-btn");
       if (!btn || !state.currentUser) return;
       const view = btn.dataset.view;
-      if ((view === "filling" || view === "press") && !hasAccess(view)) {
-        toast(`Anda tidak memiliki akses ke ${LINE_LABEL[view] || view}.`, true);
-        return;
-      }
-      if (view === "laporan" && !hasAccess("report")) {
-        toast("Anda tidak memiliki akses ke menu Laporan.", true);
-        return;
-      }
-      if (view === "master" && !hasAccess("master")) {
-        toast("Anda tidak memiliki akses ke menu Setting.", true);
-        return;
-      }
+      if (view === "master" && state.currentUser.role !== "superuser") return;
 
       qsa(".tab-btn", tabbar).forEach(node => node.classList.toggle("active", node === btn));
       qsa(".content > .view").forEach(node => { node.hidden = node.id !== "view-" + view; });
@@ -1214,10 +1444,6 @@
     if (!generate) return;
 
     generate.addEventListener("click", () => {
-      if (!hasAccess("report")) {
-        toast("Akun ini tidak memiliki akses membuat Laporan.", true);
-        return;
-      }
       const line = el("lap-line").value;
       const operator = el("lap-operator").value;
       const start = el("lap-start").value;
@@ -1243,7 +1469,7 @@
       state.pages.laporan = 1;
       el("lap-id").textContent = id;
       el("lap-created").textContent = fmtDateTime(nowIso());
-      el("lap-by").textContent = `${state.currentUser.name} (${normalizeRole(state.currentUser.role) === "superuser" ? "Super User" : "User Biasa"})`;
+      el("lap-by").textContent = `${state.currentUser.name} (${state.currentUser.role === "superuser" ? "Super User" : "User"})`;
       el("lap-period").textContent = (start || end) ? `${start || "…"} s/d ${end || "…"}` : "Semua tanggal";
       el("lap-total-entries").textContent = rows.length;
       el("lap-total-kardus").textContent = rows.reduce((s, e) => s + (Number(e.qtyKardus) || 0), 0).toLocaleString("id-ID");
@@ -1418,7 +1644,6 @@
       wrap.addEventListener("click", async event => {
         const btn = event.target.closest("button[data-cat]");
         if (!btn) return;
-        if (!hasAccess("master")) return toast("Akun ini tidak memiliki akses mengubah Master Data.", true);
         if (!confirm(`Hapus "${btn.dataset.value}" dari master?`)) return;
         try {
           const data = await apiPost("master.remove", { category: btn.dataset.cat, value: btn.dataset.value });
@@ -1438,7 +1663,6 @@
       if (!input || !btn) return;
 
       async function addMaster() {
-        if (!hasAccess("master")) return toast("Akun ini tidak memiliki akses mengubah Master Data.", true);
         const value = input.value.trim();
         if (!value) return;
         btn.disabled = true;
@@ -1477,110 +1701,21 @@
     });
   }
 
-  /* ------------------------- USERS / CUSTOM PERMISSION ------------------------- */
-  function permissionSummary(user) {
-    const role = normalizeRole(user.role);
-    if (role === "superuser") return "Akses penuh";
-
-    const p = user.permissions || {};
-    const labels = [];
-    if (p.filling) labels.push("Filling");
-    if (p.press) labels.push("Press");
-    if (p.report) labels.push("Laporan");
-    if (p.master) labels.push("Master");
-    labels.push(p.viewAllEntries ? "Semua Data" : "Data Sendiri");
-    return labels.join(" • ");
-  }
-
+  /* ------------------------- USERS ------------------------- */
   function renderUsers() {
     const tbody = el("userTbody");
     if (!tbody) return;
-    if (!state.currentUser || !hasAccess("users")) {
+    if (!state.currentUser || state.currentUser.role !== "superuser") {
       tbody.innerHTML = "";
       return;
     }
-
-    tbody.innerHTML = state.users.map(user => {
-      const isCurrent = String(user.username).toLowerCase() === String(state.currentUser.username).toLowerCase();
-      const role = normalizeRole(user.role);
-      const canCustomize = !isCurrent && role === "user";
-
-      return `
-        <tr>
-          <td>${esc(user.name)}</td>
-          <td class="mono">${esc(user.username)}</td>
-          <td>
-            ${isCurrent
-              ? `<span class="role-tag ${esc(role)}">${role === "superuser" ? "Super User" : "User Biasa"}</span>`
-              : `<select class="user-role-select" data-username="${esc(user.username)}">
-                  <option value="user" ${role === "user" ? "selected" : ""}>User Biasa</option>
-                  <option value="superuser" ${role === "superuser" ? "selected" : ""}>Super User</option>
-                </select>`
-            }
-          </td>
-          <td>
-            <span class="hint-text">${esc(permissionSummary(user))}</span>
-            ${canCustomize
-              ? `<div style="margin-top:6px"><button type="button" class="btn btn-ghost btn-permission-user" data-username="${esc(user.username)}">Atur Akses</button></div>`
-              : ""
-            }
-          </td>
-          <td>
-            ${isCurrent ? '<span class="hint-text">Akun aktif</span>' : `
-              <button type="button" class="btn btn-secondary btn-role-user" data-username="${esc(user.username)}">Simpan Role</button>
-              <button type="button" class="btn btn-ghost btn-reset-password" data-username="${esc(user.username)}">Reset Password</button>
-              <button type="button" class="btn btn-danger btn-del-user" data-username="${esc(user.username)}">Hapus</button>
-            `}
-          </td>
-        </tr>`;
-    }).join("");
-  }
-
-  function openPermissionEditor(username) {
-    const user = state.users.find(item =>
-      String(item.username).toLowerCase() === String(username).toLowerCase()
-    );
-    const editor = el("permissionEditor");
-    if (!user || !editor) return;
-
-    if (normalizeRole(user.role) !== "user") {
-      toast("Super User selalu memiliki akses penuh dan tidak memerlukan custom permission.", true);
-      return;
-    }
-
-    el("permissionUsername").value = user.username;
-    el("permissionUserLabel").textContent = `${user.name} (${user.username})`;
-
-    const permissions = user.permissions || ROLE_ACCESS.user;
-    qsa(".permission-check", editor).forEach(input => {
-      input.checked = permissions[input.dataset.permission] === true;
-    });
-
-    editor.hidden = false;
-    editor.scrollIntoView({ behavior: "smooth", block: "nearest" });
-  }
-
-  function closePermissionEditor() {
-    const editor = el("permissionEditor");
-    if (editor) editor.hidden = true;
-    if (el("permissionUsername")) el("permissionUsername").value = "";
-  }
-
-  function readPermissionEditor() {
-    const result = {};
-    USER_PERMISSION_KEYS.forEach(key => { result[key] = false; });
-    qsa(".permission-check", el("permissionEditor") || document).forEach(input => {
-      result[input.dataset.permission] = !!input.checked;
-    });
-    return result;
-  }
-
-  function applyDefaultUserPermissionsToEditor() {
-    const editor = el("permissionEditor");
-    if (!editor) return;
-    qsa(".permission-check", editor).forEach(input => {
-      input.checked = ROLE_ACCESS.user[input.dataset.permission] === true;
-    });
+    tbody.innerHTML = state.users.map(user => `
+      <tr>
+        <td>${esc(user.name)}</td>
+        <td class="mono">${esc(user.username)}</td>
+        <td><span class="role-tag ${esc(user.role)}">${user.role === "superuser" ? "Super User" : "User"}</span></td>
+        <td>${user.username === state.currentUser.username ? "" : `<button type="button" class="btn btn-danger btn-del-user" data-username="${esc(user.username)}">Hapus</button>`}</td>
+      </tr>`).join("");
   }
 
   function initUserManagement() {
@@ -1589,11 +1724,6 @@
     if (!form || !tbody) return;
 
     form.addEventListener("submit", async event => {
-      if (!hasAccess("users")) {
-        event.preventDefault();
-        toast("Kelola user hanya dapat dilakukan Super User.", true);
-        return;
-      }
       event.preventDefault();
       const submit = qs('button[type="submit"]', form);
       submit.disabled = true;
@@ -1607,270 +1737,21 @@
         state.users = data.users || [];
         form.reset();
         renderUsers();
-        toast("User berhasil ditambahkan. User Biasa dapat dikustom melalui Atur Akses.");
+        toast("User berhasil ditambahkan.");
       } catch (err) { toast(err.message, true); }
       finally { submit.disabled = false; }
     });
 
     tbody.addEventListener("click", async event => {
-      if (!hasAccess("users")) {
-        toast("Kelola user hanya dapat dilakukan Super User.", true);
-        return;
-      }
-
-      const permissionBtn = event.target.closest(".btn-permission-user");
-      if (permissionBtn) {
-        openPermissionEditor(permissionBtn.dataset.username);
-        return;
-      }
-
-      const resetPasswordBtn = event.target.closest(".btn-reset-password");
-      if (resetPasswordBtn) {
-        openResetPasswordDialog(resetPasswordBtn.dataset.username);
-        return;
-      }
-
-      const roleBtn = event.target.closest(".btn-role-user");
-      if (roleBtn) {
-        const username = roleBtn.dataset.username;
-        const select = qsa(".user-role-select", tbody).find(node => node.dataset.username === username);
-        if (!select) return;
-
-        roleBtn.disabled = true;
-        try {
-          const data = await apiPost("user.role", {
-            username,
-            role: select.value
-          });
-          state.users = data.users || [];
-          closePermissionEditor();
-          renderUsers();
-          toast(`Role ${username} berhasil diperbarui.`);
-        } catch (err) {
-          toast(err.message, true);
-        } finally {
-          roleBtn.disabled = false;
-        }
-        return;
-      }
-
       const btn = event.target.closest(".btn-del-user");
       if (!btn) return;
       if (!confirm(`Hapus user "${btn.dataset.username}"?`)) return;
       try {
         const data = await apiPost("user.remove", { username: btn.dataset.username });
         state.users = data.users || [];
-        closePermissionEditor();
         renderUsers();
         toast("User berhasil dihapus.");
       } catch (err) { toast(err.message, true); }
-    });
-
-    el("permissionCancelBtn")?.addEventListener("click", closePermissionEditor);
-    el("permissionResetBtn")?.addEventListener("click", applyDefaultUserPermissionsToEditor);
-
-    el("permissionSaveBtn")?.addEventListener("click", async event => {
-      if (!hasAccess("users")) {
-        toast("Hak akses hanya dapat diatur oleh Super User.", true);
-        return;
-      }
-
-      const username = el("permissionUsername")?.value || "";
-      if (!username) return toast("Pilih user terlebih dahulu.", true);
-
-      const btn = event.currentTarget;
-      btn.disabled = true;
-      try {
-        const data = await apiPost("user.permissions", {
-          username,
-          permissions: readPermissionEditor()
-        });
-        state.users = data.users || [];
-        renderUsers();
-        closePermissionEditor();
-        toast(`Hak akses ${username} berhasil disimpan. User harus login kembali.`);
-      } catch (err) {
-        toast(err.message, true);
-      } finally {
-        btn.disabled = false;
-      }
-    });
-  }
-
-  /* ------------------------- PASSWORD MANAGEMENT ------------------------- */
-  function openDialog(dialog) {
-    if (!dialog) return;
-    if (typeof dialog.showModal === "function") dialog.showModal();
-    else dialog.setAttribute("open", "");
-  }
-
-  function closeDialog(dialog) {
-    if (!dialog) return;
-    if (typeof dialog.close === "function") dialog.close();
-    else dialog.removeAttribute("open");
-  }
-
-  function clearOwnPasswordForm() {
-    const form = el("changePasswordForm");
-    if (form) form.reset();
-    const error = el("changePasswordError");
-    if (error) {
-      error.hidden = true;
-      error.textContent = "";
-    }
-  }
-
-  function openResetPasswordDialog(username) {
-    if (!hasAccess("users")) {
-      toast("Reset password user hanya dapat dilakukan Super User.", true);
-      return;
-    }
-
-    const user = state.users.find(item =>
-      String(item.username).toLowerCase() === String(username).toLowerCase()
-    );
-    if (!user) return toast("User tidak ditemukan.", true);
-
-    const form = el("resetPasswordForm");
-    if (form) form.reset();
-    el("resetPasswordUsername").value = user.username;
-    el("resetPasswordUserLabel").textContent = `${user.name} (${user.username})`;
-
-    const error = el("resetPasswordError");
-    if (error) {
-      error.hidden = true;
-      error.textContent = "";
-    }
-    openDialog(el("resetPasswordDialog"));
-  }
-
-  function initPasswordManagement() {
-    const ownDialog = el("changePasswordDialog");
-    const ownForm = el("changePasswordForm");
-    const resetDialog = el("resetPasswordDialog");
-    const resetForm = el("resetPasswordForm");
-
-    el("changePasswordBtn")?.addEventListener("click", () => {
-      clearOwnPasswordForm();
-      openDialog(ownDialog);
-    });
-
-    ["changePasswordCloseBtn", "changePasswordCancelBtn"].forEach(id => {
-      el(id)?.addEventListener("click", () => {
-        closeDialog(ownDialog);
-        clearOwnPasswordForm();
-      });
-    });
-
-    ownForm?.addEventListener("submit", async event => {
-      event.preventDefault();
-      const error = el("changePasswordError");
-      const submit = el("changePasswordSaveBtn");
-      const oldPassword = el("currentPassword")?.value || "";
-      const newPassword = el("newOwnPassword")?.value || "";
-      const confirmPassword = el("confirmOwnPassword")?.value || "";
-
-      if (error) error.hidden = true;
-      if (newPassword.length < 6) {
-        if (error) {
-          error.textContent = "Password baru minimal 6 karakter.";
-          error.hidden = false;
-        }
-        return;
-      }
-      if (newPassword !== confirmPassword) {
-        if (error) {
-          error.textContent = "Konfirmasi password baru tidak sama.";
-          error.hidden = false;
-        }
-        return;
-      }
-      if (oldPassword === newPassword) {
-        if (error) {
-          error.textContent = "Password baru harus berbeda dari password lama.";
-          error.hidden = false;
-        }
-        return;
-      }
-
-      if (submit) {
-        submit.disabled = true;
-        submit.textContent = "Menyimpan…";
-      }
-      try {
-        await apiPost("password.change", { oldPassword, newPassword });
-        closeDialog(ownDialog);
-        state.token = "";
-        state.currentUser = null;
-        localStorage.removeItem(CONFIG.TOKEN_KEY);
-        localStorage.removeItem(CONFIG.USER_KEY);
-        alert("Password berhasil diubah. Silakan login kembali menggunakan password baru.");
-        window.location.replace("login.html");
-      } catch (err) {
-        if (error) {
-          error.textContent = err.message;
-          error.hidden = false;
-        }
-      } finally {
-        if (submit) {
-          submit.disabled = false;
-          submit.textContent = "Simpan Password";
-        }
-      }
-    });
-
-    ["resetPasswordCloseBtn", "resetPasswordCancelBtn"].forEach(id => {
-      el(id)?.addEventListener("click", () => closeDialog(resetDialog));
-    });
-
-    resetForm?.addEventListener("submit", async event => {
-      event.preventDefault();
-      if (!hasAccess("users")) return toast("Reset password hanya dapat dilakukan Super User.", true);
-
-      const username = el("resetPasswordUsername")?.value || "";
-      const newPassword = el("resetNewPassword")?.value || "";
-      const confirmPassword = el("resetConfirmPassword")?.value || "";
-      const error = el("resetPasswordError");
-      const submit = el("resetPasswordSaveBtn");
-
-      if (error) error.hidden = true;
-      if (!username) return toast("User belum dipilih.", true);
-      if (newPassword.length < 6) {
-        if (error) {
-          error.textContent = "Password baru minimal 6 karakter.";
-          error.hidden = false;
-        }
-        return;
-      }
-      if (newPassword !== confirmPassword) {
-        if (error) {
-          error.textContent = "Konfirmasi password baru tidak sama.";
-          error.hidden = false;
-        }
-        return;
-      }
-
-      if (submit) {
-        submit.disabled = true;
-        submit.textContent = "Mereset…";
-      }
-      try {
-        const data = await apiPost("password.reset", { username, newPassword });
-        if (Array.isArray(data.users)) state.users = data.users;
-        renderUsers();
-        closeDialog(resetDialog);
-        toast(`Password ${username} berhasil direset. User harus login kembali.`);
-      } catch (err) {
-        if (error) {
-          error.textContent = err.message;
-          error.hidden = false;
-        }
-      } finally {
-        if (submit) {
-          submit.disabled = false;
-          submit.textContent = "Reset Password";
-        }
-      }
     });
   }
 
@@ -1897,7 +1778,6 @@
     initLaporan();
     initMasterData();
     initUserManagement();
-    initPasswordManagement();
     initLogout();
 
     // Tampilkan aplikasi langsung memakai profil + master cache terakhir.
@@ -1914,6 +1794,7 @@
         restoreFormDraft("press");
         renderPreview("filling");
         renderPreview("press");
+        renderPressBalance();
         renderUserHeader();
         el("appScreen").hidden = false;
         setConnection("loading", "Menyegarkan data…");

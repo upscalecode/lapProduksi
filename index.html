@@ -7,12 +7,66 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+
+  <style>
+    .field { position: relative; }
+    .master-search-input { width: 100%; }
+    .master-suggest {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: calc(100% + 4px);
+      z-index: 60;
+      max-height: 220px;
+      overflow-y: auto;
+      background: #fff;
+      border: 1px solid rgba(15, 23, 42, .16);
+      border-radius: 10px;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, .14);
+      padding: 5px;
+    }
+    .master-suggest[hidden] { display: none; }
+    .master-suggest button {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      padding: 9px 10px;
+      border-radius: 7px;
+      cursor: pointer;
+      font: inherit;
+      color: inherit;
+    }
+    .master-suggest button:hover,
+    .master-suggest button.active { background: rgba(15, 23, 42, .07); }
+    .master-suggest-empty {
+      padding: 10px;
+      font-size: 12px;
+      opacity: .65;
+    }
+    .master-search-input.is-invalid {
+      outline: 2px solid #dc2626;
+      outline-offset: 1px;
+    }
+    .press-balance-panel { margin-bottom: 18px; }
+    .press-balance-note { margin: 0; font-size: 12px; opacity: .72; }
+    .press-available-hint {
+      margin: 10px 0 0;
+      padding: 9px 12px;
+      border-radius: 9px;
+      background: rgba(15, 23, 42, .05);
+      font-size: 12px;
+    }
+    .press-available-hint[data-state="ok"] { font-weight: 600; }
+    .press-available-hint[data-state="empty"] { opacity: .7; }
+    .press-balance-use { white-space: nowrap; }
+  </style>
 </head>
 <body data-page="app">
   <div id="appScreen" class="app-shell" hidden>
     <header class="topbar">
       <div class="brand">
-        <img src="absh.png" alt="Logo ABSH" class="brand-logo">
+        <img src="absh.jpg" alt="Logo ABSH" class="brand-logo">
         <!-- <span class="gear">ABSH</span> -->
         <div>
           <p class="eyebrow">PT. ABSH FRAGRANCE CREATIONS</p>
@@ -36,15 +90,14 @@
             <span id="userRole" class="user-role">—</span>
           </div>
         </div>
-        <button id="changePasswordBtn" class="btn btn-ghost" type="button">Ganti Password</button>
         <button id="logoutBtn" class="btn btn-ghost">Keluar</button>
       </div>
     </header>
 
     <nav class="tabbar" id="mainTabbar">
-      <button class="tab-btn active" data-view="filling" id="fillingTabBtn">FILLING</button>
-      <button class="tab-btn" data-view="press" id="pressTabBtn">PRESS</button>
-      <button class="tab-btn" data-view="laporan" id="laporanTabBtn" hidden>LAPORAN</button>
+      <button class="tab-btn active" data-view="filling">FILLING</button>
+      <button class="tab-btn" data-view="press">PRESS</button>
+      <button class="tab-btn" data-view="laporan">LAPORAN</button>
       <button class="tab-btn" data-view="master" id="masterTabBtn" hidden>SETTING</button>
     </nav>
 
@@ -69,25 +122,23 @@
               </label>
               <label class="field">
                 <span>Nama Operator</span>
-                <select class="f-operator" required><option value="">— pilih operator —</option></select>
+                <input type="text" class="f-operator master-search-input" data-master="operator" placeholder="Cari operator…" autocomplete="off" required>
               </label>
               <label class="field">
                 <span>Nama Produk</span>
-                <!-- <select class="f-produk" required><option value="">— pilih produk —</option></select> -->
-                 <input type="text" class="f-produk" list="listProduk" placeholder="Input Varian Produk" required autocomplete="on">
-                 <datalist id="list-produk"> </datalist>
+                <input type="text" class="f-produk master-search-input" data-master="produk" placeholder="Cari produk…" autocomplete="off" required>
               </label>
               <label class="field">
                 <span>Botol yang Digunakan</span>
-                <select class="f-botol" id="botolDigunakan" required><option value="">— pilih jenis botol —</option></select>
-              </label>
-              <label class="field">
-                <span>Isi Botol (Kardus)</span>
-                <input type="number" min="0" step="1" class="f-qty-kardus mono" required placeholder="0">
+                <input type="text" class="f-botol master-search-input" data-master="botol" placeholder="Cari jenis botol…" autocomplete="off" required>
               </label>
               <label class="field">
                 <span>Qty Pengerjaan (Kardus)</span>
-                <input type="number" min="0" step="1" class="f-qty-botol mono" placeholder="0">
+                <input type="number" min="0" step="1" class="f-qty-kardus mono" required placeholder="0">
+              </label>
+              <label class="field">
+                <span>Qty Botol / Kardus</span>
+                <input type="number" min="0" step="1" class="f-qty-botol mono" required placeholder="0">
               </label>
               <label class="field field-total">
                 <span>Total Qty Botol (otomatis)</span>
@@ -123,7 +174,7 @@
             <div class="search-bar">
               <label class="field field-inline">
                 <span>Cari Operator</span>
-                <select class="f-search-operator"><option value="">Semua operator</option></select>
+                <input type="search" class="f-search-operator master-search-input filter-master-search" data-master="operator" placeholder="Cari operator…" autocomplete="off">
               </label>
               <label class="field field-inline">
                 <span>Cari Tanggal</span>
@@ -197,7 +248,7 @@
               </table>
             </div>
             <div class="table-footer"><p id="lap-page-summary" class="table-summary"></p><div id="lap-pagination" class="pagination"></div></div>
-            <div class="form-actions"><button type="button" class="btn btn-secondary" id="lap-export">⭳ Export CSV</button><button type="button" class="btn btn-ghost" id="lap-print" onclick="window.print()">🖶 Cetak</button></div>
+            <div class="form-actions"><button type="button" class="btn btn-secondary" id="lap-export">⭳ Export CSV</button><button type="button" class="btn btn-ghost" id="lap-print">🖶 Cetak</button></div>
           </div>
         </div>
       </section>
@@ -205,7 +256,7 @@
       <section class="view" id="view-master" hidden>
         <div class="master-layout">
           <section class="panel">
-            <div class="panel-head"><h2>Data Master (Dropdown)</h2></div>
+            <div class="panel-head"><h2>Data Master (Sumber Search)</h2></div>
             <p class="hint-text">Sheet <code>Master</code>: kolom A = Nama Operator, kolom B = Nama Produk, kolom C = Nama Botol.</p>
             <div class="form-actions"><button type="button" class="btn btn-secondary" id="masterReload">↻ Muat Ulang</button><button type="button" class="btn btn-ghost" id="masterCsvExport">⭳ Export Master</button></div>
             <div class="master-cols">
@@ -216,13 +267,8 @@
             </div>
           </section>
 
-          <section class="panel" id="userManagementPanel">
-            <div class="panel-head"><h2>Kelola User &amp; Hak Akses</h2></div>
-            <p class="hint-text">
-              Super User selalu memiliki akses penuh. Untuk User Biasa, klik <strong>Atur Akses</strong>
-              untuk menentukan menu, cakupan data, serta izin edit/hapus sesuai kebutuhan.
-              Kelola User &amp; Hak Akses tetap hanya untuk Super User.
-            </p>
+          <section class="panel">
+            <div class="panel-head"><h2>Kelola User</h2></div>
             <form id="userAddForm" class="user-add-form">
               <input type="text" id="newUserName" placeholder="Nama" required>
               <input type="text" id="newUserUsername" placeholder="Username" required>
@@ -230,112 +276,11 @@
               <select id="newUserRole"><option value="user">User Biasa</option><option value="superuser">Super User</option></select>
               <button type="submit" class="btn btn-primary">+ Tambah User</button>
             </form>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead><tr><th>Nama</th><th>Username</th><th>Role</th><th>Hak Akses</th><th>Aksi</th></tr></thead>
-                <tbody id="userTbody"></tbody>
-              </table>
-            </div>
-
-            <section id="permissionEditor" class="panel" hidden style="margin-top:18px">
-              <div class="panel-head">
-                <div>
-                  <p class="eyebrow">Custom Permission</p>
-                  <h3>Atur Akses — <span id="permissionUserLabel">—</span></h3>
-                </div>
-                <button type="button" class="btn btn-ghost" id="permissionCancelBtn">Tutup</button>
-              </div>
-              <input type="hidden" id="permissionUsername" value="">
-              <p class="hint-text">Centang akses yang ingin diberikan kepada User Biasa. Perubahan berlaku setelah user login kembali.</p>
-
-              <div class="input-grid" style="margin-top:12px">
-                <label class="field"><span><input type="checkbox" class="permission-check" data-permission="filling"> Akses Filling</span></label>
-                <label class="field"><span><input type="checkbox" class="permission-check" data-permission="press"> Akses Press</span></label>
-                <label class="field"><span><input type="checkbox" class="permission-check" data-permission="report"> Akses Laporan</span></label>
-                <label class="field"><span><input type="checkbox" class="permission-check" data-permission="viewAllEntries"> Lihat Semua Data User</span></label>
-                <label class="field"><span><input type="checkbox" class="permission-check" data-permission="editOwnEntries"> Edit Data Sendiri</span></label>
-                <label class="field"><span><input type="checkbox" class="permission-check" data-permission="editAllEntries"> Edit Data User Lain</span></label>
-                <label class="field"><span><input type="checkbox" class="permission-check" data-permission="deleteOwnEntries"> Hapus Data Sendiri</span></label>
-                <label class="field"><span><input type="checkbox" class="permission-check" data-permission="deleteAllEntries"> Hapus Data User Lain</span></label>
-                <label class="field"><span><input type="checkbox" class="permission-check" data-permission="master"> Akses Setting / Master Data</span></label>
-              </div>
-
-              <div class="form-actions">
-                <button type="button" class="btn btn-primary" id="permissionSaveBtn">Simpan Hak Akses</button>
-                <button type="button" class="btn btn-ghost" id="permissionResetBtn">Default User Biasa</button>
-              </div>
-            </section>
+            <div class="table-wrap"><table class="data-table"><thead><tr><th>Nama</th><th>Username</th><th>Role</th><th>Aksi</th></tr></thead><tbody id="userTbody"></tbody></table></div>
           </section>
         </div>
       </section>
     </main>
-
-    <!-- =======================================================
-         GANTI PASSWORD SENDIRI — semua user
-         ======================================================= -->
-    <dialog id="changePasswordDialog" class="panel" style="width:min(460px, calc(100% - 32px)); border:0; border-radius:16px; padding:22px;">
-      <form id="changePasswordForm" method="dialog" autocomplete="off">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">Keamanan Akun</p>
-            <h2>Ganti Password</h2>
-          </div>
-          <button type="button" class="btn btn-ghost" id="changePasswordCloseBtn">Tutup</button>
-        </div>
-        <p class="hint-text">Masukkan password lama dan password baru. Setelah berhasil, Anda akan diminta login kembali.</p>
-        <div class="input-grid" style="grid-template-columns:1fr; margin-top:14px;">
-          <label class="field">
-            <span>Password Lama</span>
-            <input type="password" id="currentPassword" autocomplete="current-password" required>
-          </label>
-          <label class="field">
-            <span>Password Baru</span>
-            <input type="password" id="newOwnPassword" autocomplete="new-password" minlength="6" required>
-          </label>
-          <label class="field">
-            <span>Konfirmasi Password Baru</span>
-            <input type="password" id="confirmOwnPassword" autocomplete="new-password" minlength="6" required>
-          </label>
-        </div>
-        <p id="changePasswordError" class="form-error" hidden></p>
-        <div class="form-actions">
-          <button type="button" class="btn btn-ghost" id="changePasswordCancelBtn">Batal</button>
-          <button type="submit" class="btn btn-primary" id="changePasswordSaveBtn">Simpan Password</button>
-        </div>
-      </form>
-    </dialog>
-
-    <!-- =======================================================
-         RESET PASSWORD USER — khusus Super User
-         ======================================================= -->
-    <dialog id="resetPasswordDialog" class="panel" style="width:min(460px, calc(100% - 32px)); border:0; border-radius:16px; padding:22px;">
-      <form id="resetPasswordForm" method="dialog" autocomplete="off">
-        <div class="panel-head">
-          <div>
-            <p class="eyebrow">Super User</p>
-            <h2>Reset Password — <span id="resetPasswordUserLabel">—</span></h2>
-          </div>
-          <button type="button" class="btn btn-ghost" id="resetPasswordCloseBtn">Tutup</button>
-        </div>
-        <input type="hidden" id="resetPasswordUsername" value="">
-        <p class="hint-text">Password lama user tidak diperlukan. Sesi user tersebut akan dihapus setelah password berhasil direset.</p>
-        <div class="input-grid" style="grid-template-columns:1fr; margin-top:14px;">
-          <label class="field">
-            <span>Password Baru</span>
-            <input type="password" id="resetNewPassword" autocomplete="new-password" minlength="6" required>
-          </label>
-          <label class="field">
-            <span>Konfirmasi Password Baru</span>
-            <input type="password" id="resetConfirmPassword" autocomplete="new-password" minlength="6" required>
-          </label>
-        </div>
-        <p id="resetPasswordError" class="form-error" hidden></p>
-        <div class="form-actions">
-          <button type="button" class="btn btn-ghost" id="resetPasswordCancelBtn">Batal</button>
-          <button type="submit" class="btn btn-primary" id="resetPasswordSaveBtn">Reset Password</button>
-        </div>
-      </form>
-    </dialog>
   </div>
 
   <script src="script.js"></script>
