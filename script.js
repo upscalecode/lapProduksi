@@ -37,7 +37,7 @@
     PAGE_SIZE: 20,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
-    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbwhPdhaZ2Q1VrkasN_e0EXARua3uVIBcltKcq3l8E87c59QQMXvmxSThmtPjy1_mvGq1Q/exec"
+    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbxXK8_K0Mvp2WXk0YIORp3L2Ez5JyDHIUqKJPHvT-kDdsRxgUrmCF0VkOFerleW0VqZDw/exec"
   };
 
   const LINE_LABEL = { filling: "Filling", press: "Press" };
