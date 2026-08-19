@@ -7,60 +7,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
-
-  <style>
-    .field { position: relative; }
-    .master-search-input { width: 100%; }
-    .master-suggest {
-      position: absolute;
-      left: 0;
-      right: 0;
-      top: calc(100% + 4px);
-      z-index: 60;
-      max-height: 220px;
-      overflow-y: auto;
-      background: #fff;
-      border: 1px solid rgba(15, 23, 42, .16);
-      border-radius: 10px;
-      box-shadow: 0 12px 28px rgba(15, 23, 42, .14);
-      padding: 5px;
-    }
-    .master-suggest[hidden] { display: none; }
-    .master-suggest button {
-      width: 100%;
-      border: 0;
-      background: transparent;
-      text-align: left;
-      padding: 9px 10px;
-      border-radius: 7px;
-      cursor: pointer;
-      font: inherit;
-      color: inherit;
-    }
-    .master-suggest button:hover,
-    .master-suggest button.active { background: rgba(15, 23, 42, .07); }
-    .master-suggest-empty {
-      padding: 10px;
-      font-size: 12px;
-      opacity: .65;
-    }
-    .master-search-input.is-invalid {
-      outline: 2px solid #dc2626;
-      outline-offset: 1px;
-    }
-    .press-balance-panel { margin-bottom: 18px; }
-    .press-balance-note { margin: 0; font-size: 12px; opacity: .72; }
-    .press-available-hint {
-      margin: 10px 0 0;
-      padding: 9px 12px;
-      border-radius: 9px;
-      background: rgba(15, 23, 42, .05);
-      font-size: 12px;
-    }
-    .press-available-hint[data-state="ok"] { font-weight: 600; }
-    .press-available-hint[data-state="empty"] { opacity: .7; }
-    .press-balance-use { white-space: nowrap; }
-  </style>
 </head>
 <body data-page="app">
   <div id="appScreen" class="app-shell" hidden>
@@ -122,15 +68,15 @@
               </label>
               <label class="field">
                 <span>Nama Operator</span>
-                <input type="text" class="f-operator master-search-input" data-master="operator" placeholder="Cari operator…" autocomplete="off" required>
+                <select class="f-operator" required><option value="">— pilih operator —</option></select>
               </label>
               <label class="field">
                 <span>Nama Produk</span>
-                <input type="text" class="f-produk master-search-input" data-master="produk" placeholder="Cari produk…" autocomplete="off" required>
+                <select class="f-produk" required><option value="">— pilih produk —</option></select>
               </label>
               <label class="field">
                 <span>Botol yang Digunakan</span>
-                <input type="text" class="f-botol master-search-input" data-master="botol" placeholder="Cari jenis botol…" autocomplete="off" required>
+                <select class="f-botol" id="botolDigunakan" required><option value="">— pilih jenis botol —</option></select>
               </label>
               <label class="field">
                 <span>Qty Pengerjaan (Kardus)</span>
@@ -174,7 +120,7 @@
             <div class="search-bar">
               <label class="field field-inline">
                 <span>Cari Operator</span>
-                <input type="search" class="f-search-operator master-search-input filter-master-search" data-master="operator" placeholder="Cari operator…" autocomplete="off">
+                <select class="f-search-operator"><option value="">Semua operator</option></select>
               </label>
               <label class="field field-inline">
                 <span>Cari Tanggal</span>
@@ -243,7 +189,7 @@
             </div>
             <div class="table-wrap">
               <table class="data-table">
-                <thead><tr><th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th></tr></thead>
+                <thead><tr><th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th><th>Keterangan</th></tr></thead>
                 <tbody id="lap-tbody"></tbody>
               </table>
             </div>
@@ -256,7 +202,7 @@
       <section class="view" id="view-master" hidden>
         <div class="master-layout">
           <section class="panel">
-            <div class="panel-head"><h2>Data Master (Sumber Search)</h2></div>
+            <div class="panel-head"><h2>Data Master (Dropdown)</h2></div>
             <p class="hint-text">Sheet <code>Master</code>: kolom A = Nama Operator, kolom B = Nama Produk, kolom C = Nama Botol.</p>
             <div class="form-actions"><button type="button" class="btn btn-secondary" id="masterReload">↻ Muat Ulang</button><button type="button" class="btn btn-ghost" id="masterCsvExport">⭳ Export Master</button></div>
             <div class="master-cols">

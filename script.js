@@ -37,7 +37,7 @@
     PAGE_SIZE: 20,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
-    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbwXMpyTcM2tguaoBFd93k8nT_oe-_w5qGiNU_VDo9h76CmJbgtBNZ45wFDkQGr9XPNJpg/exec"
+    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbz1lm-wpyBxOQiBgTu1YGoFGhh_GMt_v2MyIiqoSbpEhbg8ejo01UzdIdd9liMG_nADTg/exec"
   };
 
   const LINE_LABEL = { filling: "Filling", press: "Press" };
@@ -48,7 +48,7 @@
     currentUser: null,
     master: { operator: [], produk: [], botol: [], botolpecah: [] },
     entries: [],
-    adjustments: [],
+    pressRemainders: [],
     preview: { filling: [], press: [] },
     users: [],
     search: {
@@ -176,9 +176,9 @@
     const cancelBtn = qs(".f-cancel-btn", form);
     const stamp = qs(".stamp", form);
 
-    if (operator && isMasterValue("operator", draft.operator)) operator.value = canonicalMasterValue("operator", draft.operator);
-    if (produk && isMasterValue("produk", draft.produk)) produk.value = canonicalMasterValue("produk", draft.produk);
-    if (botol && isMasterValue("botol", draft.botol)) botol.value = canonicalMasterValue("botol", draft.botol);
+    if (operator && [...operator.options].some(o => o.value === draft.operator)) operator.value = draft.operator || "";
+    if (produk && [...produk.options].some(o => o.value === draft.produk)) produk.value = draft.produk || "";
+    if (botol && [...botol.options].some(o => o.value === draft.botol)) botol.value = draft.botol || "";
     if (qtyKardus) qtyKardus.value = draft.qtyKardus ?? "";
     if (qtyBotol) qtyBotol.value = draft.qtyBotolPerKardus ?? "";
     if (qtyPecah) qtyPecah.value = draft.qtyBotolPecah ?? "0";
@@ -514,98 +514,41 @@
     qsa("[data-line]", clone).forEach(node => { node.dataset.line = "press"; });
     qsa("h2", clone).forEach(h => { h.textContent = h.textContent.replace(/Filling/g, "Press"); });
 
-    const stack = qs(".line-stack", clone);
     const form = qs(".form-panel", clone);
-    if (stack && form) {
-      const balancePanel = document.createElement("section");
-      balancePanel.className = "panel table-panel press-balance-panel";
-      balancePanel.innerHTML = `
+    const errorEl = form ? qs(".f-error", form) : null;
+    if (form && errorEl) {
+      const balanceBox = document.createElement("div");
+      balanceBox.className = "press-balance-box";
+      balanceBox.style.cssText = "margin:16px 0;padding:14px 16px;border:1px solid #d7e1e8;border-radius:12px;background:#f8fbfd;";
+      balanceBox.innerHTML = `
+        <div style="display:flex;gap:24px;flex-wrap:wrap;align-items:center">
+          <div><span class="eyebrow">Balance Filling → Press</span><div><strong class="press-available-qty mono">0</strong> botol tersedia</div></div>
+          <div><span class="eyebrow">Sumber</span><div class="press-source-info">Pilih nama produk.</div></div>
+        </div>`;
+      form.insertBefore(balanceBox, errorEl);
+    }
+
+    const stack = qs(".line-stack", clone);
+    if (stack) {
+      const remainderPanel = document.createElement("section");
+      remainderPanel.className = "panel table-panel press-remainder-panel";
+      remainderPanel.innerHTML = `
         <div class="panel-head">
           <div>
-            <p class="eyebrow">Balance Filling → Press</p>
+            <p class="eyebrow">Sisa Pengerjaan</p>
             <h2>Sisa Pengerjaan yang Menunggu Press</h2>
-            <p class="press-balance-note">Saldo dihitung lintas tanggal: Total Filling − Press tersimpan − Qty ditutup − preview Press. Tutup Sisa wajib disertai alasan.</p>
           </div>
         </div>
         <div class="table-wrap">
           <table class="data-table">
-            <thead>
-              <tr>
-                <th>Produk</th><th>Botol</th><th>Total Filling</th><th>Press Tersimpan</th>
-                <th>Qty Ditutup</th><th>Preview Press</th><th>Sisa Qty</th><th>Aksi</th>
-              </tr>
-            </thead>
-            <tbody class="press-balance-tbody">
-              <tr><td colspan="8" class="empty-row">Memuat saldo Filling…</td></tr>
-            </tbody>
+            <thead><tr><th>Tanggal Filling</th><th>Produk</th><th>Botol</th><th>Qty Filling</th><th>Sudah Press</th><th>Sisa</th><th>Status</th></tr></thead>
+            <tbody class="press-remainder-tbody"><tr><td colspan="7" class="empty-row">Belum ada sisa pengerjaan Press.</td></tr></tbody>
           </table>
-        </div>
-        <div class="table-footer"><p class="table-summary press-balance-summary"></p></div>`;
-      stack.insertBefore(balancePanel, form);
-
-      const hint = document.createElement("p");
-      hint.className = "press-available-hint";
-      hint.dataset.state = "empty";
-      hint.textContent = "Pilih Produk dan Botol dari data master untuk melihat sisa Qty Filling.";
-      const error = qs(".f-error", form);
-      if (error) error.insertAdjacentElement("beforebegin", hint);
-      else form.appendChild(hint);
+        </div>`;
+      stack.appendChild(remainderPanel);
     }
 
-    clone.addEventListener("click", async event => {
-      const useBtn = event.target.closest(".press-balance-use");
-      if (useBtn) {
-        const pressForm = qs(".form-panel", clone);
-        if (!pressForm) return;
-        const produk = qs(".f-produk", pressForm);
-        const botol = qs(".f-botol", pressForm);
-        if (produk) produk.value = useBtn.dataset.produk || "";
-        if (botol) botol.value = useBtn.dataset.botol || "";
-        if (botol) botol.dispatchEvent(new Event("change", { bubbles: true }));
-        if (produk) produk.dispatchEvent(new Event("change", { bubbles: true }));
-        updatePressAvailabilityHint(pressForm);
-        saveFormDraft("press", pressForm);
-        pressForm.scrollIntoView({ behavior: "smooth", block: "start" });
-        return;
-      }
-
-      const closeBtn = event.target.closest(".press-balance-close");
-      if (!closeBtn) return;
-      const key = closeBtn.dataset.key || "";
-      const row = getPressBalanceRows().find(item => item.key === key);
-      if (!row || row.remaining <= 0) {
-        toast("Sisa Press sudah tidak tersedia.", true);
-        renderPressBalance();
-        return;
-      }
-      if (row.pressPreview > 0) {
-        toast("Masih ada Preview Press untuk Produk/Botol ini. Simpan atau hapus preview terlebih dahulu sebelum Tutup Sisa.", true);
-        return;
-      }
-
-      const reason = await askClosePressReason(row);
-      if (!reason) return;
-
-      closeBtn.disabled = true;
-      closeBtn.textContent = "Menutup…";
-      try {
-        const response = await enqueueWrite(() => apiPost("press.adjustment.close", {
-          data: { produk: row.produk, botol: row.botol, alasan: reason }
-        }));
-        if (response.adjustment) upsertAdjustment(response.adjustment);
-        renderPressBalance();
-        toast(`Sisa ${row.produk} / ${row.botol} berhasil ditutup.`);
-      } catch (err) {
-        toast(err.message, true);
-        renderPressBalance();
-      } finally {
-        closeBtn.disabled = false;
-        closeBtn.textContent = "Tutup Sisa";
-      }
-    });
-
     oldPress.replaceWith(clone);
-    initMasterSearches(clone);
   }
 
   function applyBootstrap(data) {
@@ -615,7 +558,7 @@
       try { localStorage.setItem(CONFIG.MASTER_KEY, JSON.stringify(data.master)); } catch (_) {}
     }
     if (Array.isArray(data.entries)) state.entries = data.entries;
-    if (Array.isArray(data.adjustments)) state.adjustments = data.adjustments;
+    if (Array.isArray(data.pressRemainders)) state.pressRemainders = data.pressRemainders;
     if (Array.isArray(data.users)) state.users = data.users;
 
     refreshAllDropdowns();
@@ -624,7 +567,8 @@
     restoreFormDraft("press");
     renderPreview("filling");
     renderPreview("press");
-    renderPressBalance();
+    renderPressRemainders();
+    updatePressBalanceInfo();
     renderMasterChips();
     renderUsers();
     renderUserHeader();
@@ -650,158 +594,24 @@
     if (unique.includes(current)) select.value = current;
   }
 
-
-  function masterValues(category) {
-    return [...new Set((state.master[category] || [])
-      .map(value => String(value || "").trim())
-      .filter(Boolean))];
-  }
-
-  function canonicalMasterValue(category, value) {
-    const target = String(value || "").trim().toLowerCase();
-    if (!target) return "";
-    return masterValues(category).find(item => item.toLowerCase() === target) || "";
-  }
-
-  function isMasterValue(category, value) {
-    return Boolean(canonicalMasterValue(category, value));
-  }
-
-  function validateMasterInput(input, allowPartial = false) {
-    if (!input || !input.dataset.master) return true;
-    const value = String(input.value || "").trim();
-
-    // Filter operator boleh kosong/partial karena fungsinya memang mencari.
-    if (allowPartial || input.classList.contains("filter-master-search")) {
-      input.setCustomValidity("");
-      input.classList.remove("is-invalid");
-      return true;
-    }
-
-    if (!value) {
-      input.setCustomValidity("Field ini wajib dipilih dari data master.");
-      input.classList.add("is-invalid");
-      return false;
-    }
-
-    const canonical = canonicalMasterValue(input.dataset.master, value);
-    if (!canonical) {
-      input.setCustomValidity("Pilih nilai yang tersedia pada data master.");
-      input.classList.add("is-invalid");
-      return false;
-    }
-
-    input.value = canonical;
-    input.setCustomValidity("");
-    input.classList.remove("is-invalid");
-    return true;
-  }
-
-  function closeMasterSuggestions(exceptInput = null) {
-    qsa(".master-suggest").forEach(list => {
-      if (!exceptInput || list._ownerInput !== exceptInput) list.hidden = true;
-    });
-  }
-
-  function attachMasterSearch(input) {
-    if (!input || input.dataset.masterSearchReady === "1") return;
-    input.dataset.masterSearchReady = "1";
-
-    const field = input.closest(".field") || input.parentElement;
-    if (!field) return;
-
-    const list = document.createElement("div");
-    list.className = "master-suggest";
-    list.hidden = true;
-    list._ownerInput = input;
-    field.appendChild(list);
-
-    function renderList() {
-      const query = String(input.value || "").trim().toLowerCase();
-      const values = masterValues(input.dataset.master)
-        .filter(value => !query || value.toLowerCase().includes(query))
-        .slice(0, 50);
-
-      if (!values.length) {
-        list.innerHTML = '<div class="master-suggest-empty">Tidak ada data master yang cocok.</div>';
-      } else {
-        list.innerHTML = values.map(value =>
-          `<button type="button" data-value="${esc(value)}">${esc(value)}</button>`
-        ).join("");
-      }
-      list.hidden = false;
-    }
-
-    input.addEventListener("focus", renderList);
-    input.addEventListener("input", () => {
-      if (!input.classList.contains("filter-master-search")) {
-        input.setCustomValidity("");
-        input.classList.remove("is-invalid");
-      }
-      renderList();
-    });
-    input.addEventListener("keydown", event => {
-      if (event.key === "Escape") {
-        list.hidden = true;
-        input.blur();
-      } else if (event.key === "ArrowDown" && !list.hidden) {
-        event.preventDefault();
-        const first = list.querySelector("button");
-        if (first) first.focus();
-      }
-    });
-    input.addEventListener("blur", () => {
-      setTimeout(() => {
-        list.hidden = true;
-        validateMasterInput(input);
-      }, 120);
-    });
-
-    list.addEventListener("keydown", event => {
-      const buttons = qsa("button", list);
-      const index = buttons.indexOf(document.activeElement);
-      if (event.key === "ArrowDown") {
-        event.preventDefault();
-        (buttons[index + 1] || buttons[0])?.focus();
-      } else if (event.key === "ArrowUp") {
-        event.preventDefault();
-        if (index <= 0) input.focus();
-        else buttons[index - 1]?.focus();
-      } else if (event.key === "Escape") {
-        list.hidden = true;
-        input.focus();
-      }
-    });
-
-    list.addEventListener("mousedown", event => {
-      const btn = event.target.closest("button[data-value]");
-      if (!btn) return;
-      event.preventDefault();
-      input.value = btn.dataset.value;
-      input.setCustomValidity("");
-      input.classList.remove("is-invalid");
-      list.hidden = true;
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-      input.focus();
-    });
-  }
-
-  function initMasterSearches(root = document) {
-    qsa(".master-search-input", root).forEach(attachMasterSearch);
-  }
-
   function refreshAllDropdowns() {
-    // Form Filling/Press memakai autocomplete custom. Data suggestion dibaca
-    // langsung dari state.master sehingga tidak perlu membuat <option>.
-    initMasterSearches();
-
-    // Filter laporan tetap select karena tidak diminta diubah.
-    fillSelect(el("lap-operator"), state.master.operator, "Semua operator");
-
-    // Setelah master diperbarui, validasi ulang input form yang sudah terisi.
-    qsa(".master-search-input:not(.filter-master-search)").forEach(input => {
-      if (input.value) validateMasterInput(input);
+    const m = state.master;
+    qsa(".f-operator").forEach(s => fillSelect(s, m.operator, "— pilih operator —"));
+    qsa(".f-produk").forEach(s => fillSelect(s, m.produk, "— pilih produk —"));
+    qsa(".f-botol").forEach(s => fillSelect(s, m.botol, "— pilih jenis botol —"));
+    const botolSelect = document.getElementById("botolDigunakan");
+    const pecahInput = document.getElementById("pecah");
+    document.addEventListener("change", function (event){
+      if(event.target.id === "botolDigunakan") {
+        const selectedBotol = event.target.value;
+        if (pecahInput) {
+          pecahInput.value = selectedBotol || "-";
+        }
+      }
     });
+    qsa(".f-botol-pecah").forEach(s => fillSelect(s, m.botolpecah && m.botolpecah.length ? m.botolpecah : m.botol, "— pilih jenis —"));
+    qsa(".f-search-operator").forEach(s => fillSelect(s, m.operator, "Semua operator"));
+    fillSelect(el("lap-operator"), m.operator, "Semua operator");
   }
 
   function renderUserHeader() {
@@ -823,7 +633,7 @@
     const filter = state.search[line];
     return state.entries
       .filter(e => e.tab === line)
-      .filter(e => !filter.operator || String(e.operator || "").toLowerCase().includes(String(filter.operator).toLowerCase()))
+      .filter(e => !filter.operator || e.operator === filter.operator)
       .filter(e => !filter.date || e.tanggal === filter.date)
       .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   }
@@ -832,7 +642,7 @@
     const filter = state.search[line];
     const rows = state.preview && state.preview[line] ? state.preview[line] : [];
     return rows
-      .filter(e => !filter.operator || String(e.operator || "").toLowerCase().includes(String(filter.operator).toLowerCase()))
+      .filter(e => !filter.operator || e.operator === filter.operator)
       .filter(e => !filter.date || e.tanggal === filter.date)
       .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   }
@@ -842,211 +652,6 @@
     const index = state.entries.findIndex(x => x.id === entry.id);
     if (index >= 0) state.entries[index] = entry;
     else state.entries.push(entry);
-  }
-
-
-  function balanceKey(produk, botol) {
-    return `${String(produk || "").trim().toLowerCase()}||${String(botol || "").trim().toLowerCase()}`;
-  }
-
-  function upsertAdjustment(adjustment) {
-    if (!adjustment || !adjustment.id) return;
-    const index = state.adjustments.findIndex(item => item.id === adjustment.id);
-    if (index >= 0) state.adjustments[index] = adjustment;
-    else state.adjustments.push(adjustment);
-  }
-
-  function ensureClosePressModalStyle() {
-    if (el("pressCloseReasonStyle")) return;
-    const style = document.createElement("style");
-    style.id = "pressCloseReasonStyle";
-    style.textContent = `
-      .press-close-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px}
-      .press-close-dialog{width:min(520px,100%);background:#fff;border-radius:16px;padding:20px;box-shadow:0 24px 70px rgba(15,23,42,.28)}
-      .press-close-dialog h3{margin:0 0 6px;font-size:18px}.press-close-dialog p{margin:0 0 14px;color:#64748b;font-size:13px;line-height:1.5}
-      .press-close-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}.press-close-meta div{padding:10px;background:#f8fafc;border-radius:10px;font-size:12px}
-      .press-close-dialog textarea{width:100%;min-height:110px;resize:vertical;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:10px;font:inherit}
-      .press-close-error{color:#b91c1c!important;margin:7px 0 0!important;min-height:18px}.press-close-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
-      .press-balance-actions{display:flex;gap:6px;flex-wrap:wrap}
-    `;
-    document.head.appendChild(style);
-  }
-
-  function askClosePressReason(row) {
-    ensureClosePressModalStyle();
-    return new Promise(resolve => {
-      const overlay = document.createElement("div");
-      overlay.className = "press-close-overlay";
-      overlay.innerHTML = `
-        <div class="press-close-dialog" role="dialog" aria-modal="true" aria-labelledby="pressCloseTitle">
-          <h3 id="pressCloseTitle">Tutup Sisa Pengerjaan Press</h3>
-          <p>Qty sisa akan dikeluarkan dari saldo Press aktif, tetapi riwayat Filling/Press tidak dihapus. Alasan wajib dicatat untuk audit.</p>
-          <div class="press-close-meta">
-            <div><strong>Produk</strong><br>${esc(row.produk)}</div>
-            <div><strong>Botol</strong><br>${esc(row.botol)}</div>
-            <div><strong>Sisa Qty</strong><br>${Number(row.remaining).toLocaleString("id-ID")} botol</div>
-            <div><strong>Tanggal</strong><br>${esc(todayStr())}</div>
-          </div>
-          <label class="field"><span>Alasan Tutup Sisa <b>*</b></span>
-            <textarea class="press-close-reason" maxlength="500" placeholder="Contoh: sisa botol rusak dan tidak dapat diproses press" required></textarea>
-          </label>
-          <p class="press-close-error"></p>
-          <div class="press-close-actions">
-            <button type="button" class="btn btn-ghost press-close-cancel">Batal</button>
-            <button type="button" class="btn btn-danger press-close-confirm">Tutup Sisa</button>
-          </div>
-        </div>`;
-      document.body.appendChild(overlay);
-      const textarea = qs(".press-close-reason", overlay);
-      const error = qs(".press-close-error", overlay);
-      const finish = value => { overlay.remove(); resolve(value); };
-      qs(".press-close-cancel", overlay).addEventListener("click", () => finish(""));
-      overlay.addEventListener("click", event => { if (event.target === overlay) finish(""); });
-      overlay.addEventListener("keydown", event => { if (event.key === "Escape") finish(""); });
-      qs(".press-close-confirm", overlay).addEventListener("click", () => {
-        const reason = String(textarea.value || "").trim();
-        if (reason.length < 5) {
-          error.textContent = "Alasan wajib diisi minimal 5 karakter.";
-          textarea.focus();
-          return;
-        }
-        finish(reason);
-      });
-      setTimeout(() => textarea.focus(), 0);
-    });
-  }
-
-  function getPressBalanceRows(options = {}) {
-    const excludePreviewId = options.excludePreviewId || "";
-    const map = new Map();
-
-    function ensure(produk, botol) {
-      const key = balanceKey(produk, botol);
-      if (!map.has(key)) {
-        map.set(key, {
-          key,
-          produk: String(produk || "").trim(),
-          botol: String(botol || "").trim(),
-          fillingTotal: 0,
-          pressSaved: 0,
-          adjustedClosed: 0,
-          pressPreview: 0,
-          remaining: 0
-        });
-      }
-      return map.get(key);
-    }
-
-    state.entries
-      .filter(entry => !entry._syncState)
-      .forEach(entry => {
-        const row = ensure(entry.produk, entry.botol);
-        if (entry.tab === "filling") row.fillingTotal += Number(entry.totalQty) || 0;
-        if (entry.tab === "press") row.pressSaved += Number(entry.totalQty) || 0;
-      });
-
-    (state.adjustments || []).forEach(adjustment => {
-      const row = ensure(adjustment.produk, adjustment.botol);
-      row.adjustedClosed += Number(adjustment.qtyDitutup) || 0;
-    });
-
-    (state.preview.press || []).forEach(entry => {
-      if (entry.id === excludePreviewId) return;
-      const row = ensure(entry.produk, entry.botol);
-      row.pressPreview += Number(entry.totalQty) || 0;
-    });
-
-    return Array.from(map.values()).map(row => ({
-      ...row,
-      remaining: row.fillingTotal - row.pressSaved - row.adjustedClosed - row.pressPreview
-    })).sort((a, b) => {
-      if (a.remaining !== b.remaining) return b.remaining - a.remaining;
-      return a.produk.localeCompare(b.produk, "id");
-    });
-  }
-
-  function getPressAvailable(produk, botol, excludePreviewId = "") {
-    const key = balanceKey(produk, botol);
-    const row = getPressBalanceRows({ excludePreviewId }).find(item => item.key === key);
-    return row ? row.remaining : 0;
-  }
-
-  function renderPressBalance() {
-    const section = el("view-press");
-    if (!section) return;
-    const tbody = qs(".press-balance-tbody", section);
-    const summary = qs(".press-balance-summary", section);
-    if (!tbody) return;
-
-    const allRows = getPressBalanceRows();
-    const rows = allRows.filter(row => row.remaining > 0);
-    tbody.innerHTML = rows.length ? rows.map(row => {
-      const produkAktif = isMasterValue("produk", row.produk);
-      const botolAktif = isMasterValue("botol", row.botol);
-      const bisaDigunakan = produkAktif && botolAktif;
-      const masterStatus = bisaDigunakan
-        ? ""
-        : '<div class="press-master-history">Tidak ada di Master</div>';
-
-      return `
-      <tr>
-        <td>${esc(row.produk)}${!produkAktif ? masterStatus : ""}</td>
-        <td>${esc(row.botol)}${produkAktif && !botolAktif ? masterStatus : ""}</td>
-        <td>${row.fillingTotal.toLocaleString("id-ID")}</td>
-        <td>${row.pressSaved.toLocaleString("id-ID")}</td>
-        <td>${row.adjustedClosed.toLocaleString("id-ID")}</td>
-        <td>${row.pressPreview.toLocaleString("id-ID")}</td>
-        <td><strong>${row.remaining.toLocaleString("id-ID")}</strong></td>
-        <td><div class="press-balance-actions">
-          <button type="button" class="btn btn-ghost press-balance-use"
-            data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}"
-            ${!bisaDigunakan ? 'disabled title="Produk/Botol sudah tidak ada di Master. Tambahkan kembali ke Master jika ingin melanjutkan Press."' : ""}>Gunakan</button>
-          <button type="button" class="btn btn-danger press-balance-close"
-            data-key="${esc(row.key)}" ${row.pressPreview > 0 ? "disabled title=\"Simpan/hapus Preview Press terlebih dahulu\"" : ""}>Tutup Sisa</button>
-        </div></td>
-      </tr>`;
-    }).join("")
-      : '<tr><td colspan="8" class="empty-row">Tidak ada sisa pekerjaan Filling yang menunggu Press.</td></tr>';
-
-    const remainingTotal = rows.reduce((sum, row) => sum + row.remaining, 0);
-    if (summary) {
-      summary.textContent = `${rows.length} kombinasi Produk/Botol belum balance · Sisa ${remainingTotal.toLocaleString("id-ID")} botol`;
-    }
-
-    const form = qs(".form-panel", section);
-    updatePressAvailabilityHint(form);
-  }
-
-  function updatePressAvailabilityHint(form) {
-    if (!form || form.dataset.line !== "press") return;
-    const produk = qs(".f-produk", form)?.value || "";
-    const botol = qs(".f-botol", form)?.value || "";
-    const editingId = qs(".f-editing-id", form)?.value || "";
-    const hint = qs(".press-available-hint", form);
-    if (!hint) return;
-
-    if (!isMasterValue("produk", produk) || !isMasterValue("botol", botol)) {
-      hint.dataset.state = "empty";
-      hint.textContent = "Pilih Produk dan Botol dari data master untuk melihat sisa Qty Filling.";
-      return;
-    }
-
-    const available = getPressAvailable(produk, botol, editingId);
-    hint.dataset.state = available > 0 ? "ok" : "empty";
-    hint.textContent = available > 0
-      ? `Sisa Qty Filling yang tersedia untuk Press: ${available.toLocaleString("id-ID")} botol.`
-      : "Produk/Botol ini sudah balance atau belum memiliki Qty Filling tersimpan.";
-  }
-
-  function validatePressPayload(payload, editingId = "") {
-    if (payload.line !== "press") return "";
-    const requested = (Number(payload.qtyKardus) || 0) * (Number(payload.qtyBotolPerKardus) || 0);
-    const available = getPressAvailable(payload.produk, payload.botol, editingId);
-    if (requested > available) {
-      return `Qty Press ${requested.toLocaleString("id-ID")} botol melebihi sisa Filling ${Math.max(0, available).toLocaleString("id-ID")} botol untuk ${payload.produk} / ${payload.botol}.`;
-    }
-    if (requested <= 0) return "Total Qty Press harus lebih dari 0 botol.";
-    return "";
   }
 
   function renderEntryRow(entry) {
@@ -1177,14 +782,161 @@
     });
   }
 
+
+  function normalizeProduct(value) {
+    return String(value || "").trim().toLowerCase();
+  }
+
+  function pressAvailableQty(produk, tanggal, excludePreviewId = "") {
+    const key = normalizeProduct(produk);
+    if (!key || !tanggal) return 0;
+
+    let available = (state.pressRemainders || [])
+      .filter(row => normalizeProduct(row.produk) === key && row.tanggalFilling <= tanggal)
+      .reduce((sum, row) => sum + (Number(row.qtySisa) || 0), 0);
+
+    available += (state.preview.filling || [])
+      .filter(row => normalizeProduct(row.produk) === key && row.tanggal <= tanggal)
+      .reduce((sum, row) => sum + (Number(row.totalQty) || 0), 0);
+
+    available -= (state.preview.press || [])
+      .filter(row => row.id !== excludePreviewId && normalizeProduct(row.produk) === key && row.tanggal <= tanggal)
+      .reduce((sum, row) => sum + (Number(row.totalQty) || 0), 0);
+
+    return Math.max(0, available);
+  }
+
+  function virtualPressRemainders() {
+    const sources = [];
+
+    (state.pressRemainders || []).forEach(row => {
+      sources.push({
+        id: `saved:${row.sourceFillingId || row.id}`,
+        tanggalFilling: row.tanggalFilling,
+        produk: row.produk,
+        botol: row.botol || "",
+        qtyFilling: Number(row.qtyFilling) || Number(row.qtySisa) || 0,
+        qtyTerpress: Number(row.qtyTerpress) || 0,
+        qtySisa: Number(row.qtySisa) || 0,
+        isPreview: false
+      });
+    });
+
+    (state.preview.filling || []).forEach(row => {
+      sources.push({
+        id: `preview:${row.id}`,
+        tanggalFilling: row.tanggal,
+        produk: row.produk,
+        botol: row.botol || "",
+        qtyFilling: Number(row.totalQty) || 0,
+        qtyTerpress: 0,
+        qtySisa: Number(row.totalQty) || 0,
+        isPreview: true
+      });
+    });
+
+    sources.sort((a, b) => {
+      const byDate = String(a.tanggalFilling).localeCompare(String(b.tanggalFilling));
+      return byDate || String(a.id).localeCompare(String(b.id));
+    });
+
+    const previewPress = [...(state.preview.press || [])].sort((a, b) => {
+      const byDate = String(a.tanggal).localeCompare(String(b.tanggal));
+      return byDate || String(a.createdAt || "").localeCompare(String(b.createdAt || ""));
+    });
+
+    previewPress.forEach(press => {
+      let needed = Number(press.totalQty) || 0;
+      const key = normalizeProduct(press.produk);
+      for (const source of sources) {
+        if (needed <= 0) break;
+        if (normalizeProduct(source.produk) !== key) continue;
+        if (source.tanggalFilling > press.tanggal || source.qtySisa <= 0) continue;
+        const take = Math.min(source.qtySisa, needed);
+        source.qtySisa -= take;
+        source.qtyTerpress += take;
+        needed -= take;
+      }
+    });
+
+    return sources.filter(row => row.qtySisa > 0);
+  }
+
+  function renderPressRemainders() {
+    const section = el("view-press");
+    const tbody = section ? qs(".press-remainder-tbody", section) : null;
+    if (!tbody) return;
+
+    const rows = virtualPressRemainders();
+    tbody.innerHTML = rows.length ? rows.map(row => `
+      <tr>
+        <td>${esc(row.tanggalFilling)}</td>
+        <td><strong>${esc(row.produk)}</strong></td>
+        <td>${esc(row.botol || "—")}</td>
+        <td>${(Number(row.qtyFilling) || 0).toLocaleString("id-ID")}</td>
+        <td>${(Number(row.qtyTerpress) || 0).toLocaleString("id-ID")}</td>
+        <td><strong>${(Number(row.qtySisa) || 0).toLocaleString("id-ID")}</strong></td>
+        <td>${row.isPreview ? "PREVIEW FILLING" : "MENUNGGU PRESS"}</td>
+      </tr>`).join("") : '<tr><td colspan="7" class="empty-row">Tidak ada sisa pengerjaan Press.</td></tr>';
+  }
+
+  function updatePressBalanceInfo() {
+    const section = el("view-press");
+    const form = section ? qs(".form-panel", section) : null;
+    if (!form) return;
+    const produk = qs(".f-produk", form)?.value || "";
+    const tanggal = qs(".f-tanggal", form)?.value || todayStr();
+    const editingId = qs(".f-editing-id", form)?.value || "";
+    const qtyEl = qs(".press-available-qty", form);
+    const sourceEl = qs(".press-source-info", form);
+    if (!qtyEl || !sourceEl) return;
+
+    if (!produk) {
+      qtyEl.textContent = "0";
+      sourceEl.textContent = "Pilih nama produk.";
+      return;
+    }
+
+    const qty = pressAvailableQty(produk, tanggal, editingId);
+    qtyEl.textContent = qty.toLocaleString("id-ID");
+
+    const dates = [...new Set(virtualPressRemainders()
+      .filter(row => normalizeProduct(row.produk) === normalizeProduct(produk) && row.tanggalFilling <= tanggal)
+      .map(row => row.tanggalFilling))];
+    sourceEl.textContent = dates.length ? `Filling tanggal ${dates.join(", ")}` : "Tidak ada Filling yang tersedia.";
+  }
+
+  function pressPreviewNeedsUnsavedFilling(rows) {
+    const savedPool = {};
+    (state.pressRemainders || []).forEach(row => {
+      const key = normalizeProduct(row.produk);
+      if (!savedPool[key]) savedPool[key] = [];
+      savedPool[key].push({ tanggal: row.tanggalFilling, qty: Number(row.qtySisa) || 0 });
+    });
+    Object.values(savedPool).forEach(list => list.sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal))));
+
+    const ordered = [...rows].sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)));
+    for (const press of ordered) {
+      let needed = Number(press.totalQty) || 0;
+      const pool = savedPool[normalizeProduct(press.produk)] || [];
+      for (const source of pool) {
+        if (needed <= 0) break;
+        if (source.tanggal > press.tanggal || source.qty <= 0) continue;
+        const take = Math.min(source.qty, needed);
+        source.qty -= take;
+        needed -= take;
+      }
+      if (needed > 0) return true;
+    }
+    return false;
+  }
+
   function wireLineView(line) {
     const section = el("view-" + line);
     if (!section) return;
     const form = qs(".form-panel", section);
     if (!form) return;
 
-    const operator = qs(".f-operator", form);
-    const produk = qs(".f-produk", form);
     const botol = qs(".f-botol", form);
     const botolPecah = qs(".f-botol-pecah", form);
     const editing = qs(".f-editing-id", form);
@@ -1201,7 +953,6 @@
 
     function recalc() {
       total.value = ((Number(qtyKardus.value) || 0) * (Number(qtyBotol.value) || 0)).toLocaleString("id-ID");
-      if (line === "press") updatePressAvailabilityHint(form);
     }
 
     function syncBotolPecah() {
@@ -1220,34 +971,23 @@
       cancelBtn.hidden = true;
       stamp.textContent = "ID otomatis";
       errorEl.hidden = true;
-      qsa(".master-search-input", form).forEach(input => {
-        input.setCustomValidity("");
-        input.classList.remove("is-invalid");
-      });
       clearFormDraft(line);
-      if (line === "press") updatePressAvailabilityHint(form);
     }
 
-    botol.addEventListener("change", () => {
-      syncBotolPecah();
-      if (line === "press") updatePressAvailabilityHint(form);
-    });
-    produk?.addEventListener("change", () => {
-      if (line === "press") updatePressAvailabilityHint(form);
-    });
-    produk?.addEventListener("input", () => {
-      if (line === "press") updatePressAvailabilityHint(form);
-    });
-    botol.addEventListener("input", () => {
-      if (line === "press") updatePressAvailabilityHint(form);
-    });
+    botol.addEventListener("change", syncBotolPecah);
     qtyKardus.addEventListener("input", recalc);
     qtyBotol.addEventListener("input", recalc);
     cancelBtn.addEventListener("click", resetForm);
 
     // Simpan draft form setiap ada perubahan agar refresh tidak menghapus input.
-    form.addEventListener("input", () => saveFormDraft(line, form));
-    form.addEventListener("change", () => saveFormDraft(line, form));
+    form.addEventListener("input", () => {
+      saveFormDraft(line, form);
+      if (line === "press") updatePressBalanceInfo();
+    });
+    form.addEventListener("change", () => {
+      saveFormDraft(line, form);
+      if (line === "press") updatePressBalanceInfo();
+    });
 
     function buildOptimisticEntry(payload, clientRequestId) {
       const createdAt = nowIso();
@@ -1314,35 +1054,29 @@
         qtyBotolPecah: Number(qtyPecah.value) || 0
       };
 
-      const masterInputs = [operator, produk, botol];
-      const masterValid = masterInputs.every(input => validateMasterInput(input));
-      if (!masterValid) {
-        errorEl.textContent = "Operator, Produk, dan Botol harus dipilih dari data master yang tersedia.";
-        errorEl.hidden = false;
-        masterInputs.find(input => !input.checkValidity())?.reportValidity();
-        return;
-      }
-
-      // Gunakan penulisan canonical dari master, bukan teks bebas hasil ketikan.
-      payload.operator = canonicalMasterValue("operator", operator.value);
-      payload.produk = canonicalMasterValue("produk", produk.value);
-      payload.botol = canonicalMasterValue("botol", botol.value);
-      payload.botolPecahJenis = payload.botol;
-
-      if (!Number.isFinite(payload.qtyKardus) || payload.qtyKardus < 0 ||
+      if (!payload.operator || !payload.produk || !payload.botol ||
+          !Number.isFinite(payload.qtyKardus) || payload.qtyKardus < 0 ||
           !Number.isFinite(payload.qtyBotolPerKardus) || payload.qtyBotolPerKardus < 0 ||
           payload.qtyBotolPecah < 0) {
-        errorEl.textContent = "Lengkapi Qty dengan benar.";
+        errorEl.textContent = "Lengkapi Operator, Produk, Botol, dan Qty dengan benar.";
         errorEl.hidden = false;
         return;
       }
 
       const id = editing.value;
-      const pressError = validatePressPayload(payload, id);
-      if (pressError) {
-        errorEl.textContent = pressError;
-        errorEl.hidden = false;
-        return;
+      if (line === "press") {
+        const requestedQty = payload.qtyKardus * payload.qtyBotolPerKardus;
+        const availableQty = pressAvailableQty(payload.produk, payload.tanggal, id);
+        if (requestedQty <= 0) {
+          errorEl.textContent = "Qty Press harus lebih dari 0.";
+          errorEl.hidden = false;
+          return;
+        }
+        if (requestedQty > availableQty) {
+          errorEl.textContent = `Qty Press melebihi Filling produk ${payload.produk}. Tersedia ${availableQty.toLocaleString("id-ID")} botol, diminta ${requestedQty.toLocaleString("id-ID")} botol.`;
+          errorEl.hidden = false;
+          return;
+        }
       }
 
       // UPDATE data preview saja. Belum menyentuh Spreadsheet.
@@ -1365,7 +1099,8 @@
           persistPreview();
           resetForm();
           renderPreview(line);
-          if (line === "press") renderPressBalance();
+          renderPressRemainders();
+          updatePressBalanceInfo();
           toast("Data preview berhasil diperbarui.");
           return;
         }
@@ -1391,7 +1126,8 @@
       persistPreview();
       resetForm();
       renderPreview(line);
-      if (line === "press") renderPressBalance();
+      renderPressRemainders();
+      updatePressBalanceInfo();
       toast("Data ditambahkan ke preview. Belum disimpan ke Spreadsheet.");
     });
 
@@ -1399,13 +1135,8 @@
     const searchDate = qs(".f-search-date", section);
     const resetSearch = qs(".f-search-reset", section);
 
-    searchOperator.addEventListener("input", () => {
-      state.search[line].operator = searchOperator.value.trim();
-      state.pages[line] = 1;
-      renderPreview(line);
-    });
     searchOperator.addEventListener("change", () => {
-      state.search[line].operator = searchOperator.value.trim();
+      state.search[line].operator = searchOperator.value;
       state.pages[line] = 1;
       renderPreview(line);
     });
@@ -1431,6 +1162,11 @@
           return;
         }
 
+        if (line === "press" && pressPreviewNeedsUnsavedFilling(previewRows)) {
+          toast("Sebagian Qty Press masih bergantung pada Filling yang belum disimpan. Simpan preview Filling terlebih dahulu.", true);
+          return;
+        }
+
         saveBtn.disabled = true;
         saveBtn.textContent = "Menyimpan...";
         const failed = [];
@@ -1453,6 +1189,7 @@
               }
             }));
             if (response.entry) upsertEntry(response.entry);
+            if (Array.isArray(response.pressRemainders)) state.pressRemainders = response.pressRemainders;
             successCount++;
           } catch (err) {
             failed.push({ ...item, _saveError: err.message });
@@ -1463,7 +1200,8 @@
         state.pages[line] = 1;
         persistPreview();
         renderPreview(line);
-        renderPressBalance();
+        renderPressRemainders();
+        updatePressBalanceInfo();
 
         if (successCount) toast(`${successCount} data berhasil disimpan ke Spreadsheet.`);
         if (failed.length) toast(`${failed.length} data gagal disimpan. Silakan klik Simpan lagi.`, true);
@@ -1501,7 +1239,6 @@
         cancelBtn.hidden = false;
         stamp.textContent = "EDIT PREVIEW";
         saveFormDraft(line, form);
-        if (line === "press") updatePressAvailabilityHint(form);
         form.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
@@ -1511,7 +1248,8 @@
         state.pages[line] = 1;
         persistPreview();
         renderPreview(line);
-        if (line === "press") renderPressBalance();
+        renderPressRemainders();
+        updatePressBalanceInfo();
         toast("Data dihapus dari preview.");
       }
     });
@@ -1554,6 +1292,7 @@
         <td>${Number(e.qtyKardus) || 0}</td>
         <td><strong>${Number(e.totalQty) || 0}</strong></td>
         <td>${Number(e.qtyBotolPecah) || 0}</td>
+        <td>${esc(e.keterangan || "—")}</td>
       </tr>`).join("");
 
     const from = rows.length ? start + 1 : 0;
@@ -1608,8 +1347,8 @@
     el("lap-export")?.addEventListener("click", () => {
       if (!state.lastLaporan) return;
       const csv = toCSV(
-        ["ID Laporan", "ID Pengerjaan", "Line", "Tanggal", "Operator", "Produk", "Botol", "Qty Kardus", "Total Qty", "Qty Pecah"],
-        state.lastLaporan.rows.map(e => [state.lastLaporan.id, e.reportId, LINE_LABEL[e.tab], e.tanggal, e.operator, e.produk, e.botol, e.qtyKardus, e.totalQty, e.qtyBotolPecah])
+        ["ID Laporan", "ID Pengerjaan", "Line", "Tanggal", "Operator", "Produk", "Botol", "Qty Kardus", "Total Qty", "Qty Pecah", "Keterangan"],
+        state.lastLaporan.rows.map(e => [state.lastLaporan.id, e.reportId, LINE_LABEL[e.tab], e.tanggal, e.operator, e.produk, e.botol, e.qtyKardus, e.totalQty, e.qtyBotolPecah, e.keterangan || ""])
       );
       downloadText(`${state.lastLaporan.id}.csv`, csv);
     });
@@ -1920,7 +1659,6 @@
         restoreFormDraft("press");
         renderPreview("filling");
         renderPreview("press");
-        renderPressBalance();
         renderUserHeader();
         el("appScreen").hidden = false;
         setConnection("loading", "Menyegarkan data…");
