@@ -1,18 +1,23 @@
-UPDATE FILLING & PRESS
-1. index.html:
-   - Operator, Produk, Botol menjadi autocomplete search dari Master.
-   - Filter Operator Filling/Press menjadi search.
-2. script.js:
-   - exact-match validation master.
-   - tabel saldo Filling -> Press lintas tanggal.
-   - Press tidak boleh melebihi sisa Filling.
-3. Code.gs:
-   - validasi master di server.
-   - validasi balance Filling/Press di server.
+UPDATE: TUTUP SISA PRESS + ALASAN WAJIB
 
-CARA PASANG
-- Ganti index.html dan script.js pada project web Anda.
-- Ganti Code.gs di Apps Script.
-- Deploy ulang Apps Script sebagai Web App (New deployment / Manage deployments -> edit deployment).
-- Pastikan URL /exec di CONFIG.WEB_APP_URL tetap sesuai deployment Anda.
-- style.css, login.html, gambar/logo, dan file lain tetap gunakan file project Anda yang sekarang.
+Perubahan:
+1. Tabel "Sisa Pengerjaan yang Menunggu Press" memiliki tombol:
+   - Gunakan
+   - Tutup Sisa
+2. Saat Tutup Sisa diklik, user WAJIB mengisi alasan minimal 5 karakter.
+3. Jika masih ada Preview Press untuk Produk/Botol tersebut, Tutup Sisa dinonaktifkan.
+   Simpan atau hapus preview dahulu agar saldo yang ditutup adalah saldo aktual.
+4. Penutupan TIDAK menghapus histori Filling atau Press.
+5. Sistem mencatat audit ke sheet "Penutupan Press":
+   id, tanggal, produk, botol, qtyDitutup, alasan, closedBy, closedByName, createdAt.
+6. Balance menjadi:
+   Total Filling - Total Press tersimpan - Qty Ditutup - Preview Press = Sisa Qty.
+7. Backend ikut menghitung Qty Ditutup ketika memvalidasi Press, sehingga Qty Press tidak bisa
+   melewati saldo meskipun request dimanipulasi dari luar halaman.
+
+PEMASANGAN:
+- Ganti index.html dan script.js di hosting/web Anda.
+- Ganti Code.gs di Google Apps Script.
+- Deploy ulang Web App Apps Script (Manage deployments > Edit/New version > Deploy).
+- Sheet "Penutupan Press" akan dibuat otomatis saat penutupan pertama dilakukan.
+  Anda juga boleh menjalankan setupSpreadsheet() satu kali untuk membuat sheet tersebut lebih awal.

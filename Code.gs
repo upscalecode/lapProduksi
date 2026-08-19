@@ -21,54 +21,18 @@ const APP = {
     MASTER: 'Master',
     USERS: 'Users',
     SESSIONS: 'Sessions',
-    ENTRIES: 'Pengerjaan'
+    ENTRIES: 'Pengerjaan',
+    PRESS_ADJUSTMENTS: 'Penutupan Press'
   },
   ENTRY_HEADERS: [
     'id', 'reportId', 'tab', 'tanggal', 'operator', 'produk', 'botol',
     'qtyKardus', 'qtyBotolPerKardus', 'totalQty', 'botolPecahJenis',
     'qtyBotolPecah', 'createdBy', 'createdByName', 'createdAt', 'updatedAt'
   ],
-  USER_HEADERS: ['username', 'passwordHash', 'name', 'role', 'active', 'createdAt', 'permissionsJson'],
-  SESSION_HEADERS: ['token', 'username', 'expiresAt', 'createdAt']
+  USER_HEADERS: ['username', 'passwordHash', 'name', 'role', 'active', 'createdAt'],
+  SESSION_HEADERS: ['token', 'username', 'expiresAt', 'createdAt'],
+  PRESS_ADJUSTMENT_HEADERS: ['id', 'tanggal', 'produk', 'botol', 'qtyDitutup', 'alasan', 'closedBy', 'closedByName', 'createdAt']
 };
-
-/* =========================================================
-   ROLE ACCESS
-   - superuser : akses penuh
-   - user      : hanya input Filling/Press + data milik sendiri
-   Catatan: keamanan utama tetap diperiksa di backend.
-   ========================================================= */
-const ROLE_ACCESS = {
-  superuser: {
-    filling: true,
-    press: true,
-    report: true,
-    master: true,
-    users: true,
-    viewAllEntries: true,
-    editOwnEntries: true,
-    editAllEntries: true,
-    deleteOwnEntries: true,
-    deleteAllEntries: true
-  },
-  user: {
-    filling: true,
-    press: true,
-    report: false,
-    master: false,
-    users: false,              // selalu false untuk User Biasa
-    viewAllEntries: false,
-    editOwnEntries: true,
-    editAllEntries: false,
-    deleteOwnEntries: false,
-    deleteAllEntries: false
-  }
-};
-
-const CUSTOM_PERMISSION_KEYS = [
-  'filling', 'press', 'report', 'master', 'viewAllEntries',
-  'editOwnEntries', 'editAllEntries', 'deleteOwnEntries', 'deleteAllEntries'
-];
 
 function setupSpreadsheet() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -80,6 +44,7 @@ function setupSpreadsheet() {
   const users = ensureSheet_(ss, APP.SHEETS.USERS, APP.USER_HEADERS);
   ensureSheet_(ss, APP.SHEETS.SESSIONS, APP.SESSION_HEADERS);
   ensureSheet_(ss, APP.SHEETS.ENTRIES, APP.ENTRY_HEADERS);
+  ensureSheet_(ss, APP.SHEETS.PRESS_ADJUSTMENTS, APP.PRESS_ADJUSTMENT_HEADERS);
 
   if (master.getLastRow() < 2) {
     master.getRange(2, 1, 3, 3).setValues([
@@ -91,8 +56,8 @@ function setupSpreadsheet() {
 
   if (users.getLastRow() < 2) {
     users.getRange(2, 1, 2, APP.USER_HEADERS.length).setValues([
-      ['admin', hashPassword_('admin123'), 'Administrator', 'superuser', true, new Date(), ''],
-      ['operator', hashPassword_('operator123'), 'Operator', 'user', true, new Date(), '']
+      ['admin', hashPassword_('admin123'), 'Administrator', 'superuser', true, new Date()],
+      ['operator', hashPassword_('operator123'), 'Operator', 'user', true, new Date()]
     ]);
   }
 
@@ -121,9 +86,9 @@ function doGet(e) {
       const session = requireSession_(param_(e, 'token'));
       return json_({
         ok: true,
-        // Super User melihat semua data. User Biasa hanya menerima data miliknya.
-        entries: getEntriesForUser_(session.user),
-        users: hasAccess_(session.user, 'users') ? getUsers_() : []
+        entries: getEntries_(),
+        adjustments: getPressAdjustments_(),
+        users: session.user.role === 'superuser' ? getUsers_() : []
       });
     }
 
@@ -150,13 +115,10 @@ function doPost(e) {
     const session = requireSession_(param_(e, 'token'));
 
     switch (action) {
-      case 'entry.create': {
-        const data = parseJsonParam_(e, 'data');
-        requireLineAccess_(session.user, data.line, 'Input data');
+      case 'entry.create':
         return withWriteLock_(function () {
-          return json_({ ok: true, entry: createEntry_(session.user, data) });
+          return json_({ ok: true, entry: createEntry_(session.user, parseJsonParam_(e, 'data')) });
         });
-      }
 
       case 'entry.update':
         return withWriteLock_(function () {
@@ -164,20 +126,26 @@ function doPost(e) {
         });
 
       case 'entry.delete':
+        requireSuperuser_(session.user);
         return withWriteLock_(function () {
-          deleteEntryForUser_(session.user, param_(e, 'id'));
+          deleteEntry_(param_(e, 'id'));
           return json_({ ok: true });
         });
 
+      case 'press.adjustment.close':
+        return withWriteLock_(function () {
+          return json_({ ok: true, adjustment: closePressRemainder_(session.user, parseJsonParam_(e, 'data')) });
+        });
+
       case 'master.add':
-        requireAccess_(session.user, 'master', 'Master Data');
+        requireSuperuser_(session.user);
         return withWriteLock_(function () {
           addMaster_(param_(e, 'category'), param_(e, 'value'));
           return json_({ ok: true, master: getMaster_() });
         });
 
       case 'master.remove':
-        requireAccess_(session.user, 'master', 'Master Data');
+        requireSuperuser_(session.user);
         return withWriteLock_(function () {
           removeMaster_(param_(e, 'category'), param_(e, 'value'));
           return json_({ ok: true, master: getMaster_() });
@@ -195,59 +163,6 @@ function doPost(e) {
         return withWriteLock_(function () {
           removeUser_(param_(e, 'username'), session.user.username);
           return json_({ ok: true, users: getUsers_() });
-        });
-
-      case 'user.role':
-        requireSuperuser_(session.user);
-        return withWriteLock_(function () {
-          updateUserRole_(
-            param_(e, 'username'),
-            param_(e, 'role'),
-            session.user.username
-          );
-          return json_({ ok: true, users: getUsers_() });
-        });
-
-      case 'user.permissions':
-        requireSuperuser_(session.user);
-        return withWriteLock_(function () {
-          updateUserPermissions_(
-            param_(e, 'username'),
-            parseJsonParam_(e, 'permissions'),
-            session.user.username
-          );
-          return json_({ ok: true, users: getUsers_() });
-        });
-
-      // Semua akun dapat mengganti password miliknya sendiri.
-      // Password lama wajib benar sebelum password baru disimpan.
-      case 'password.change':
-        return withWriteLock_(function () {
-          changeOwnPassword_(
-            session.user,
-            param_(e, 'oldPassword'),
-            param_(e, 'newPassword')
-          );
-          return json_({
-            ok: true,
-            message: 'Password berhasil diubah. Silakan login kembali.'
-          });
-        });
-
-      // Hanya Super User yang dapat mereset password akun lain.
-      // Endpoint ini tidak membutuhkan password lama target user.
-      case 'password.reset':
-        requireSuperuser_(session.user);
-        return withWriteLock_(function () {
-          resetUserPassword_(
-            param_(e, 'username'),
-            param_(e, 'newPassword')
-          );
-          return json_({
-            ok: true,
-            message: 'Password user berhasil direset.',
-            users: getUsers_()
-          });
         });
 
       default:
@@ -472,6 +387,10 @@ function createEntry_(user, data) {
     updatedAt: createdAt.toISOString()
   };
 
+  // Press tidak boleh melebihi total Filling untuk kombinasi Produk + Botol.
+  // Saldo dihitung lintas tanggal, sehingga sisa otomatis terbawa ke hari berikutnya.
+  assertProjectedBalance_([entry], "");
+
   sheet_(APP.SHEETS.ENTRIES).appendRow(entryToRow_(entry));
   return entry;
 }
@@ -484,14 +403,8 @@ function updateEntry_(user, id, data) {
   if (!found) throw new Error('Data yang akan di-update tidak ditemukan.');
 
   const existing = rowToEntry_(found.values);
-  const isOwner = sameUsername_(existing.createdBy, user.username);
-
-  requireLineAccess_(user, data.line || existing.tab, 'Update data');
-
-  if (isOwner) {
-    requireAccess_(user, 'editOwnEntries', 'Edit data sendiri');
-  } else {
-    requireAccess_(user, 'editAllEntries', 'Edit data user lain');
+  if (user.role !== 'superuser' && existing.createdBy !== user.username) {
+    throw new Error('Anda tidak memiliki izin mengubah data milik user lain.');
   }
 
   const qtyKardus = number_(data.qtyKardus);
@@ -515,23 +428,20 @@ function updateEntry_(user, id, data) {
     updatedAt: new Date().toISOString()
   };
 
+  assertProjectedBalance_([existing, updated], existing.id);
+
   sheet_(APP.SHEETS.ENTRIES).getRange(found.row, 1, 1, APP.ENTRY_HEADERS.length).setValues([entryToRow_(updated)]);
   return updated;
 }
 
-function deleteEntryForUser_(user, id) {
+function deleteEntry_(id) {
   const found = findEntryRow_(id);
   if (!found) throw new Error('Data tidak ditemukan.');
 
   const existing = rowToEntry_(found.values);
-  const isOwner = sameUsername_(existing.createdBy, user.username);
-
-  requireLineAccess_(user, existing.tab, 'Hapus data');
-  if (isOwner) {
-    requireAccess_(user, 'deleteOwnEntries', 'Hapus data sendiri');
-  } else {
-    requireAccess_(user, 'deleteAllEntries', 'Hapus data user lain');
-  }
+  // Khusus jika data Filling dihapus, pastikan Press yang sudah dikerjakan
+  // tidak menjadi lebih besar dari Filling yang tersisa.
+  assertProjectedBalance_([existing], existing.id);
 
   sheet_(APP.SHEETS.ENTRIES).deleteRow(found.row);
 }
@@ -544,21 +454,6 @@ function getEntries_() {
     if (values[i][0]) result.push(rowToEntry_(values[i]));
   }
   return result;
-}
-
-function getEntriesForUser_(user) {
-  let entries = getEntries_();
-
-  // Sembunyikan line yang tidak diberikan kepada user.
-  entries = entries.filter(function (entry) {
-    return hasAccess_(user, entry.tab === 'press' ? 'press' : 'filling');
-  });
-
-  if (hasAccess_(user, 'viewAllEntries')) return entries;
-
-  return entries.filter(function (entry) {
-    return sameUsername_(entry.createdBy, user && user.username);
-  });
 }
 
 function findEntryRow_(id) {
@@ -601,10 +496,198 @@ function rowToEntry_(row) {
 
 function validateEntry_(data) {
   if (!data) throw new Error('Data pengerjaan kosong.');
+  if (data.line !== 'filling' && data.line !== 'press') throw new Error('Line pengerjaan tidak valid.');
   if (!data.operator || !data.produk || !data.botol) throw new Error('Operator, Produk, dan Botol wajib diisi.');
-  if (number_(data.qtyKardus) < 0 || number_(data.qtyBotolPerKardus) < 0 || number_(data.qtyBotolPecah) < 0) {
+
+  // Jangan percaya input browser. Semua nilai wajib benar-benar ada di sheet Master.
+  data.operator = canonicalMasterValue_(getMaster_().operator, data.operator, 'Operator');
+  data.produk = canonicalMasterValue_(getMaster_().produk, data.produk, 'Produk');
+  data.botol = canonicalMasterValue_(getMaster_().botol, data.botol, 'Botol');
+
+  const qtyKardusRaw = Number(data.qtyKardus);
+  const qtyBotolRaw = Number(data.qtyBotolPerKardus);
+  const qtyPecahRaw = Number(data.qtyBotolPecah || 0);
+  if (!isFinite(qtyKardusRaw) || !isFinite(qtyBotolRaw) || !isFinite(qtyPecahRaw)) {
+    throw new Error('Qty harus berupa angka yang valid.');
+  }
+  if (qtyKardusRaw < 0 || qtyBotolRaw < 0 || qtyPecahRaw < 0) {
     throw new Error('Qty tidak boleh negatif.');
   }
+  if (data.line === 'press' && qtyKardusRaw * qtyBotolRaw <= 0) {
+    throw new Error('Total Qty Press harus lebih dari 0 botol.');
+  }
+
+  // Jenis botol pecah selalu mengikuti botol yang sedang dikerjakan.
+  data.botolPecahJenis = data.botol;
+}
+
+function canonicalMasterValue_(list, value, label) {
+  const target = String(value || '').trim().toLowerCase();
+  const values = (list || []).map(function (item) { return String(item || '').trim(); }).filter(String);
+  for (let i = 0; i < values.length; i++) {
+    if (values[i].toLowerCase() === target) return values[i];
+  }
+  throw new Error(label + ' "' + String(value || '').trim() + '" tidak tersedia di data Master.');
+}
+
+function balanceKey_(produk, botol) {
+  return String(produk || '').trim().toLowerCase() + '||' + String(botol || '').trim().toLowerCase();
+}
+
+/**
+ * Memastikan saldo Press tidak pernah melampaui Filling.
+ * candidates dipakai untuk menentukan kombinasi Produk+Botol yang terdampak.
+ * existingId dilewati dari data sheet, lalu candidate terakhir (jika berbeda)
+ * diproyeksikan sebagai nilai baru.
+ */
+function assertProjectedBalance_(candidates, existingId) {
+  const affected = {};
+  (candidates || []).forEach(function (entry) {
+    if (!entry) return;
+    affected[balanceKey_(entry.produk, entry.botol)] = {
+      produk: entry.produk,
+      botol: entry.botol
+    };
+  });
+
+  const keys = Object.keys(affected);
+  if (!keys.length) return;
+
+  const totals = {};
+  keys.forEach(function (key) {
+    totals[key] = { filling: 0, press: 0, closed: 0 };
+  });
+
+  const entries = getEntries_();
+  entries.forEach(function (entry) {
+    if (existingId && String(entry.id) === String(existingId)) return;
+    const key = balanceKey_(entry.produk, entry.botol);
+    if (!totals[key]) return;
+    if (entry.tab === 'filling') totals[key].filling += number_(entry.totalQty);
+    if (entry.tab === 'press') totals[key].press += number_(entry.totalQty);
+  });
+
+  getPressAdjustments_().forEach(function (adjustment) {
+    const key = balanceKey_(adjustment.produk, adjustment.botol);
+    if (totals[key]) totals[key].closed += number_(adjustment.qtyDitutup);
+  });
+
+  // Jika ini update, candidate terakhir adalah versi baru yang akan menggantikan existing.
+  // Jika create, hanya ada satu candidate dan harus ikut dihitung.
+  const projected = (candidates || []).length
+    ? candidates[candidates.length - 1]
+    : null;
+
+  if (projected && (!existingId || String(projected.id) !== String(existingId) ||
+      (candidates || []).length > 1)) {
+    const key = balanceKey_(projected.produk, projected.botol);
+    if (totals[key]) {
+      if (projected.tab === 'filling') totals[key].filling += number_(projected.totalQty);
+      if (projected.tab === 'press') totals[key].press += number_(projected.totalQty);
+    }
+  }
+
+  keys.forEach(function (key) {
+    const total = totals[key];
+    if (total.press + total.closed > total.filling) {
+      const item = affected[key];
+      const projectedPress = number_(projected && balanceKey_(projected.produk, projected.botol) === key && projected.tab === 'press' ? projected.totalQty : 0);
+      const sisa = Math.max(0, total.filling - total.closed - (total.press - projectedPress));
+      throw new Error(
+        'Qty Press melebihi Qty Filling untuk ' + item.produk + ' / ' + item.botol +
+        '. Total Filling: ' + total.filling + ' botol, total Press setelah transaksi: ' + total.press +
+        ' botol, Qty ditutup: ' + total.closed + ' botol. Sisa yang dapat diproses: ' + sisa + ' botol.'
+      );
+    }
+  });
+}
+
+function pressAdjustmentSheet_(createIfMissing) {
+  const ss = spreadsheet_();
+  let sh = ss.getSheetByName(APP.SHEETS.PRESS_ADJUSTMENTS);
+  if (!sh && createIfMissing) {
+    sh = ensureSheet_(ss, APP.SHEETS.PRESS_ADJUSTMENTS, APP.PRESS_ADJUSTMENT_HEADERS);
+  }
+  return sh || null;
+}
+
+function getPressAdjustments_() {
+  const sh = pressAdjustmentSheet_(false);
+  if (!sh) return [];
+  const values = sh.getDataRange().getValues();
+  const result = [];
+  for (let i = 1; i < values.length; i++) {
+    if (!values[i][0]) continue;
+    result.push({
+      id: String(values[i][0] || ''),
+      tanggal: formatDateCell_(values[i][1]),
+      produk: String(values[i][2] || ''),
+      botol: String(values[i][3] || ''),
+      qtyDitutup: number_(values[i][4]),
+      alasan: String(values[i][5] || ''),
+      closedBy: String(values[i][6] || ''),
+      closedByName: String(values[i][7] || ''),
+      createdAt: isoCell_(values[i][8])
+    });
+  }
+  return result;
+}
+
+function pressBalanceForKey_(produk, botol) {
+  const key = balanceKey_(produk, botol);
+  let filling = 0;
+  let press = 0;
+  let closed = 0;
+
+  getEntries_().forEach(function (entry) {
+    if (balanceKey_(entry.produk, entry.botol) !== key) return;
+    if (entry.tab === 'filling') filling += number_(entry.totalQty);
+    if (entry.tab === 'press') press += number_(entry.totalQty);
+  });
+
+  getPressAdjustments_().forEach(function (adjustment) {
+    if (balanceKey_(adjustment.produk, adjustment.botol) === key) {
+      closed += number_(adjustment.qtyDitutup);
+    }
+  });
+
+  return { filling: filling, press: press, closed: closed, remaining: filling - press - closed };
+}
+
+function closePressRemainder_(user, data) {
+  if (!data) throw new Error('Data penutupan sisa Press kosong.');
+  const master = getMaster_();
+  const produk = canonicalMasterValue_(master.produk, data.produk, 'Produk');
+  const botol = canonicalMasterValue_(master.botol, data.botol, 'Botol');
+  const alasan = String(data.alasan || '').trim();
+  if (alasan.length < 5) throw new Error('Alasan Tutup Sisa wajib diisi minimal 5 karakter.');
+  if (alasan.length > 500) throw new Error('Alasan Tutup Sisa maksimal 500 karakter.');
+
+  const balance = pressBalanceForKey_(produk, botol);
+  if (balance.remaining <= 0) {
+    throw new Error('Sisa Press untuk ' + produk + ' / ' + botol + ' sudah tidak tersedia.');
+  }
+
+  const now = new Date();
+  const adjustment = {
+    id: Utilities.getUuid(),
+    tanggal: Utilities.formatDate(now, Session.getScriptTimeZone() || 'Asia/Jakarta', 'yyyy-MM-dd'),
+    produk: produk,
+    botol: botol,
+    qtyDitutup: balance.remaining,
+    alasan: alasan,
+    closedBy: user.username,
+    closedByName: user.name,
+    createdAt: now.toISOString()
+  };
+
+  const sh = pressAdjustmentSheet_(true);
+  sh.appendRow([
+    adjustment.id, adjustment.tanggal, adjustment.produk, adjustment.botol,
+    adjustment.qtyDitutup, adjustment.alasan, adjustment.closedBy,
+    adjustment.closedByName, adjustment.createdAt
+  ]);
+  return adjustment;
 }
 
 function makeReportId_(line, date) {
@@ -680,109 +763,13 @@ function addUser_(name, username, password, role) {
   name = String(name || '').trim();
   username = String(username || '').trim();
   password = String(password || '');
-  role = normalizeRole_(role);
+  role = role === 'superuser' ? 'superuser' : 'user';
 
   if (!name || !username || !password) throw new Error('Nama, username, dan password wajib diisi.');
   if (findUser_(username)) throw new Error('Username sudah digunakan.');
 
-  sheet_(APP.SHEETS.USERS).appendRow([username, hashPassword_(password), name, role, true, new Date(), '']);
+  sheet_(APP.SHEETS.USERS).appendRow([username, hashPassword_(password), name, role, true, new Date()]);
   invalidateUsersCache_();
-}
-
-/* =========================================================
-   PASSWORD MANAGEMENT
-   ========================================================= */
-
-function validateNewPassword_(password) {
-  password = String(password || '');
-  if (!password) throw new Error('Password baru wajib diisi.');
-  if (password.length < 6) throw new Error('Password baru minimal 6 karakter.');
-  if (password.length > 100) throw new Error('Password baru terlalu panjang. Maksimal 100 karakter.');
-  return password;
-}
-
-/**
- * Ganti password akun yang sedang login.
- * Berlaku untuk User Biasa maupun Super User.
- * Password lama wajib cocok.
- */
-function changeOwnPassword_(user, oldPassword, newPassword) {
-  if (!user || !user.username) throw new Error('Sesi user tidak valid.');
-
-  oldPassword = String(oldPassword || '');
-  newPassword = validateNewPassword_(newPassword);
-
-  if (!oldPassword) throw new Error('Password lama wajib diisi.');
-
-  const current = findUser_(user.username);
-  if (!current || !current.active) throw new Error('Akun tidak ditemukan atau tidak aktif.');
-
-  if (current.passwordHash !== hashPassword_(oldPassword)) {
-    throw new Error('Password lama salah.');
-  }
-
-  if (current.passwordHash === hashPassword_(newPassword)) {
-    throw new Error('Password baru harus berbeda dari password lama.');
-  }
-
-  setUserPasswordHash_(current.username, hashPassword_(newPassword));
-
-  // Semua sesi akun ini dihapus, termasuk sesi yang sedang dipakai,
-  // sehingga user wajib login kembali dengan password baru.
-  removeSessionsForUser_(current.username);
-  return true;
-}
-
-/**
- * Reset password user oleh Super User.
- * Tidak membutuhkan password lama target user.
- */
-function resetUserPassword_(username, newPassword) {
-  username = String(username || '').trim();
-  newPassword = validateNewPassword_(newPassword);
-
-  if (!username) throw new Error('Username wajib diisi.');
-
-  const target = findUser_(username);
-  if (!target) throw new Error('User tidak ditemukan.');
-
-  setUserPasswordHash_(target.username, hashPassword_(newPassword));
-  removeSessionsForUser_(target.username);
-  return true;
-}
-
-/**
- * Menulis hash password ke kolom B Sheet Users.
- */
-function setUserPasswordHash_(username, passwordHash) {
-  const sh = sheet_(APP.SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-
-  for (let i = 1; i < values.length; i++) {
-    if (!sameUsername_(values[i][0], username)) continue;
-
-    // Kolom B = passwordHash
-    sh.getRange(i + 1, 2).setValue(passwordHash);
-    invalidateUsersCache_();
-    return;
-  }
-
-  throw new Error('User tidak ditemukan.');
-}
-
-/**
- * OPTIONAL — dipakai hanya bila ingin reset password langsung
- * dari Apps Script Editor tanpa UI.
- *
- * Contoh:
- *   setPasswordFromEditor('admin', 'AdminBaru123');
- *   setPasswordFromEditor('hana', 'HanaBaru123');
- *
- * Setelah berhasil, hapus pemanggilan test dari editor bila ada.
- */
-function setPasswordFromEditor(username, newPassword) {
-  resetUserPassword_(username, newPassword);
-  return 'Password untuk "' + String(username) + '" berhasil diubah.';
 }
 
 function removeUser_(username, currentUsername) {
@@ -800,73 +787,6 @@ function removeUser_(username, currentUsername) {
   }
   throw new Error('User tidak ditemukan.');
 }
-
-function updateUserRole_(username, role, currentUsername) {
-  username = String(username || '').trim();
-  role = normalizeRole_(role);
-
-  if (!username) throw new Error('Username tidak ditemukan.');
-  if (username === String(currentUsername || '').trim()) {
-    throw new Error('Role akun yang sedang login tidak dapat diubah dari sini.');
-  }
-
-  const sh = sheet_(APP.SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-
-  for (let i = 1; i < values.length; i++) {
-    if (String(values[i][0]).trim().toLowerCase() !== username.toLowerCase()) continue;
-
-    // Kolom D = role.
-    sh.getRange(i + 1, 4).setValue(role);
-    invalidateUsersCache_();
-
-    // Paksa user yang diubah untuk login ulang agar role baru langsung berlaku.
-    removeSessionsForUser_(String(values[i][0]));
-    return;
-  }
-
-  throw new Error('User tidak ditemukan.');
-}
-
-
-function updateUserPermissions_(username, permissions, currentUsername) {
-  username = String(username || '').trim();
-  if (!username) throw new Error('Username tidak ditemukan.');
-
-  if (sameUsername_(username, currentUsername)) {
-    throw new Error('Hak akses akun Super User yang sedang login tidak diubah dari editor ini.');
-  }
-
-  const targetUser = findUser_(username);
-  if (!targetUser) throw new Error('User tidak ditemukan.');
-  if (normalizeRole_(targetUser.role) === 'superuser') {
-    throw new Error('Super User selalu memiliki akses penuh. Custom akses hanya untuk User Biasa.');
-  }
-
-  const clean = {};
-  CUSTOM_PERMISSION_KEYS.forEach(function (key) {
-    clean[key] = permissions && permissions[key] === true;
-  });
-
-  // Kelola User tidak pernah dapat diberikan ke User Biasa.
-  clean.users = false;
-
-  const sh = sheet_(APP.SHEETS.USERS);
-  const values = sh.getDataRange().getValues();
-
-  for (let i = 1; i < values.length; i++) {
-    if (!sameUsername_(values[i][0], username)) continue;
-
-    // Kolom G = permissionsJson.
-    sh.getRange(i + 1, 7).setValue(JSON.stringify(clean));
-    invalidateUsersCache_();
-    removeSessionsForUser_(String(values[i][0]));
-    return;
-  }
-
-  throw new Error('User tidak ditemukan.');
-}
-
 
 function removeSessionsForUser_(username) {
   const target = String(username || '');
@@ -893,7 +813,7 @@ function removeSessionsForUser_(username) {
 }
 
 
-const USERS_CACHE_KEY_ = 'ppr_users_cache_v2';
+const USERS_CACHE_KEY_ = 'ppr_users_cache_v1';
 
 function readUsersRaw_() {
   const cache = CacheService.getScriptCache();
@@ -911,9 +831,8 @@ function readUsersRaw_() {
       username: String(values[i][0]),
       passwordHash: String(values[i][1]),
       name: String(values[i][2] || values[i][0]),
-      role: normalizeRole_(values[i][3]),
-      active: bool_(values[i][4]),
-      customPermissions: parsePermissionsCell_(values[i][6])
+      role: String(values[i][3] || 'user'),
+      active: bool_(values[i][4])
     });
   }
 
@@ -938,85 +857,12 @@ function findUser_(username) {
   return null;
 }
 
-function normalizeRole_(role) {
-  const value = String(role || 'user').trim().toLowerCase().replace(/[\s_-]+/g, '');
-  return value === 'superuser' ? 'superuser' : 'user';
-}
-
-function permissionsForRole_(role) {
-  const base = ROLE_ACCESS[normalizeRole_(role)] || ROLE_ACCESS.user;
-  return Object.assign({}, base);
-}
-
-function permissionsForUser_(user) {
-  if (!user) return {};
-
-  const role = normalizeRole_(user.role);
-  const permissions = permissionsForRole_(role);
-
-  // Super User selalu full access dan tidak memakai custom permission.
-  if (role === 'superuser') return permissions;
-
-  // Raw user dari Sheet memakai customPermissions.
-  // User yang sudah berada di Session memakai permissions (hasil efektif saat login).
-  const custom = user.customPermissions || user.permissions || {};
-  CUSTOM_PERMISSION_KEYS.forEach(function (key) {
-    if (typeof custom[key] === 'boolean') permissions[key] = custom[key];
-  });
-
-  // Guardrail: User Biasa tidak boleh mengelola akun/hak akses.
-  permissions.users = false;
-  return permissions;
-}
-
-function hasAccess_(user, permission) {
-  if (!user) return false;
-  return permissionsForUser_(user)[permission] === true;
-}
-
 function publicUser_(user) {
-  const role = normalizeRole_(user && user.role);
-  const permissions = permissionsForUser_(user);
-  return {
-    username: user.username,
-    name: user.name,
-    role: role,
-    active: user.active !== false,
-    dataScope: permissions.viewAllEntries ? 'all' : 'own',
-    permissions: permissions
-  };
-}
-
-function requireAccess_(user, permission, label) {
-  if (!hasAccess_(user, permission)) {
-    throw new Error((label || 'Aksi') + ' tidak diizinkan untuk akun ini.');
-  }
-}
-
-function requireLineAccess_(user, line, label) {
-  const key = String(line || '').toLowerCase() === 'press' ? 'press' : 'filling';
-  requireAccess_(user, key, label || ('Akses ' + key));
+  return { username: user.username, name: user.name, role: user.role, active: user.active !== false };
 }
 
 function requireSuperuser_(user) {
-  if (!user || normalizeRole_(user.role) !== 'superuser') {
-    throw new Error('Aksi ini hanya dapat dilakukan Super User.');
-  }
-}
-
-function parsePermissionsCell_(value) {
-  if (!value) return {};
-  if (typeof value === 'object') return value;
-  try {
-    const parsed = JSON.parse(String(value));
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch (_) {
-    return {};
-  }
-}
-
-function sameUsername_(a, b) {
-  return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase();
+  if (!user || user.role !== 'superuser') throw new Error('Aksi ini hanya dapat dilakukan Super User.');
 }
 
 function hashPassword_(password) {

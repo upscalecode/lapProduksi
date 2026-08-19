@@ -37,7 +37,7 @@
     PAGE_SIZE: 20,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
-    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbyPvlM6pWeGdmjbnxjeldlC1TA7Wuv6KFVpL1XbV1pmfj6Sv3L9xR7OksTrZcGGmyEc_w/exec"
+    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbwhPdhaZ2Q1VrkasN_e0EXARua3uVIBcltKcq3l8E87c59QQMXvmxSThmtPjy1_mvGq1Q/exec"
   };
 
   const LINE_LABEL = { filling: "Filling", press: "Press" };
@@ -48,6 +48,7 @@
     currentUser: null,
     master: { operator: [], produk: [], botol: [], botolpecah: [] },
     entries: [],
+    adjustments: [],
     preview: { filling: [], press: [] },
     users: [],
     search: {
@@ -523,7 +524,7 @@
           <div>
             <p class="eyebrow">Balance Filling → Press</p>
             <h2>Sisa Pengerjaan yang Menunggu Press</h2>
-            <p class="press-balance-note">Saldo dihitung dari seluruh tanggal: Total Filling tersimpan − Total Press tersimpan − preview Press.</p>
+            <p class="press-balance-note">Saldo dihitung lintas tanggal: Total Filling − Press tersimpan − Qty ditutup − preview Press. Tutup Sisa wajib disertai alasan.</p>
           </div>
         </div>
         <div class="table-wrap">
@@ -531,11 +532,11 @@
             <thead>
               <tr>
                 <th>Produk</th><th>Botol</th><th>Total Filling</th><th>Press Tersimpan</th>
-                <th>Preview Press</th><th>Sisa Qty</th><th>Aksi</th>
+                <th>Qty Ditutup</th><th>Preview Press</th><th>Sisa Qty</th><th>Aksi</th>
               </tr>
             </thead>
             <tbody class="press-balance-tbody">
-              <tr><td colspan="7" class="empty-row">Memuat saldo Filling…</td></tr>
+              <tr><td colspan="8" class="empty-row">Memuat saldo Filling…</td></tr>
             </tbody>
           </table>
         </div>
@@ -551,20 +552,56 @@
       else form.appendChild(hint);
     }
 
-    clone.addEventListener("click", event => {
-      const btn = event.target.closest(".press-balance-use");
-      if (!btn) return;
-      const pressForm = qs(".form-panel", clone);
-      if (!pressForm) return;
-      const produk = qs(".f-produk", pressForm);
-      const botol = qs(".f-botol", pressForm);
-      if (produk) produk.value = btn.dataset.produk || "";
-      if (botol) botol.value = btn.dataset.botol || "";
-      if (botol) botol.dispatchEvent(new Event("change", { bubbles: true }));
-      if (produk) produk.dispatchEvent(new Event("change", { bubbles: true }));
-      updatePressAvailabilityHint(pressForm);
-      saveFormDraft("press", pressForm);
-      pressForm.scrollIntoView({ behavior: "smooth", block: "start" });
+    clone.addEventListener("click", async event => {
+      const useBtn = event.target.closest(".press-balance-use");
+      if (useBtn) {
+        const pressForm = qs(".form-panel", clone);
+        if (!pressForm) return;
+        const produk = qs(".f-produk", pressForm);
+        const botol = qs(".f-botol", pressForm);
+        if (produk) produk.value = useBtn.dataset.produk || "";
+        if (botol) botol.value = useBtn.dataset.botol || "";
+        if (botol) botol.dispatchEvent(new Event("change", { bubbles: true }));
+        if (produk) produk.dispatchEvent(new Event("change", { bubbles: true }));
+        updatePressAvailabilityHint(pressForm);
+        saveFormDraft("press", pressForm);
+        pressForm.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+
+      const closeBtn = event.target.closest(".press-balance-close");
+      if (!closeBtn) return;
+      const key = closeBtn.dataset.key || "";
+      const row = getPressBalanceRows().find(item => item.key === key);
+      if (!row || row.remaining <= 0) {
+        toast("Sisa Press sudah tidak tersedia.", true);
+        renderPressBalance();
+        return;
+      }
+      if (row.pressPreview > 0) {
+        toast("Masih ada Preview Press untuk Produk/Botol ini. Simpan atau hapus preview terlebih dahulu sebelum Tutup Sisa.", true);
+        return;
+      }
+
+      const reason = await askClosePressReason(row);
+      if (!reason) return;
+
+      closeBtn.disabled = true;
+      closeBtn.textContent = "Menutup…";
+      try {
+        const response = await enqueueWrite(() => apiPost("press.adjustment.close", {
+          data: { produk: row.produk, botol: row.botol, alasan: reason }
+        }));
+        if (response.adjustment) upsertAdjustment(response.adjustment);
+        renderPressBalance();
+        toast(`Sisa ${row.produk} / ${row.botol} berhasil ditutup.`);
+      } catch (err) {
+        toast(err.message, true);
+        renderPressBalance();
+      } finally {
+        closeBtn.disabled = false;
+        closeBtn.textContent = "Tutup Sisa";
+      }
     });
 
     oldPress.replaceWith(clone);
@@ -578,6 +615,7 @@
       try { localStorage.setItem(CONFIG.MASTER_KEY, JSON.stringify(data.master)); } catch (_) {}
     }
     if (Array.isArray(data.entries)) state.entries = data.entries;
+    if (Array.isArray(data.adjustments)) state.adjustments = data.adjustments;
     if (Array.isArray(data.users)) state.users = data.users;
 
     refreshAllDropdowns();
@@ -811,6 +849,73 @@
     return `${String(produk || "").trim().toLowerCase()}||${String(botol || "").trim().toLowerCase()}`;
   }
 
+  function upsertAdjustment(adjustment) {
+    if (!adjustment || !adjustment.id) return;
+    const index = state.adjustments.findIndex(item => item.id === adjustment.id);
+    if (index >= 0) state.adjustments[index] = adjustment;
+    else state.adjustments.push(adjustment);
+  }
+
+  function ensureClosePressModalStyle() {
+    if (el("pressCloseReasonStyle")) return;
+    const style = document.createElement("style");
+    style.id = "pressCloseReasonStyle";
+    style.textContent = `
+      .press-close-overlay{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px}
+      .press-close-dialog{width:min(520px,100%);background:#fff;border-radius:16px;padding:20px;box-shadow:0 24px 70px rgba(15,23,42,.28)}
+      .press-close-dialog h3{margin:0 0 6px;font-size:18px}.press-close-dialog p{margin:0 0 14px;color:#64748b;font-size:13px;line-height:1.5}
+      .press-close-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}.press-close-meta div{padding:10px;background:#f8fafc;border-radius:10px;font-size:12px}
+      .press-close-dialog textarea{width:100%;min-height:110px;resize:vertical;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:10px;font:inherit}
+      .press-close-error{color:#b91c1c!important;margin:7px 0 0!important;min-height:18px}.press-close-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+      .press-balance-actions{display:flex;gap:6px;flex-wrap:wrap}
+    `;
+    document.head.appendChild(style);
+  }
+
+  function askClosePressReason(row) {
+    ensureClosePressModalStyle();
+    return new Promise(resolve => {
+      const overlay = document.createElement("div");
+      overlay.className = "press-close-overlay";
+      overlay.innerHTML = `
+        <div class="press-close-dialog" role="dialog" aria-modal="true" aria-labelledby="pressCloseTitle">
+          <h3 id="pressCloseTitle">Tutup Sisa Pengerjaan Press</h3>
+          <p>Qty sisa akan dikeluarkan dari saldo Press aktif, tetapi riwayat Filling/Press tidak dihapus. Alasan wajib dicatat untuk audit.</p>
+          <div class="press-close-meta">
+            <div><strong>Produk</strong><br>${esc(row.produk)}</div>
+            <div><strong>Botol</strong><br>${esc(row.botol)}</div>
+            <div><strong>Sisa Qty</strong><br>${Number(row.remaining).toLocaleString("id-ID")} botol</div>
+            <div><strong>Tanggal</strong><br>${esc(todayStr())}</div>
+          </div>
+          <label class="field"><span>Alasan Tutup Sisa <b>*</b></span>
+            <textarea class="press-close-reason" maxlength="500" placeholder="Contoh: sisa botol rusak dan tidak dapat diproses press" required></textarea>
+          </label>
+          <p class="press-close-error"></p>
+          <div class="press-close-actions">
+            <button type="button" class="btn btn-ghost press-close-cancel">Batal</button>
+            <button type="button" class="btn btn-danger press-close-confirm">Tutup Sisa</button>
+          </div>
+        </div>`;
+      document.body.appendChild(overlay);
+      const textarea = qs(".press-close-reason", overlay);
+      const error = qs(".press-close-error", overlay);
+      const finish = value => { overlay.remove(); resolve(value); };
+      qs(".press-close-cancel", overlay).addEventListener("click", () => finish(""));
+      overlay.addEventListener("click", event => { if (event.target === overlay) finish(""); });
+      overlay.addEventListener("keydown", event => { if (event.key === "Escape") finish(""); });
+      qs(".press-close-confirm", overlay).addEventListener("click", () => {
+        const reason = String(textarea.value || "").trim();
+        if (reason.length < 5) {
+          error.textContent = "Alasan wajib diisi minimal 5 karakter.";
+          textarea.focus();
+          return;
+        }
+        finish(reason);
+      });
+      setTimeout(() => textarea.focus(), 0);
+    });
+  }
+
   function getPressBalanceRows(options = {}) {
     const excludePreviewId = options.excludePreviewId || "";
     const map = new Map();
@@ -824,6 +929,7 @@
           botol: String(botol || "").trim(),
           fillingTotal: 0,
           pressSaved: 0,
+          adjustedClosed: 0,
           pressPreview: 0,
           remaining: 0
         });
@@ -839,6 +945,11 @@
         if (entry.tab === "press") row.pressSaved += Number(entry.totalQty) || 0;
       });
 
+    (state.adjustments || []).forEach(adjustment => {
+      const row = ensure(adjustment.produk, adjustment.botol);
+      row.adjustedClosed += Number(adjustment.qtyDitutup) || 0;
+    });
+
     (state.preview.press || []).forEach(entry => {
       if (entry.id === excludePreviewId) return;
       const row = ensure(entry.produk, entry.botol);
@@ -847,7 +958,7 @@
 
     return Array.from(map.values()).map(row => ({
       ...row,
-      remaining: row.fillingTotal - row.pressSaved - row.pressPreview
+      remaining: row.fillingTotal - row.pressSaved - row.adjustedClosed - row.pressPreview
     })).sort((a, b) => {
       if (a.remaining !== b.remaining) return b.remaining - a.remaining;
       return a.produk.localeCompare(b.produk, "id");
@@ -875,12 +986,17 @@
         <td>${esc(row.botol)}</td>
         <td>${row.fillingTotal.toLocaleString("id-ID")}</td>
         <td>${row.pressSaved.toLocaleString("id-ID")}</td>
+        <td>${row.adjustedClosed.toLocaleString("id-ID")}</td>
         <td>${row.pressPreview.toLocaleString("id-ID")}</td>
         <td><strong>${row.remaining.toLocaleString("id-ID")}</strong></td>
-        <td><button type="button" class="btn btn-ghost press-balance-use"
-          data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}">Gunakan</button></td>
+        <td><div class="press-balance-actions">
+          <button type="button" class="btn btn-ghost press-balance-use"
+            data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}">Gunakan</button>
+          <button type="button" class="btn btn-danger press-balance-close"
+            data-key="${esc(row.key)}" ${row.pressPreview > 0 ? "disabled title=\"Simpan/hapus Preview Press terlebih dahulu\"" : ""}>Tutup Sisa</button>
+        </div></td>
       </tr>`).join("")
-      : '<tr><td colspan="7" class="empty-row">Tidak ada sisa pekerjaan Filling yang menunggu Press.</td></tr>';
+      : '<tr><td colspan="8" class="empty-row">Tidak ada sisa pekerjaan Filling yang menunggu Press.</td></tr>';
 
     const remainingTotal = rows.reduce((sum, row) => sum + row.remaining, 0);
     if (summary) {
