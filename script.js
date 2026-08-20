@@ -310,7 +310,7 @@
         credentials: "omit"
       });
       const data = await parseApiResponse(response);
-      setConnection("online", "Spreadsheet terhubung");
+      setConnection("online", "Aktif");
       return data;
     } catch (err) {
       setConnection("error", "Koneksi gagal");
