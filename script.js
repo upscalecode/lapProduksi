@@ -950,7 +950,29 @@
       .press-close-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px}.press-close-meta div{padding:10px;background:#f8fafc;border-radius:10px;font-size:12px}
       .press-close-dialog textarea{width:100%;min-height:110px;resize:vertical;box-sizing:border-box;border:1px solid #cbd5e1;border-radius:10px;padding:10px;font:inherit}
       .press-close-error{color:#b91c1c!important;margin:7px 0 0!important;min-height:18px}.press-close-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
-      .press-balance-actions{display:flex;gap:6px;flex-wrap:wrap}
+      .press-balance-actions{
+        display:flex;
+        gap:8px;
+        flex-wrap:nowrap;
+        align-items:center;
+        white-space:nowrap
+      }
+      .press-balance-actions .btn{
+        flex:0 0 auto
+      }
+      .press-balance-panel .data-table th:last-child,
+      .press-balance-panel .data-table td:last-child{
+        min-width:220px;
+        width:220px;
+        white-space:nowrap
+      }
+      .press-product-name{
+        display:block;
+        max-width:280px;
+        white-space:nowrap;
+        overflow:hidden;
+        text-overflow:ellipsis
+      }
     `;
     document.head.appendChild(style);
   }
@@ -1179,7 +1201,10 @@
       return `
       <tr>
         <td><strong>${esc(row.tanggalAsal || "—")}</strong></td>
-        <td>${esc(row.produk)}${!produkAktif ? '<div class="press-master-history">Produk historis</div>' : ""}</td>
+        <td>
+          <div class="press-product-name" title="${esc(row.produk)}">${esc(row.produk)}</div>
+          ${!produkAktif ? '<div class="press-master-history">Produk historis</div>' : ""}
+        </td>
         <td>${esc(row.botol || "—")}${!botolAktif ? '<div class="press-master-history">Botol historis</div>' : ""}</td>
         <td>${row.qtyBotolPerKardus.length ? row.qtyBotolPerKardus.map(value => Number(value).toLocaleString("id-ID")).join(" / ") : "—"}</td>
         <td>${Number(row.qtyFilling).toLocaleString("id-ID")}</td>
