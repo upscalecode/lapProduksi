@@ -526,11 +526,7 @@
         <div class="panel-head">
           <div>
             <p class="eyebrow">Filling → Press</p>
-            <h2>Sisa Pengerjaan yang Menunggu Press</h2>
-            <p class="press-balance-note">
-              Balance dihitung berdasarkan <strong>Nama Produk</strong>. Data Filling yang masih berada di Preview juga langsung terbaca.
-              Sisa disusun FIFO berdasarkan tanggal asal Filling.
-            </p>
+            <h2>Pengerjaan belum di Press</h2>
           </div>
         </div>
         <div class="search-bar press-balance-toolbar">
@@ -1823,6 +1819,166 @@
     });
   }
 
+  function buildLaporanPrintHtml(options = {}) {
+    if (!state.lastLaporan || !Array.isArray(state.lastLaporan.rows) || !state.lastLaporan.rows.length) {
+      return "";
+    }
+
+    const rows = state.lastLaporan.rows;
+    const reportId = state.lastLaporan.id || genLaporanId();
+    const title = options.title || "Laporan Hasil Pengerjaan";
+    const created = el("lap-created")?.textContent || fmtDateTime(nowIso());
+    const by = el("lap-by")?.textContent || "—";
+    const period = el("lap-period")?.textContent || "Semua tanggal";
+
+    const totalKardus = rows.reduce((sum, e) => sum + (Number(e.qtyKardus) || 0), 0);
+    const totalQty = rows.reduce((sum, e) => sum + (Number(e.totalQty) || 0), 0);
+    const totalPecah = rows.reduce((sum, e) => sum + (Number(e.qtyBotolPecah) || 0), 0);
+
+    const bodyRows = rows.map(e => `
+      <tr>
+        <td class="mono">${esc(e.reportId)}</td>
+        <td>${esc(LINE_LABEL[e.tab] || e.tab)}</td>
+        <td>${esc(e.tanggal)}</td>
+        <td>${esc(e.operator)}</td>
+        <td class="wrap">${esc(e.produk)}</td>
+        <td class="wrap">${esc(e.botol)}</td>
+        <td class="num">${(Number(e.qtyKardus) || 0).toLocaleString("id-ID")}</td>
+        <td class="num">${(Number(e.totalQty) || 0).toLocaleString("id-ID")}</td>
+        <td class="num">${(Number(e.qtyBotolPecah) || 0).toLocaleString("id-ID")}</td>
+      </tr>`).join("");
+
+    return `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${esc(reportId)}</title>
+  <style>
+    @page { size: A4 landscape; margin: 8mm; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: #fff; color: #111827; }
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 9px; line-height: 1.35; }
+    .report { width: 100%; }
+    .header { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; margin-bottom: 8px; }
+    .company { font-size: 8px; font-weight: 700; letter-spacing: .08em; color: #8a4a0c; text-transform: uppercase; margin-bottom: 2px; }
+    h1 { margin: 0; font-size: 16px; line-height: 1.2; }
+    .report-id { margin-top: 4px; font-family: Consolas, monospace; font-weight: 700; font-size: 10px; }
+    .meta { min-width: 260px; text-align: right; font-size: 8px; line-height: 1.55; }
+    .meta div { white-space: nowrap; }
+    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 0 0 8px; }
+    .stat { border: 1px solid #d1d5db; padding: 5px 7px; text-align: center; border-radius: 4px; }
+    .stat strong { display: block; font-size: 12px; }
+    .stat span { display: block; margin-top: 1px; font-size: 7px; color: #4b5563; text-transform: uppercase; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    thead { display: table-header-group; }
+    tfoot { display: table-footer-group; }
+    tr { break-inside: avoid; page-break-inside: avoid; }
+    th, td { border: 1px solid #cfd6dd; padding: 3px 4px; vertical-align: top; }
+    th { background: #eef2f5; font-size: 7.4px; text-transform: uppercase; letter-spacing: .02em; text-align: left; }
+    td { font-size: 7.8px; }
+    .mono { font-family: Consolas, "Courier New", monospace; font-size: 7.2px; }
+    .num { text-align: right; white-space: nowrap; }
+    .wrap { overflow-wrap: anywhere; word-break: break-word; }
+    th:nth-child(1), td:nth-child(1) { width: 14%; }
+    th:nth-child(2), td:nth-child(2) { width: 7%; }
+    th:nth-child(3), td:nth-child(3) { width: 9%; }
+    th:nth-child(4), td:nth-child(4) { width: 13%; }
+    th:nth-child(5), td:nth-child(5) { width: 20%; }
+    th:nth-child(6), td:nth-child(6) { width: 15%; }
+    th:nth-child(7), td:nth-child(7) { width: 7%; }
+    th:nth-child(8), td:nth-child(8) { width: 8%; }
+    th:nth-child(9), td:nth-child(9) { width: 7%; }
+    .footer-note { margin-top: 6px; color: #6b7280; font-size: 7px; text-align: right; }
+    @media print {
+      html, body { width: 100%; }
+      .report { break-after: auto; }
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+  </style>
+</head>
+<body>
+  <main class="report">
+    <section class="header">
+      <div>
+        <div class="company">PT. ABSH FRAGRANCE CREATIONS</div>
+        <h1>${esc(title)}</h1>
+        <div class="report-id">${esc(reportId)}</div>
+      </div>
+      <div class="meta">
+        <div><strong>Dibuat:</strong> ${esc(created)}</div>
+        <div><strong>Oleh:</strong> ${esc(by)}</div>
+        <div><strong>Periode:</strong> ${esc(period)}</div>
+      </div>
+    </section>
+
+    <section class="stats">
+      <div class="stat"><strong>${rows.length.toLocaleString("id-ID")}</strong><span>Total Entri</span></div>
+      <div class="stat"><strong>${totalKardus.toLocaleString("id-ID")}</strong><span>Total Kardus</span></div>
+      <div class="stat"><strong>${totalQty.toLocaleString("id-ID")}</strong><span>Total Qty Botol</span></div>
+      <div class="stat"><strong>${totalPecah.toLocaleString("id-ID")}</strong><span>Total Botol Pecah</span></div>
+    </section>
+
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th>
+        </tr>
+      </thead>
+      <tbody>${bodyRows}</tbody>
+    </table>
+    <div class="footer-note">Total ${rows.length.toLocaleString("id-ID")} entri — seluruh data laporan dicetak tanpa pagination.</div>
+  </main>
+</body>
+</html>`;
+  }
+
+  function openLaporanPrintDialog(mode = "pdf") {
+    if (!state.lastLaporan || !state.lastLaporan.rows?.length) {
+      toast("Buat laporan terlebih dahulu sebelum export/cetak.", true);
+      return;
+    }
+
+    const html = buildLaporanPrintHtml({
+      title: mode === "pdf" ? "Laporan Hasil Pengerjaan" : "Laporan Hasil Pengerjaan"
+    });
+    if (!html) {
+      toast("Data laporan tidak tersedia.", true);
+      return;
+    }
+
+    // Dibuka langsung dari event klik agar tidak dianggap popup oleh browser.
+    const printWindow = window.open("", "_blank", "width=1280,height=860");
+    if (!printWindow) {
+      toast("Popup diblokir browser. Izinkan popup untuk melakukan Export PDF/Cetak.", true);
+      return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+
+    const doPrint = () => {
+      try {
+        printWindow.focus();
+        printWindow.print();
+      } catch (err) {
+        toast(`Gagal membuka dialog cetak: ${err.message}`, true);
+      }
+    };
+
+    if (printWindow.document.readyState === "complete") {
+      setTimeout(doPrint, 250);
+    } else {
+      printWindow.addEventListener("load", () => setTimeout(doPrint, 250), { once: true });
+    }
+
+    if (mode === "pdf") {
+      toast("Dialog PDF dibuka. Pilih 'Save as PDF' / 'Simpan sebagai PDF'.");
+    }
+  }
+
   function initLaporan() {
     const generate = el("lap-generate");
     if (!generate) return;
@@ -1872,7 +2028,8 @@
       downloadText(`${state.lastLaporan.id}.csv`, csv);
     });
 
-    el("lap-print")?.addEventListener("click", () => window.print());
+    el("lap-pdf")?.addEventListener("click", () => openLaporanPrintDialog("pdf"));
+    el("lap-print")?.addEventListener("click", () => openLaporanPrintDialog("print"));
   }
 
   /* ------------------------- MASTER ------------------------- */
