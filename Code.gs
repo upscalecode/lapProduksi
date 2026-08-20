@@ -126,6 +126,18 @@ function doPost(e) {
           return json_({ ok: true, entry: entry, remainders: getPressRemainders_() });
         });
 
+      case 'entry.batchCreate':
+        return withWriteLock_(function () {
+          const result = createEntriesBatch_(session.user, parseJsonParam_(e, 'data'));
+          return json_({
+            ok: true,
+            entries: result.entries,
+            savedIds: result.savedIds,
+            duplicateIds: result.duplicateIds,
+            remainders: result.remainders
+          });
+        });
+
       case 'entry.update':
         return withWriteLock_(function () {
           const entry = updateEntry_(session.user, param_(e, 'id'), parseJsonParam_(e, 'data'));
@@ -351,6 +363,174 @@ function deleteSession_(token) {
   // Sheet Sessions hanya dipertahankan untuk kompatibilitas token lama;
   // logout versi baru tidak perlu scan/delete row sehingga lebih cepat.
 }
+
+
+/**
+ * Simpan banyak data preview dalam satu request / satu lock.
+ *
+ * Tujuan performa:
+ * - Sheet Pengerjaan dibaca sekali.
+ * - Semua baris baru ditulis sekali dengan setValues().
+ * - Model Filling -> Press dihitung sekali.
+ * - Sheet Sisa Press + metadata Press disinkronkan sekali.
+ *
+ * clientRequestId tetap dipakai sebagai idempotency key. Jika request browser
+ * terputus setelah server selesai menulis, klik Simpan lagi tidak membuat duplikat.
+ */
+function createEntriesBatch_(user, dataList) {
+  if (!Array.isArray(dataList) || !dataList.length) {
+    throw new Error('Data preview yang akan disimpan kosong.');
+  }
+  if (dataList.length > 500) {
+    throw new Error('Maksimal 500 data per sekali simpan.');
+  }
+
+  const sh = entrySheet_();
+  const values = sh.getDataRange().getValues();
+  const currentEntries = [];
+  const existingById = {};
+
+  for (let i = 1; i < values.length; i++) {
+    if (!values[i][0]) continue;
+    const entry = rowToEntry_(values[i]);
+    currentEntries.push(entry);
+    existingById[String(entry.id)] = entry;
+  }
+
+  // Ambil master sekali saja untuk seluruh batch.
+  const master = getMaster_();
+  const now = new Date();
+  const newEntries = [];
+  const resultEntries = [];
+  const savedIds = [];
+  const duplicateIds = [];
+  const seenIds = {};
+
+  dataList.forEach(function (raw, index) {
+    const data = raw && typeof raw === 'object'
+      ? Object.assign({}, raw)
+      : {};
+
+    if (!data || (data.line !== 'filling' && data.line !== 'press')) {
+      throw new Error('Data ke-' + (index + 1) + ': Line pengerjaan tidak valid.');
+    }
+    if (!data.operator || !data.produk || !data.botol) {
+      throw new Error('Data ke-' + (index + 1) + ': Operator, Produk, dan Botol wajib diisi.');
+    }
+
+    // Validasi canonical memakai snapshot master yang sama agar tidak memanggil
+    // getMaster_() berulang untuk setiap kolom dan setiap baris.
+    data.operator = canonicalMasterValue_(master.operator, data.operator, 'Operator');
+    data.produk = canonicalMasterValue_(master.produk, data.produk, 'Produk');
+    data.botol = canonicalMasterValue_(master.botol, data.botol, 'Botol');
+
+    const qtyKardus = Number(data.qtyKardus);
+    const qtyBotol = Number(data.qtyBotolPerKardus);
+    const qtyPecah = Number(data.qtyBotolPecah || 0);
+    if (!isFinite(qtyKardus) || !isFinite(qtyBotol) || !isFinite(qtyPecah)) {
+      throw new Error('Data ke-' + (index + 1) + ': Qty harus berupa angka yang valid.');
+    }
+    if (qtyKardus < 0 || qtyBotol < 0 || qtyPecah < 0) {
+      throw new Error('Data ke-' + (index + 1) + ': Qty tidak boleh negatif.');
+    }
+    if (data.line === 'press' && qtyKardus * qtyBotol <= 0) {
+      throw new Error('Data ke-' + (index + 1) + ': Total Qty Press harus lebih dari 0 botol.');
+    }
+
+    const requestedId = String(data.clientRequestId || '').trim();
+    const validRequestedId = /^[A-Za-z0-9-]{16,100}$/.test(requestedId) ? requestedId : '';
+    const id = validRequestedId || Utilities.getUuid();
+
+    if (seenIds[id]) {
+      throw new Error('Data ke-' + (index + 1) + ': ID preview duplikat dalam sekali simpan.');
+    }
+    seenIds[id] = true;
+
+    // Retry aman: bila ID sudah pernah tersimpan oleh user yang sama,
+    // anggap sukses dan jangan tulis baris kedua.
+    const existing = existingById[id];
+    if (existing) {
+      if (existing.createdBy !== user.username) {
+        throw new Error('Data ke-' + (index + 1) + ': ID permintaan sudah digunakan oleh user lain.');
+      }
+      resultEntries.push(existing);
+      savedIds.push(id);
+      duplicateIds.push(id);
+      return;
+    }
+
+    const createdAt = new Date(now.getTime() + index);
+    const line = data.line === 'press' ? 'press' : 'filling';
+    const entry = {
+      id: id,
+      reportId: makeReportId_(line, createdAt),
+      tab: line,
+      tanggal: String(data.tanggal),
+      operator: String(data.operator).trim(),
+      produk: String(data.produk).trim(),
+      botol: String(data.botol).trim(),
+      qtyKardus: qtyKardus,
+      qtyBotolPerKardus: qtyBotol,
+      totalQty: qtyKardus * qtyBotol,
+      botolPecahJenis: String(data.botol || '').trim(),
+      qtyBotolPecah: qtyPecah,
+      createdBy: user.username,
+      createdByName: user.name,
+      createdAt: createdAt.toISOString(),
+      updatedAt: createdAt.toISOString(),
+      sisaPressTanggalAsal: '',
+      keterangan: ''
+    };
+
+    newEntries.push(entry);
+    resultEntries.push(entry);
+    savedIds.push(id);
+  });
+
+  // Semua baris baru diproyeksikan sekaligus. Ini menjaga validasi Press tetap
+  // akurat tetapi tanpa read + rebuild berulang per baris.
+  const projectedEntries = currentEntries.concat(newEntries);
+  const adjustments = getPressAdjustments_();
+  const model = buildPressAllocationModel_(projectedEntries, adjustments);
+
+  if (model.overflow.length) {
+    const newIdMap = {};
+    newEntries.forEach(function (entry) { newIdMap[String(entry.id)] = true; });
+    const overflow = model.overflow.find(function (item) {
+      return newIdMap[String(item.id)];
+    }) || model.overflow[0];
+
+    throw new Error(
+      'Qty Press melebihi Qty Filling yang tersedia untuk produk ' + overflow.produk +
+      ' pada tanggal ' + overflow.tanggal + '. Kekurangan ' +
+      number_(overflow.kurang) + ' botol. Balance dihitung berdasarkan Nama Produk dan FIFO tanggal Filling.'
+    );
+  }
+
+  // Isi metadata Press langsung dari model sebelum penulisan batch.
+  projectedEntries.forEach(function (entry) {
+    const meta = entry.tab === 'press' ? model.pressMeta[String(entry.id)] : null;
+    entry.sisaPressTanggalAsal = meta ? meta.tanggalAsal : '';
+    entry.keterangan = meta ? meta.keterangan : '';
+  });
+
+  if (newEntries.length) {
+    const startRow = Math.max(sh.getLastRow() + 1, 2);
+    sh.getRange(startRow, 1, newEntries.length, APP.ENTRY_HEADERS.length)
+      .setValues(newEntries.map(entryToRow_));
+  }
+
+  // Satu kali sinkronisasi untuk seluruh batch.
+  const remainders = writePressModel_(projectedEntries, model);
+
+  return {
+    entries: resultEntries,
+    savedIds: savedIds,
+    duplicateIds: duplicateIds,
+    remainders: remainders
+  };
+}
+
 
 function createEntry_(user, data) {
   validateEntry_(data);
@@ -726,9 +906,7 @@ function buildPressAllocationModel_(entries, adjustments) {
   return { remainders: remainders, pressMeta: pressMeta, overflow: overflow };
 }
 
-function rebuildPressRemainders_() {
-  const entries = getEntries_();
-  const model = buildPressAllocationModel_(entries, getPressAdjustments_());
+function writePressModel_(entries, model) {
   const sh = pressRemainderSheet_(true);
 
   if (sh.getLastRow() > 1) {
@@ -746,21 +924,24 @@ function rebuildPressRemainders_() {
     sh.getRange(2, 1, rows.length, APP.PRESS_REMAINDER_HEADERS.length).setValues(rows);
   }
 
-  // Update dua kolom terakhir Sheet Pengerjaan secara batch.
-  // Filling dikosongkan; Press akan memperoleh keterangan bila memakai sisa hari sebelumnya.
+  // Metadata Press ditulis satu kali secara batch. Tidak perlu membaca ulang
+  // Sheet Pengerjaan karena daftar entries sudah tersedia di memori.
   const entrySh = entrySheet_();
-  if (entrySh.getLastRow() > 1) {
-    const idsAndTabs = entrySh.getRange(2, 1, entrySh.getLastRow() - 1, 3).getValues();
-    const noteRows = idsAndTabs.map(function (row) {
-      const id = String(row[0] || '');
-      const tab = String(row[2] || '');
-      const meta = tab === 'press' ? model.pressMeta[id] : null;
+  if (entries && entries.length) {
+    const noteRows = entries.map(function (entry) {
+      const meta = entry.tab === 'press' ? model.pressMeta[String(entry.id)] : null;
       return [meta ? meta.tanggalAsal : '', meta ? meta.keterangan : ''];
     });
     entrySh.getRange(2, 17, noteRows.length, 2).setValues(noteRows);
   }
 
   return model.remainders;
+}
+
+function rebuildPressRemainders_() {
+  const entries = getEntries_();
+  const model = buildPressAllocationModel_(entries, getPressAdjustments_());
+  return writePressModel_(entries, model);
 }
 
 function getPressRemainders_() {

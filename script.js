@@ -33,7 +33,7 @@
     MASTER_KEY: "ppr_master_cache_v3",
     PREVIEW_KEY: "ppr_preview_cache_v4",
     FORM_DRAFT_KEY: "ppr_form_draft_v4",
-    REQUEST_TIMEOUT: 12000, // gagal lebih cepat jika Apps Script tidak merespons
+    REQUEST_TIMEOUT: 30000, // safety net; simpan batch normalnya jauh lebih cepat
     PAGE_SIZE: 20,
     PRESS_BALANCE_PAGE_SIZE: 10,
 
@@ -1630,42 +1630,57 @@
         }
 
         saveBtn.disabled = true;
-        saveBtn.textContent = "Menyimpan...";
-        const failed = [];
-        let successCount = 0;
+        saveBtn.textContent = `Menyimpan ${previewRows.length} data...`;
 
-        for (const item of previewRows) {
-          try {
-            const response = await enqueueWrite(() => apiPost("entry.create", {
-              data: {
-                line: item.tab,
-                tanggal: item.tanggal,
-                operator: item.operator,
-                produk: item.produk,
-                botol: item.botol,
-                qtyKardus: Number(item.qtyKardus) || 0,
-                qtyBotolPerKardus: Number(item.qtyBotolPerKardus) || 0,
-                botolPecahJenis: item.botolPecahJenis || "",
-                qtyBotolPecah: Number(item.qtyBotolPecah) || 0,
-                clientRequestId: item.id
-              }
-            }));
-            if (response.entry) upsertEntry(response.entry);
-            if (Array.isArray(response.remainders)) state.remainders = response.remainders;
-            successCount++;
-          } catch (err) {
-            failed.push({ ...item, _saveError: err.message });
+        // FAST SAVE: seluruh preview dikirim dalam SATU request.
+        // Backend membaca Pengerjaan sekali, menulis setValues sekali,
+        // lalu menghitung Sisa Press sekali untuk seluruh batch.
+        const batchPayload = previewRows.map(item => ({
+          line: item.tab,
+          tanggal: item.tanggal,
+          operator: item.operator,
+          produk: item.produk,
+          botol: item.botol,
+          qtyKardus: Number(item.qtyKardus) || 0,
+          qtyBotolPerKardus: Number(item.qtyBotolPerKardus) || 0,
+          botolPecahJenis: item.botolPecahJenis || "",
+          qtyBotolPecah: Number(item.qtyBotolPecah) || 0,
+          clientRequestId: item.id
+        }));
+
+        try {
+          const response = await enqueueWrite(() => apiPost("entry.batchCreate", {
+            data: batchPayload
+          }));
+
+          const savedIds = new Set(Array.isArray(response.savedIds) ? response.savedIds : []);
+          (response.entries || []).forEach(upsertEntry);
+          if (Array.isArray(response.remainders)) state.remainders = response.remainders;
+
+          // Hapus dari preview hanya ID yang sudah dikonfirmasi server.
+          state.preview[line] = (state.preview[line] || []).filter(item => !savedIds.has(item.id));
+          state.pages[line] = 1;
+          persistPreview();
+          renderPreview(line);
+          renderPressBalance();
+
+          const successCount = savedIds.size;
+          const retryCount = state.preview[line].length;
+          if (successCount) {
+            toast(`${successCount} data berhasil disimpan ke Spreadsheet.`);
           }
+          if (retryCount) {
+            toast(`${retryCount} data belum tersimpan. Silakan klik Simpan lagi.`, true);
+          }
+        } catch (err) {
+          // Batch bersifat aman: jika server menolak sebelum write, seluruh preview tetap ada.
+          // Jika koneksi putus sesudah server menulis, clientRequestId membuat retry tidak duplikat.
+          state.pages[line] = 1;
+          persistPreview();
+          renderPreview(line);
+          renderPressBalance();
+          toast(`Gagal menyimpan: ${err.message}`, true);
         }
-
-        state.preview[line] = failed;
-        state.pages[line] = 1;
-        persistPreview();
-        renderPreview(line);
-        renderPressBalance();
-
-        if (successCount) toast(`${successCount} data berhasil disimpan ke Spreadsheet.`);
-        if (failed.length) toast(`${failed.length} data gagal disimpan. Silakan klik Simpan lagi.`, true);
       });
     }
 
