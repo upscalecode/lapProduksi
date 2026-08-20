@@ -35,6 +35,7 @@
     FORM_DRAFT_KEY: "ppr_form_draft_v4",
     REQUEST_TIMEOUT: 12000, // gagal lebih cepat jika Apps Script tidak merespons
     PAGE_SIZE: 20,
+    PRESS_BALANCE_PAGE_SIZE: 10,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL: "https://script.google.com/macros/s/AKfycbyAVS5p63TtmA3uTLsAuc37kqpgjcOimd4BQ9MKnW77kSvMIAgguD3t1lQR_ExuLpLwyQ/exec"
@@ -57,6 +58,7 @@
       press: { operator: "", date: "" }
     },
     pages: { filling: 1, press: 1, laporan: 1 },
+    pressBalance: { search: "", page: 1 },
     lastLaporan: null
   };
 
@@ -531,6 +533,13 @@
             </p>
           </div>
         </div>
+        <div class="search-bar press-balance-toolbar">
+          <label class="field field-inline press-balance-search-field">
+            <span>Cari Nama Produk</span>
+            <input type="search" class="press-balance-search" placeholder="Cari nama produk…" autocomplete="off">
+          </label>
+          <button type="button" class="btn btn-ghost press-balance-search-reset">Reset</button>
+        </div>
         <div class="table-wrap">
           <table class="data-table">
             <thead>
@@ -550,7 +559,10 @@
             </tbody>
           </table>
         </div>
-        <div class="table-footer"><p class="table-summary press-balance-summary"></p></div>`;
+        <div class="table-footer">
+          <p class="table-summary press-balance-summary"></p>
+          <div class="pagination press-balance-pagination" aria-label="Navigasi halaman sisa Press"></div>
+        </div>`;
       stack.insertBefore(balancePanel, form);
 
       const hint = document.createElement("p");
@@ -562,7 +574,42 @@
       else form.appendChild(hint);
     }
 
-    clone.addEventListener("click", event => {
+    clone.addEventListener("click", async event => {
+      const deleteBtn = event.target.closest(".press-balance-delete");
+      if (deleteBtn) {
+        const produkValue = deleteBtn.dataset.produk || "";
+        const botolValue = deleteBtn.dataset.botol || "";
+        const row = getPressBalanceRows().find(item =>
+          balanceKey(item.produk, item.botol) === balanceKey(produkValue, botolValue)
+        );
+        if (!row) return toast("Data sisa Press tidak ditemukan.", true);
+        if (row.hasPreview) {
+          return toast("Simpan data Preview Filling terlebih dahulu sebelum menghapus sisa Press.", true);
+        }
+
+        const alasan = await askClosePressReason(row);
+        if (!alasan) return;
+
+        deleteBtn.disabled = true;
+        const oldText = deleteBtn.textContent;
+        deleteBtn.textContent = "Menghapus…";
+        try {
+          const response = await enqueueWrite(() => apiPost("press.adjustment.close", {
+            data: { produk: row.produk, botol: row.botol, alasan }
+          }));
+          if (response.adjustment) upsertAdjustment(response.adjustment);
+          if (Array.isArray(response.remainders)) state.remainders = response.remainders;
+          state.pressBalance.page = 1;
+          renderPressBalance();
+          toast(`Sisa ${row.produk} / ${row.botol} berhasil dihapus dengan alasan tercatat.`);
+        } catch (err) {
+          deleteBtn.disabled = false;
+          deleteBtn.textContent = oldText;
+          toast(`Gagal menghapus sisa Press: ${err.message}`, true);
+        }
+        return;
+      }
+
       const useBtn = event.target.closest(".press-balance-use");
       if (!useBtn) return;
 
@@ -584,6 +631,25 @@
       saveFormDraft("press", pressForm);
       pressForm.scrollIntoView({ behavior: "smooth", block: "start" });
     });
+
+    const balanceSearch = qs(".press-balance-search", clone);
+    const balanceSearchReset = qs(".press-balance-search-reset", clone);
+    if (balanceSearch) {
+      balanceSearch.value = state.pressBalance.search || "";
+      balanceSearch.addEventListener("input", () => {
+        state.pressBalance.search = balanceSearch.value.trim();
+        state.pressBalance.page = 1;
+        renderPressBalance();
+      });
+    }
+    if (balanceSearchReset) {
+      balanceSearchReset.addEventListener("click", () => {
+        state.pressBalance.search = "";
+        state.pressBalance.page = 1;
+        if (balanceSearch) balanceSearch.value = "";
+        renderPressBalance();
+      });
+    }
 
     oldPress.replaceWith(clone);
     initMasterSearches(clone);
@@ -861,7 +927,7 @@
       overlay.className = "press-close-overlay";
       overlay.innerHTML = `
         <div class="press-close-dialog" role="dialog" aria-modal="true" aria-labelledby="pressCloseTitle">
-          <h3 id="pressCloseTitle">Tutup Sisa Pengerjaan Press</h3>
+          <h3 id="pressCloseTitle">Hapus Sisa Pengerjaan Press</h3>
           <p>Qty sisa akan dikeluarkan dari saldo Press aktif, tetapi riwayat Filling/Press tidak dihapus. Alasan wajib dicatat untuk audit.</p>
           <div class="press-close-meta">
             <div><strong>Produk</strong><br>${esc(row.produk)}</div>
@@ -869,13 +935,13 @@
             <div><strong>Sisa Qty</strong><br>${Number(row.remaining).toLocaleString("id-ID")} botol</div>
             <div><strong>Tanggal</strong><br>${esc(todayStr())}</div>
           </div>
-          <label class="field"><span>Alasan Tutup Sisa <b>*</b></span>
+          <label class="field"><span>Alasan Hapus <b>*</b></span>
             <textarea class="press-close-reason" maxlength="500" placeholder="Contoh: sisa botol rusak dan tidak dapat diproses press" required></textarea>
           </label>
           <p class="press-close-error"></p>
           <div class="press-close-actions">
             <button type="button" class="btn btn-ghost press-close-cancel">Batal</button>
-            <button type="button" class="btn btn-danger press-close-confirm">Tutup Sisa</button>
+            <button type="button" class="btn btn-danger press-close-confirm">Hapus Sisa</button>
           </div>
         </div>`;
       document.body.appendChild(overlay);
@@ -968,11 +1034,43 @@
         });
     });
 
-    return lots
-      .filter(lot => lot.remaining > 0)
+    // Gabungkan tampilan berdasarkan Nama Produk + Botol. Dengan demikian,
+    // Filling oleh operator berbeda tidak membuat baris duplikat pada Sisa Press.
+    const grouped = new Map();
+    lots.filter(lot => lot.remaining > 0).forEach(lot => {
+      const key = balanceKey(lot.produk, lot.botol);
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          id: `balance-${key}`,
+          tanggalAsal: String(lot.tanggalAsal || ""),
+          produk: String(lot.produk || "").trim(),
+          botol: String(lot.botol || "").trim(),
+          qtyFilling: 0,
+          qtyPressTerpakai: 0,
+          remaining: 0,
+          sources: new Set()
+        });
+      }
+      const group = grouped.get(key);
+      const tanggal = String(lot.tanggalAsal || "");
+      if (tanggal && (!group.tanggalAsal || tanggal < group.tanggalAsal)) group.tanggalAsal = tanggal;
+      group.qtyFilling += Number(lot.qtyFilling) || 0;
+      group.qtyPressTerpakai += Number(lot.qtyPressTerpakai) || 0;
+      group.remaining += Number(lot.remaining) || 0;
+      group.sources.add(lot.source || "spreadsheet");
+    });
+
+    return Array.from(grouped.values())
+      .map(group => ({
+        ...group,
+        source: group.sources.size > 1 ? "mixed" : Array.from(group.sources)[0],
+        hasPreview: group.sources.has("preview"),
+        hasSpreadsheet: group.sources.has("spreadsheet")
+      }))
       .sort((a, b) =>
         String(a.tanggalAsal || "").localeCompare(String(b.tanggalAsal || "")) ||
-        a.produk.localeCompare(b.produk, "id")
+        a.produk.localeCompare(b.produk, "id") ||
+        a.botol.localeCompare(b.botol, "id")
       );
   }
 
@@ -992,15 +1090,38 @@
     if (!section) return;
     const tbody = qs(".press-balance-tbody", section);
     const summary = qs(".press-balance-summary", section);
+    const pagination = qs(".press-balance-pagination", section);
+    const searchInput = qs(".press-balance-search", section);
     if (!tbody) return;
 
-    const rows = getPressBalanceRows();
-    tbody.innerHTML = rows.length ? rows.map(row => {
+    const allRows = getPressBalanceRows();
+    const query = String(state.pressBalance.search || "").trim().toLowerCase();
+    const rows = query
+      ? allRows.filter(row => String(row.produk || "").toLowerCase().includes(query))
+      : allRows;
+
+    const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PRESS_BALANCE_PAGE_SIZE));
+    state.pressBalance.page = Math.min(Math.max(1, state.pressBalance.page || 1), totalPages);
+    const page = state.pressBalance.page;
+    const start = (page - 1) * CONFIG.PRESS_BALANCE_PAGE_SIZE;
+    const visibleRows = rows.slice(start, start + CONFIG.PRESS_BALANCE_PAGE_SIZE);
+
+    if (searchInput && searchInput.value !== state.pressBalance.search) {
+      searchInput.value = state.pressBalance.search || "";
+    }
+
+    tbody.innerHTML = visibleRows.length ? visibleRows.map(row => {
       const produkAktif = isMasterValue("produk", row.produk);
       const botolAktif = isMasterValue("botol", row.botol);
       const sourceLabel = row.source === "preview"
         ? '<span class="sync-badge pending">Preview Filling</span>'
-        : '<span class="sync-badge saved">Spreadsheet</span>';
+        : row.source === "mixed"
+          ? '<span class="sync-badge pending">Spreadsheet + Preview</span>'
+          : '<span class="sync-badge saved">Spreadsheet</span>';
+      const deleteDisabled = row.hasPreview || !row.hasSpreadsheet;
+      const deleteTitle = row.hasPreview
+        ? 'Simpan Preview Filling terlebih dahulu sebelum menghapus sisa.'
+        : (!row.hasSpreadsheet ? 'Data ini belum tersimpan di Spreadsheet.' : 'Hapus sisa dengan alasan.');
 
       return `
       <tr>
@@ -1012,21 +1133,35 @@
         <td><strong>${Number(row.remaining).toLocaleString("id-ID")}</strong></td>
         <td>${sourceLabel}</td>
         <td>
-          <button type="button" class="btn btn-ghost press-balance-use"
-            data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}"
-            ${!produkAktif ? 'disabled title="Produk sudah tidak ada di Master."' : ""}>Gunakan</button>
+          <div class="press-balance-actions">
+            <button type="button" class="btn btn-ghost press-balance-use"
+              data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}"
+              ${!produkAktif ? 'disabled title="Produk sudah tidak ada di Master."' : ""}>Gunakan</button>
+            <button type="button" class="btn btn-danger press-balance-delete"
+              data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}"
+              ${deleteDisabled ? "disabled" : ""} title="${esc(deleteTitle)}">Hapus</button>
+          </div>
         </td>
       </tr>`;
     }).join("")
-      : '<tr><td colspan="8" class="empty-row">Tidak ada sisa Filling yang menunggu Press.</td></tr>';
+      : `<tr><td colspan="8" class="empty-row">${query ? "Nama produk tidak ditemukan." : "Tidak ada sisa Filling yang menunggu Press."}</td></tr>`;
 
     const remainingTotal = rows.reduce((sum, row) => sum + (Number(row.remaining) || 0), 0);
+    const from = rows.length ? start + 1 : 0;
+    const to = Math.min(start + CONFIG.PRESS_BALANCE_PAGE_SIZE, rows.length);
     if (summary) {
-      const previewCount = rows.filter(row => row.source === "preview").length;
+      const previewCount = rows.filter(row => row.hasPreview).length;
       summary.textContent =
-        `${rows.length} lot menunggu Press · Sisa ${remainingTotal.toLocaleString("id-ID")} botol` +
-        (previewCount ? ` · ${previewCount} lot berasal dari Preview Filling` : "");
+        `${from}–${to} dari ${rows.length} kombinasi Produk + Botol · Sisa ${remainingTotal.toLocaleString("id-ID")} botol` +
+        (query ? ` · Pencarian: ${state.pressBalance.search}` : "") +
+        (previewCount ? ` · ${previewCount} kombinasi memuat Preview Filling` : "");
     }
+
+    renderPagination(pagination, page, totalPages, nextPage => {
+      state.pressBalance.page = nextPage;
+      renderPressBalance();
+      qs(".press-balance-panel", section)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
 
     const form = qs(".form-panel", section);
     updatePressAvailabilityHint(form);

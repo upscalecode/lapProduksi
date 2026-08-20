@@ -568,3 +568,36 @@ body[data-page="login"] .login-screen{
 .press-balance-panel td strong{
   color:var(--ink);
 }
+
+
+/* ===== Update Sisa Pengerjaan Menunggu Press ===== */
+.press-balance-toolbar {
+  margin-bottom: 12px;
+}
+.press-balance-search-field {
+  min-width: min(320px, 100%);
+}
+.press-balance-search-field input {
+  width: 100%;
+}
+.press-balance-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.press-balance-pagination {
+  margin-left: auto;
+}
+@media (max-width: 700px) {
+  .press-balance-toolbar {
+    align-items: stretch;
+  }
+  .press-balance-search-field {
+    width: 100%;
+    min-width: 0;
+  }
+  .press-balance-pagination {
+    margin-left: 0;
+  }
+}

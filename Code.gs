@@ -644,6 +644,7 @@ function buildPressAllocationModel_(entries, adjustments) {
       id: String(adjustment.id),
       tanggal: String(adjustment.tanggal || ''),
       produk: String(adjustment.produk || '').trim(),
+      botol: String(adjustment.botol || '').trim(),
       qty: number_(adjustment.qtyDitutup),
       createdAt: String(adjustment.createdAt || '')
     });
@@ -664,6 +665,9 @@ function buildPressAllocationModel_(entries, adjustments) {
       // Press tanggal 20 tidak boleh memakai Filling tanggal 21.
       if (lot.tanggalAsal && event.tanggal && lot.tanggalAsal > event.tanggal) continue;
       if (lot.remaining <= 0) continue;
+      // Hapus/Tutup Sisa harus hanya mengurangi kombinasi Produk + Botol yang dipilih.
+      // Proses Press biasa tetap mempertahankan logika lama: alokasi FIFO berdasarkan Nama Produk.
+      if (event.type === 'closed' && balanceKey_(lot.produk, lot.botol) !== balanceKey_(event.produk, event.botol)) continue;
 
       const used = Math.min(needed, lot.remaining);
       lot.remaining -= used;
@@ -696,6 +700,7 @@ function buildPressAllocationModel_(entries, adjustments) {
         type: event.type,
         tanggal: event.tanggal,
         produk: event.produk,
+        botol: event.botol || '',
         kurang: needed
       });
     }
@@ -861,23 +866,36 @@ function getPressAdjustments_() {
 
 function pressBalanceForKey_(produk, botol) {
   const key = balanceKey_(produk, botol);
-  let filling = 0;
-  let press = 0;
-  let closed = 0;
+  const entries = getEntries_();
+  const adjustments = getPressAdjustments_();
+  const model = buildPressAllocationModel_(entries, adjustments);
 
-  getEntries_().forEach(function (entry) {
-    if (balanceKey_(entry.produk, entry.botol) !== key) return;
-    if (entry.tab === 'filling') filling += number_(entry.totalQty);
-    if (entry.tab === 'press') press += number_(entry.totalQty);
+  let filling = 0;
+  let closed = 0;
+  let remaining = 0;
+
+  entries.forEach(function (entry) {
+    if (entry.tab === 'filling' && balanceKey_(entry.produk, entry.botol) === key) {
+      filling += number_(entry.totalQty);
+    }
   });
 
-  getPressAdjustments_().forEach(function (adjustment) {
+  adjustments.forEach(function (adjustment) {
     if (balanceKey_(adjustment.produk, adjustment.botol) === key) {
       closed += number_(adjustment.qtyDitutup);
     }
   });
 
-  return { filling: filling, press: press, closed: closed, remaining: filling - press - closed };
+  model.remainders.forEach(function (item) {
+    if (balanceKey_(item.produk, item.botol) === key) {
+      remaining += number_(item.sisaQty);
+    }
+  });
+
+  // Nilai Press untuk pasangan ini diturunkan dari alokasi FIFO aktual,
+  // bukan dari botol yang dipilih pada form Press (karena logika lama Press berbasis Nama Produk).
+  const press = Math.max(0, filling - closed - remaining);
+  return { filling: filling, press: press, closed: closed, remaining: remaining };
 }
 
 function historicalPressBalancePair_(produkInput, botolInput) {
