@@ -885,6 +885,34 @@
       .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   }
 
+  // Press hanya boleh disimpan setelah seluruh Preview Filling sudah
+  // benar-benar disimpan ke Spreadsheet. Preview Press tetap boleh dibuat/edit.
+  function hasUnsavedFillingPreview() {
+    return Array.isArray(state.preview.filling) && state.preview.filling.length > 0;
+  }
+
+  function updateSaveButtonState(line) {
+    const section = el("view-" + line);
+    const saveBtn = section ? qs(".f-save-btn", section) : null;
+    if (!saveBtn) return;
+
+    // Pertahankan perilaku lama: tombol mengikuti jumlah baris preview yang
+    // sedang tampil setelah filter. Khusus Press ditambah syarat Filling harus tersimpan dulu.
+    const rows = filteredPreviewEntries(line);
+    const waitingForFilling = line === "press" && hasUnsavedFillingPreview();
+
+    saveBtn.disabled = rows.length === 0 || waitingForFilling;
+    saveBtn.textContent = rows.length ? `Simpan (${rows.length})` : "Simpan";
+
+    if (waitingForFilling) {
+      saveBtn.title = "Simpan data Filling terlebih dahulu sebelum menyimpan Press.";
+      saveBtn.dataset.waitingFilling = "1";
+    } else {
+      saveBtn.removeAttribute("title");
+      delete saveBtn.dataset.waitingFilling;
+    }
+  }
+
   function upsertEntry(entry) {
     if (!entry || !entry.id) return;
     const index = state.entries.findIndex(x => x.id === entry.id);
@@ -1324,8 +1352,11 @@
     }
 
     if (saveBtn) {
-      saveBtn.disabled = rows.length === 0;
-      saveBtn.textContent = rows.length ? `Simpan (${rows.length})` : "Simpan";
+      updateSaveButtonState(line);
+
+      // Perubahan Preview Filling harus langsung memperbarui status tombol
+      // Simpan pada Press tanpa mengubah alur preview yang sudah ada.
+      if (line === "filling") updateSaveButtonState("press");
     }
 
     renderPagination(pagination, page, totalPages, nextPage => {
@@ -1587,6 +1618,14 @@
         const previewRows = [...(state.preview[line] || [])];
         if (!previewRows.length) {
           toast("Belum ada data preview.", true);
+          return;
+        }
+
+        // Pengaman kedua: walaupun event dipicu secara programatik, Press tidak
+        // boleh dikirim sebelum Preview Filling selesai disimpan ke Spreadsheet.
+        if (line === "press" && hasUnsavedFillingPreview()) {
+          updateSaveButtonState("press");
+          toast("Simpan data Filling terlebih dahulu sebelum menyimpan Press.", true);
           return;
         }
 
