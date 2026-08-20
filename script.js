@@ -54,8 +54,8 @@
     preview: { filling: [], press: [] },
     users: [],
     search: {
-      filling: { operator: "", date: "" },
-      press: { operator: "", date: "" }
+      filling: { query: "" },
+      press: { query: "" }
     },
     pages: { filling: 1, press: 1, laporan: 1 },
     pressBalance: { search: "", page: 1 },
@@ -547,6 +547,7 @@
                 <th>Tanggal Asal</th>
                 <th>Produk</th>
                 <th>Botol Filling</th>
+                <th>Qty Botol/Kardus</th>
                 <th>Qty Filling</th>
                 <th>Sudah Press</th>
                 <th>Sisa Qty</th>
@@ -555,7 +556,7 @@
               </tr>
             </thead>
             <tbody class="press-balance-tbody">
-              <tr><td colspan="8" class="empty-row">Memuat sisa pengerjaan Press…</td></tr>
+              <tr><td colspan="9" class="empty-row">Memuat sisa pengerjaan Press…</td></tr>
             </tbody>
           </table>
         </div>
@@ -867,21 +868,27 @@
     }
   }
 
+  function matchesPreviewSearch(entry, query) {
+    const keyword = String(query || "").trim().toLowerCase();
+    if (!keyword) return true;
+    return [entry.operator, entry.produk].some(value =>
+      String(value || "").toLowerCase().includes(keyword)
+    );
+  }
+
   function filteredEntries(line) {
-    const filter = state.search[line];
+    const filter = state.search[line] || { query: "" };
     return state.entries
       .filter(e => e.tab === line)
-      .filter(e => !filter.operator || String(e.operator || "").toLowerCase().includes(String(filter.operator).toLowerCase()))
-      .filter(e => !filter.date || e.tanggal === filter.date)
+      .filter(e => matchesPreviewSearch(e, filter.query))
       .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   }
 
   function filteredPreviewEntries(line) {
-    const filter = state.search[line];
+    const filter = state.search[line] || { query: "" };
     const rows = state.preview && state.preview[line] ? state.preview[line] : [];
     return rows
-      .filter(e => !filter.operator || String(e.operator || "").toLowerCase().includes(String(filter.operator).toLowerCase()))
-      .filter(e => !filter.date || e.tanggal === filter.date)
+      .filter(e => matchesPreviewSearch(e, filter.query))
       .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   }
 
@@ -992,6 +999,18 @@
     });
   }
 
+  function getQtyBotolPerKardusFromRemainder(item) {
+    const direct = Number(item && item.qtyBotolPerKardus) || 0;
+    if (direct > 0) return direct;
+
+    // ID pada Sisa Press mengikuti ID entry Filling asal, jadi nilai Botol/Kardus
+    // bisa diambil dari data Pengerjaan tanpa menambah kolom/sheet baru.
+    const sourceEntry = (state.entries || []).find(entry =>
+      String(entry.id || "") === String((item && item.id) || "") && entry.tab === "filling"
+    );
+    return Number(sourceEntry && sourceEntry.qtyBotolPerKardus) || 0;
+  }
+
   function getPressBalanceRows(options = {}) {
     const excludePreviewId = options.excludePreviewId || "";
     const lots = [];
@@ -1005,6 +1024,7 @@
         tanggalAsal: String(item.tanggalAsal || item.tanggal || ""),
         produk: String(item.produk || "").trim(),
         botol: String(item.botol || "").trim(),
+        qtyBotolPerKardus: getQtyBotolPerKardusFromRemainder(item),
         qtyFilling: Number(item.qtyFilling) || remaining,
         qtyPressTerpakai: Number(item.qtyPressTerpakai) || 0,
         remaining,
@@ -1021,6 +1041,7 @@
         tanggalAsal: String(item.tanggal || todayStr()),
         produk: String(item.produk || "").trim(),
         botol: String(item.botol || "").trim(),
+        qtyBotolPerKardus: Number(item.qtyBotolPerKardus) || 0,
         qtyFilling: qty,
         qtyPressTerpakai: 0,
         remaining: qty,
@@ -1076,6 +1097,7 @@
           qtyFilling: 0,
           qtyPressTerpakai: 0,
           remaining: 0,
+          qtyBotolPerKardusValues: new Set(),
           sources: new Set()
         });
       }
@@ -1085,12 +1107,15 @@
       group.qtyFilling += Number(lot.qtyFilling) || 0;
       group.qtyPressTerpakai += Number(lot.qtyPressTerpakai) || 0;
       group.remaining += Number(lot.remaining) || 0;
+      const qtyPerKardus = Number(lot.qtyBotolPerKardus) || 0;
+      if (qtyPerKardus > 0) group.qtyBotolPerKardusValues.add(qtyPerKardus);
       group.sources.add(lot.source || "spreadsheet");
     });
 
     return Array.from(grouped.values())
       .map(group => ({
         ...group,
+        qtyBotolPerKardus: Array.from(group.qtyBotolPerKardusValues).sort((a, b) => a - b),
         source: group.sources.size > 1 ? "mixed" : Array.from(group.sources)[0],
         hasPreview: group.sources.has("preview"),
         hasSpreadsheet: group.sources.has("spreadsheet")
@@ -1156,6 +1181,7 @@
         <td><strong>${esc(row.tanggalAsal || "—")}</strong></td>
         <td>${esc(row.produk)}${!produkAktif ? '<div class="press-master-history">Produk historis</div>' : ""}</td>
         <td>${esc(row.botol || "—")}${!botolAktif ? '<div class="press-master-history">Botol historis</div>' : ""}</td>
+        <td>${row.qtyBotolPerKardus.length ? row.qtyBotolPerKardus.map(value => Number(value).toLocaleString("id-ID")).join(" / ") : "—"}</td>
         <td>${Number(row.qtyFilling).toLocaleString("id-ID")}</td>
         <td>${Number(row.qtyPressTerpakai).toLocaleString("id-ID")}</td>
         <td><strong>${Number(row.remaining).toLocaleString("id-ID")}</strong></td>
@@ -1172,7 +1198,7 @@
         </td>
       </tr>`;
     }).join("")
-      : `<tr><td colspan="8" class="empty-row">${query ? "Nama produk tidak ditemukan." : "Tidak ada sisa Filling yang menunggu Press."}</td></tr>`;
+      : `<tr><td colspan="9" class="empty-row">${query ? "Nama produk tidak ditemukan." : "Tidak ada sisa Filling yang menunggu Press."}</td></tr>`;
 
     const remainingTotal = rows.reduce((sum, row) => sum + (Number(row.remaining) || 0), 0);
     const from = rows.length ? start + 1 : 0;
@@ -1585,30 +1611,23 @@
       toast("Data ditambahkan ke preview. Belum disimpan ke Spreadsheet.");
     });
 
-    const searchOperator = qs(".f-search-operator", section);
-    const searchDate = qs(".f-search-date", section);
+    const searchKeyword = qs(".f-search-keyword", section);
     const resetSearch = qs(".f-search-reset", section);
 
-    searchOperator.addEventListener("input", () => {
-      state.search[line].operator = searchOperator.value.trim();
+    searchKeyword.addEventListener("input", () => {
+      state.search[line].query = searchKeyword.value.trim();
       state.pages[line] = 1;
       renderPreview(line);
     });
-    searchOperator.addEventListener("change", () => {
-      state.search[line].operator = searchOperator.value.trim();
-      state.pages[line] = 1;
-      renderPreview(line);
-    });
-    searchDate.addEventListener("change", () => {
-      state.search[line].date = searchDate.value;
+    searchKeyword.addEventListener("change", () => {
+      state.search[line].query = searchKeyword.value.trim();
       state.pages[line] = 1;
       renderPreview(line);
     });
     resetSearch.addEventListener("click", () => {
-      state.search[line] = { operator: "", date: "" };
+      state.search[line] = { query: "" };
       state.pages[line] = 1;
-      searchOperator.value = "";
-      searchDate.value = "";
+      searchKeyword.value = "";
       renderPreview(line);
     });
 
