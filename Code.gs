@@ -22,20 +22,19 @@ const APP = {
     USERS: 'Users',
     SESSIONS: 'Sessions',
     ENTRIES: 'Pengerjaan',
-    PRESS_REMAINDER: 'Sisa Press'
+    PRESS_ADJUSTMENTS: 'Penutupan Press',
+    PRESS_REMAINDERS: 'Sisa Press'
   },
   ENTRY_HEADERS: [
     'id', 'reportId', 'tab', 'tanggal', 'operator', 'produk', 'botol',
     'qtyKardus', 'qtyBotolPerKardus', 'totalQty', 'botolPecahJenis',
     'qtyBotolPecah', 'createdBy', 'createdByName', 'createdAt', 'updatedAt',
-    'tanggalAsalPress', 'keterangan'
-  ],
-  PRESS_REMAINDER_HEADERS: [
-    'id', 'sourceFillingId', 'tanggalFilling', 'produk', 'botol',
-    'qtyFilling', 'qtyTerpress', 'qtySisa', 'status', 'createdAt', 'updatedAt'
+    'sisaPressTanggalAsal', 'keterangan'
   ],
   USER_HEADERS: ['username', 'passwordHash', 'name', 'role', 'active', 'createdAt'],
-  SESSION_HEADERS: ['token', 'username', 'expiresAt', 'createdAt']
+  SESSION_HEADERS: ['token', 'username', 'expiresAt', 'createdAt'],
+  PRESS_ADJUSTMENT_HEADERS: ['id', 'tanggal', 'produk', 'botol', 'qtyDitutup', 'alasan', 'closedBy', 'closedByName', 'createdAt'],
+  PRESS_REMAINDER_HEADERS: ['id', 'tanggalAsal', 'produk', 'botol', 'qtyFilling', 'qtyPressTerpakai', 'qtyDitutup', 'sisaQty', 'status', 'updatedAt']
 };
 
 function setupSpreadsheet() {
@@ -48,7 +47,8 @@ function setupSpreadsheet() {
   const users = ensureSheet_(ss, APP.SHEETS.USERS, APP.USER_HEADERS);
   ensureSheet_(ss, APP.SHEETS.SESSIONS, APP.SESSION_HEADERS);
   ensureSheet_(ss, APP.SHEETS.ENTRIES, APP.ENTRY_HEADERS);
-  ensureSheet_(ss, APP.SHEETS.PRESS_REMAINDER, APP.PRESS_REMAINDER_HEADERS);
+  ensureSheet_(ss, APP.SHEETS.PRESS_ADJUSTMENTS, APP.PRESS_ADJUSTMENT_HEADERS);
+  ensureSheet_(ss, APP.SHEETS.PRESS_REMAINDERS, APP.PRESS_REMAINDER_HEADERS);
 
   if (master.getLastRow() < 2) {
     master.getRange(2, 1, 3, 3).setValues([
@@ -65,7 +65,10 @@ function setupSpreadsheet() {
     ]);
   }
 
-  return 'Setup selesai. Demo login: admin / admin123 / Super User.';
+  // Bangun saldo sisa dari data Pengerjaan lama agar langsung kompatibel.
+  rebuildPressRemainders_();
+
+  return 'Setup selesai. Sheet Sisa Press aktif dan saldo Filling → Press sudah dibangun ulang.';
 }
 
 function doGet(e) {
@@ -78,7 +81,6 @@ function doGet(e) {
 
     if (action === 'bootstrap') {
       const session = requireSession_(param_(e, 'token'));
-      // Bootstrap sengaja ringan agar halaman input cepat siap.
       return json_({
         ok: true,
         user: publicUser_(session.user),
@@ -88,11 +90,11 @@ function doGet(e) {
 
     if (action === 'appdata') {
       const session = requireSession_(param_(e, 'token'));
-      const pressRemainders = rebuildPressRemainders_();
       return json_({
         ok: true,
         entries: getEntries_(),
-        pressRemainders: pressRemainders,
+        adjustments: getPressAdjustments_(),
+        remainders: getPressRemainders_(),
         users: session.user.role === 'superuser' ? getUsers_() : []
       });
     }
@@ -107,7 +109,6 @@ function doPost(e) {
   try {
     const action = param_(e, 'action');
 
-    // Login/logout tidak perlu menahan global lock untuk seluruh request.
     if (action === 'login') return handleLogin_(e);
 
     if (action === 'logout') {
@@ -116,40 +117,34 @@ function doPost(e) {
       return json_({ ok: true });
     }
 
-    // requireSession_ memakai cache, jadi tambah data tidak membaca sheet Sessions setiap kali.
     const session = requireSession_(param_(e, 'token'));
 
     switch (action) {
       case 'entry.create':
         return withWriteLock_(function () {
           const entry = createEntry_(session.user, parseJsonParam_(e, 'data'));
-          const pressRemainders = rebuildPressRemainders_();
-          const refreshed = findEntryRow_(entry.id);
-          return json_({
-            ok: true,
-            entry: refreshed ? rowToEntry_(refreshed.values) : entry,
-            pressRemainders: pressRemainders
-          });
+          return json_({ ok: true, entry: entry, remainders: getPressRemainders_() });
         });
 
       case 'entry.update':
         return withWriteLock_(function () {
           const entry = updateEntry_(session.user, param_(e, 'id'), parseJsonParam_(e, 'data'));
-          const pressRemainders = rebuildPressRemainders_();
-          const refreshed = findEntryRow_(entry.id);
-          return json_({
-            ok: true,
-            entry: refreshed ? rowToEntry_(refreshed.values) : entry,
-            pressRemainders: pressRemainders
-          });
+          return json_({ ok: true, entry: entry, remainders: getPressRemainders_() });
         });
 
       case 'entry.delete':
         requireSuperuser_(session.user);
         return withWriteLock_(function () {
           deleteEntry_(param_(e, 'id'));
-          const pressRemainders = rebuildPressRemainders_();
-          return json_({ ok: true, pressRemainders: pressRemainders });
+          return json_({ ok: true, remainders: getPressRemainders_() });
+        });
+
+      // Dipertahankan untuk kompatibilitas data/versi lama.
+      case 'press.adjustment.close':
+        return withWriteLock_(function () {
+          const adjustment = closePressRemainder_(session.user, parseJsonParam_(e, 'data'));
+          rebuildPressRemainders_();
+          return json_({ ok: true, adjustment: adjustment, remainders: getPressRemainders_() });
         });
 
       case 'master.add':
@@ -363,8 +358,6 @@ function createEntry_(user, data) {
   const createdAt = new Date();
   const line = data.line === 'press' ? 'press' : 'filling';
 
-  // clientRequestId membuat optimistic save idempotent. Jika browser timeout
-  // lalu user menekan Coba Lagi, baris yang sama tidak dibuat dua kali.
   const requestedId = String(data.clientRequestId || '').trim();
   const validRequestedId = /^[A-Za-z0-9-]{16,100}$/.test(requestedId) ? requestedId : '';
 
@@ -383,10 +376,6 @@ function createEntry_(user, data) {
   const qtyBotol = number_(data.qtyBotolPerKardus);
   const qtyPecah = number_(data.qtyBotolPecah);
 
-  if (line === 'press') {
-    validatePressAvailability_(data, qtyKardus * qtyBotol);
-  }
-
   const entry = {
     id: id,
     reportId: reportId,
@@ -404,12 +393,18 @@ function createEntry_(user, data) {
     createdByName: user.name,
     createdAt: createdAt.toISOString(),
     updatedAt: createdAt.toISOString(),
-    tanggalAsalPress: '',
+    sisaPressTanggalAsal: '',
     keterangan: ''
   };
 
-  sheet_(APP.SHEETS.ENTRIES).appendRow(entryToRow_(entry));
-  return entry;
+  // Balance Press dihitung berdasarkan Nama Produk dan tidak boleh memakai Filling tanggal setelah Press.
+  assertProjectedBalance_([entry], '');
+
+  entrySheet_().appendRow(entryToRow_(entry));
+  rebuildPressRemainders_();
+
+  const saved = findEntryRow_(id);
+  return saved ? rowToEntry_(saved.values) : entry;
 }
 
 function updateEntry_(user, id, data) {
@@ -443,22 +438,35 @@ function updateEntry_(user, id, data) {
     createdByName: existing.createdByName,
     createdAt: existing.createdAt,
     updatedAt: new Date().toISOString(),
-    tanggalAsalPress: existing.tanggalAsalPress || '',
-    keterangan: existing.keterangan || ''
+    sisaPressTanggalAsal: '',
+    keterangan: ''
   };
 
-  sheet_(APP.SHEETS.ENTRIES).getRange(found.row, 1, 1, APP.ENTRY_HEADERS.length).setValues([entryToRow_(updated)]);
-  return updated;
+  assertProjectedBalance_([existing, updated], existing.id);
+
+  entrySheet_().getRange(found.row, 1, 1, APP.ENTRY_HEADERS.length).setValues([entryToRow_(updated)]);
+  rebuildPressRemainders_();
+
+  const saved = findEntryRow_(id);
+  return saved ? rowToEntry_(saved.values) : updated;
 }
 
 function deleteEntry_(id) {
   const found = findEntryRow_(id);
   if (!found) throw new Error('Data tidak ditemukan.');
-  sheet_(APP.SHEETS.ENTRIES).deleteRow(found.row);
+
+  const existing = rowToEntry_(found.values);
+
+  // Simulasikan kondisi setelah baris dihapus. Filling tidak boleh dihapus
+  // bila menyebabkan Qty Press historis menjadi lebih besar daripada Filling.
+  assertProjectedBalance_([existing], existing.id);
+
+  entrySheet_().deleteRow(found.row);
+  rebuildPressRemainders_();
 }
 
 function getEntries_() {
-  const sh = sheet_(APP.SHEETS.ENTRIES);
+  const sh = entrySheet_();
   const values = sh.getDataRange().getValues();
   const result = [];
   for (let i = 1; i < values.length; i++) {
@@ -468,7 +476,7 @@ function getEntries_() {
 }
 
 function findEntryRow_(id) {
-  const sh = sheet_(APP.SHEETS.ENTRIES);
+  const sh = entrySheet_();
   const values = sh.getDataRange().getValues();
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][0]) === String(id)) return { row: i + 1, values: values[i] };
@@ -481,7 +489,7 @@ function entryToRow_(e) {
     e.id, e.reportId, e.tab, e.tanggal, e.operator, e.produk, e.botol,
     e.qtyKardus, e.qtyBotolPerKardus, e.totalQty, e.botolPecahJenis,
     e.qtyBotolPecah, e.createdBy, e.createdByName, e.createdAt, e.updatedAt,
-    e.tanggalAsalPress || '', e.keterangan || ''
+    e.sisaPressTanggalAsal || '', e.keterangan || ''
   ];
 }
 
@@ -503,190 +511,440 @@ function rowToEntry_(row) {
     createdByName: String(row[13] || ''),
     createdAt: isoCell_(row[14]),
     updatedAt: isoCell_(row[15]),
-    tanggalAsalPress: String(row[16] || ''),
+    sisaPressTanggalAsal: String(row[16] || ''),
     keterangan: String(row[17] || '')
   };
 }
 
+function validateEntry_(data) {
+  if (!data) throw new Error('Data pengerjaan kosong.');
+  if (data.line !== 'filling' && data.line !== 'press') throw new Error('Line pengerjaan tidak valid.');
+  if (!data.operator || !data.produk || !data.botol) throw new Error('Operator, Produk, dan Botol wajib diisi.');
 
-function normalizeProductKey_(value) {
-  return String(value || '').trim().toLowerCase();
-}
+  // Jangan percaya input browser. Semua nilai wajib benar-benar ada di sheet Master.
+  data.operator = canonicalMasterValue_(getMaster_().operator, data.operator, 'Operator');
+  data.produk = canonicalMasterValue_(getMaster_().produk, data.produk, 'Produk');
+  data.botol = canonicalMasterValue_(getMaster_().botol, data.botol, 'Botol');
 
-function validatePressAvailability_(data, requestedQty) {
-  const qty = number_(requestedQty);
-  if (qty <= 0) throw new Error('Qty Press harus lebih dari 0.');
-
-  const productKey = normalizeProductKey_(data.produk);
-  const pressDate = String(data.tanggal || '');
-  if (!productKey || !pressDate) throw new Error('Produk dan tanggal Press wajib diisi.');
-
-  const entries = getEntries_();
-  let fillingQty = 0;
-  let pressQty = 0;
-
-  entries.forEach(function (entry) {
-    if (normalizeProductKey_(entry.produk) !== productKey) return;
-    if (!entry.tanggal || entry.tanggal > pressDate) return;
-    if (entry.tab === 'filling') fillingQty += number_(entry.totalQty);
-    if (entry.tab === 'press') pressQty += number_(entry.totalQty);
-  });
-
-  const available = Math.max(0, fillingQty - pressQty);
-  if (qty > available) {
-    throw new Error(
-      'Qty Press untuk produk "' + String(data.produk) + '" melebihi Filling yang tersedia. ' +
-      'Tersedia: ' + available + ' botol, diminta: ' + qty + ' botol.'
-    );
+  const qtyKardusRaw = Number(data.qtyKardus);
+  const qtyBotolRaw = Number(data.qtyBotolPerKardus);
+  const qtyPecahRaw = Number(data.qtyBotolPecah || 0);
+  if (!isFinite(qtyKardusRaw) || !isFinite(qtyBotolRaw) || !isFinite(qtyPecahRaw)) {
+    throw new Error('Qty harus berupa angka yang valid.');
   }
+  if (qtyKardusRaw < 0 || qtyBotolRaw < 0 || qtyPecahRaw < 0) {
+    throw new Error('Qty tidak boleh negatif.');
+  }
+  if (data.line === 'press' && qtyKardusRaw * qtyBotolRaw <= 0) {
+    throw new Error('Total Qty Press harus lebih dari 0 botol.');
+  }
+
+  // Jenis botol pecah selalu mengikuti botol yang sedang dikerjakan.
+  data.botolPecahJenis = data.botol;
 }
 
-function rebuildPressRemainders_() {
-  ensurePressFeatureSheets_();
-  const entries = getEntries_();
-  const ordered = entries.slice().sort(function (a, b) {
-    const dateCompare = String(a.tanggal || '').localeCompare(String(b.tanggal || ''));
-    if (dateCompare !== 0) return dateCompare;
-    return String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
-  });
+function canonicalMasterValue_(list, value, label) {
+  const target = String(value || '').trim().toLowerCase();
+  const values = (list || []).map(function (item) { return String(item || '').trim(); }).filter(String);
+  for (let i = 0; i < values.length; i++) {
+    if (values[i].toLowerCase() === target) return values[i];
+  }
+  throw new Error(label + ' "' + String(value || '').trim() + '" tidak tersedia di data Master.');
+}
 
-  const sourcesByProduct = {};
-  const pressNotes = {};
+function balanceKey_(produk, botol) {
+  return String(produk || '').trim().toLowerCase() + '||' + String(botol || '').trim().toLowerCase();
+}
 
-  ordered.forEach(function (entry) {
-    const key = normalizeProductKey_(entry.produk);
-    if (!key) return;
-    if (!sourcesByProduct[key]) sourcesByProduct[key] = [];
+function productKey_(produk) {
+  return String(produk || '').trim().toLowerCase();
+}
 
-    if (entry.tab === 'filling') {
-      sourcesByProduct[key].push({
-        id: entry.id,
-        sourceFillingId: entry.id,
-        tanggalFilling: entry.tanggal,
-        produk: entry.produk,
-        botol: entry.botol,
+function entrySheet_() {
+  const ss = spreadsheet_();
+  let sh = ss.getSheetByName(APP.SHEETS.ENTRIES);
+  if (!sh || sh.getMaxColumns() < APP.ENTRY_HEADERS.length) {
+    sh = ensureSheet_(ss, APP.SHEETS.ENTRIES, APP.ENTRY_HEADERS);
+  } else {
+    // Pastikan header tambahan untuk versi baru terpasang tanpa menggeser data lama.
+    sh.getRange(1, 1, 1, APP.ENTRY_HEADERS.length).setValues([APP.ENTRY_HEADERS]);
+  }
+  return sh;
+}
+
+function pressRemainderSheet_(createIfMissing) {
+  const ss = spreadsheet_();
+  let sh = ss.getSheetByName(APP.SHEETS.PRESS_REMAINDERS);
+  if (!sh && createIfMissing) {
+    sh = ensureSheet_(ss, APP.SHEETS.PRESS_REMAINDERS, APP.PRESS_REMAINDER_HEADERS);
+  }
+  return sh || null;
+}
+
+function compareWorkChronology_(a, b) {
+  const byDate = String(a.tanggal || a.tanggalAsal || '').localeCompare(String(b.tanggal || b.tanggalAsal || ''));
+  if (byDate) return byDate;
+  const byCreated = String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+  if (byCreated) return byCreated;
+  return String(a.id || '').localeCompare(String(b.id || ''));
+}
+
+function formatTanggalIndonesia_(dateText) {
+  const text = String(dateText || '');
+  const parts = text.split('-');
+  if (parts.length !== 3) return text;
+  const months = ['Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'];
+  const month = months[Number(parts[1]) - 1];
+  if (!month) return text;
+  return Number(parts[2]) + ' ' + month + ' ' + parts[0];
+}
+
+function buildPressAllocationModel_(entries, adjustments) {
+  const fillingLots = (entries || [])
+    .filter(function (entry) { return entry.tab === 'filling' && number_(entry.totalQty) > 0; })
+    .slice()
+    .sort(compareWorkChronology_)
+    .map(function (entry) {
+      return {
+        id: String(entry.id),
+        tanggalAsal: String(entry.tanggal || ''),
+        produk: String(entry.produk || '').trim(),
+        botol: String(entry.botol || '').trim(),
         qtyFilling: number_(entry.totalQty),
-        qtySisa: number_(entry.totalQty),
-        createdAt: entry.createdAt || '',
-        updatedAt: new Date().toISOString()
-      });
-      return;
-    }
+        qtyPressTerpakai: 0,
+        qtyDitutup: 0,
+        remaining: number_(entry.totalQty),
+        createdAt: String(entry.createdAt || '')
+      };
+    });
 
-    if (entry.tab !== 'press') return;
-
-    let needed = number_(entry.totalQty);
-    const usedDates = [];
-    const queue = sourcesByProduct[key];
-
-    for (let i = 0; i < queue.length && needed > 0; i++) {
-      const source = queue[i];
-      if (source.qtySisa <= 0) continue;
-      if (source.tanggalFilling > entry.tanggal) continue;
-
-      const take = Math.min(source.qtySisa, needed);
-      if (take <= 0) continue;
-      source.qtySisa -= take;
-      needed -= take;
-      if (usedDates.indexOf(source.tanggalFilling) < 0) usedDates.push(source.tanggalFilling);
-    }
-
-    const oldDates = usedDates.filter(function (d) { return d && d < entry.tanggal; });
-    let note = '';
-    if (oldDates.length) {
-      note = 'Sisa tinggalan Press tanggal ' + oldDates.map(formatDateId_).join(', ');
-    } else if (usedDates.length) {
-      note = 'Press dari Filling tanggal ' + usedDates.map(formatDateId_).join(', ');
-    }
-    if (needed > 0) {
-      note += (note ? ' | ' : '') + 'PERINGATAN: kekurangan referensi Filling ' + needed + ' botol';
-    }
-
-    pressNotes[entry.id] = {
-      tanggalAsalPress: usedDates.join(', '),
-      keterangan: note
-    };
+  const lotsByProduct = {};
+  fillingLots.forEach(function (lot) {
+    const key = productKey_(lot.produk);
+    if (!lotsByProduct[key]) lotsByProduct[key] = [];
+    lotsByProduct[key].push(lot);
   });
 
-  // Update kolom referensi/keterangan pada Sheet Pengerjaan.
-  const entrySheet = sheet_(APP.SHEETS.ENTRIES);
-  const raw = entrySheet.getDataRange().getValues();
-  if (raw.length > 1) {
-    const notes = [];
-    for (let i = 1; i < raw.length; i++) {
-      const id = String(raw[i][0] || '');
-      const tab = String(raw[i][2] || '');
-      const info = tab === 'press' ? (pressNotes[id] || { tanggalAsalPress: '', keterangan: '' }) : { tanggalAsalPress: '', keterangan: '' };
-      notes.push([info.tanggalAsalPress, info.keterangan]);
-    }
-    entrySheet.getRange(2, 17, notes.length, 2).setValues(notes);
-  }
-
-  const remainders = [];
-  Object.keys(sourcesByProduct).forEach(function (key) {
-    sourcesByProduct[key].forEach(function (source) {
-      const qtySisa = Math.max(0, number_(source.qtySisa));
-      if (qtySisa <= 0) return;
-      const qtyTerpress = Math.max(0, number_(source.qtyFilling) - qtySisa);
-      remainders.push({
-        id: 'SISA-' + source.sourceFillingId,
-        sourceFillingId: source.sourceFillingId,
-        tanggalFilling: source.tanggalFilling,
-        produk: source.produk,
-        botol: source.botol,
-        qtyFilling: number_(source.qtyFilling),
-        qtyTerpress: qtyTerpress,
-        qtySisa: qtySisa,
-        status: 'MENUNGGU PRESS',
-        createdAt: source.createdAt,
-        updatedAt: new Date().toISOString()
-      });
+  const events = [];
+  (entries || []).forEach(function (entry) {
+    if (entry.tab !== 'press' || number_(entry.totalQty) <= 0) return;
+    events.push({
+      type: 'press',
+      id: String(entry.id),
+      tanggal: String(entry.tanggal || ''),
+      produk: String(entry.produk || '').trim(),
+      qty: number_(entry.totalQty),
+      createdAt: String(entry.createdAt || '')
+    });
+  });
+  (adjustments || []).forEach(function (adjustment) {
+    if (number_(adjustment.qtyDitutup) <= 0) return;
+    events.push({
+      type: 'closed',
+      id: String(adjustment.id),
+      tanggal: String(adjustment.tanggal || ''),
+      produk: String(adjustment.produk || '').trim(),
+      qty: number_(adjustment.qtyDitutup),
+      createdAt: String(adjustment.createdAt || '')
     });
   });
 
-  remainders.sort(function (a, b) {
-    const dateCompare = String(a.tanggalFilling).localeCompare(String(b.tanggalFilling));
-    if (dateCompare !== 0) return dateCompare;
-    return String(a.produk).localeCompare(String(b.produk));
+  events.sort(compareWorkChronology_);
+
+  const pressMeta = {};
+  const overflow = [];
+
+  events.forEach(function (event) {
+    let needed = number_(event.qty);
+    const lots = lotsByProduct[productKey_(event.produk)] || [];
+    const consumed = [];
+
+    for (let i = 0; i < lots.length && needed > 0; i++) {
+      const lot = lots[i];
+      // Press tanggal 20 tidak boleh memakai Filling tanggal 21.
+      if (lot.tanggalAsal && event.tanggal && lot.tanggalAsal > event.tanggal) continue;
+      if (lot.remaining <= 0) continue;
+
+      const used = Math.min(needed, lot.remaining);
+      lot.remaining -= used;
+      needed -= used;
+
+      if (event.type === 'press') {
+        lot.qtyPressTerpakai += used;
+        consumed.push({ tanggalAsal: lot.tanggalAsal, qty: used, lotId: lot.id });
+      } else {
+        lot.qtyDitutup += used;
+      }
+    }
+
+    if (event.type === 'press') {
+      const carryDates = unique_(consumed
+        .filter(function (item) { return item.tanggalAsal && item.tanggalAsal < event.tanggal; })
+        .map(function (item) { return item.tanggalAsal; }));
+
+      pressMeta[event.id] = {
+        tanggalAsal: carryDates.join(', '),
+        keterangan: carryDates.length
+          ? 'Sisa tinggalan Press tanggal ' + carryDates.map(formatTanggalIndonesia_).join(', ')
+          : ''
+      };
+    }
+
+    if (needed > 0) {
+      overflow.push({
+        id: event.id,
+        type: event.type,
+        tanggal: event.tanggal,
+        produk: event.produk,
+        kurang: needed
+      });
+    }
   });
 
-  writePressRemainders_(remainders);
-  return remainders;
+  const remainders = fillingLots
+    .filter(function (lot) { return lot.remaining > 0; })
+    .map(function (lot) {
+      return {
+        id: lot.id,
+        tanggalAsal: lot.tanggalAsal,
+        produk: lot.produk,
+        botol: lot.botol,
+        qtyFilling: lot.qtyFilling,
+        qtyPressTerpakai: lot.qtyPressTerpakai,
+        qtyDitutup: lot.qtyDitutup,
+        sisaQty: lot.remaining,
+        status: 'MENUNGGU PRESS',
+        updatedAt: new Date().toISOString()
+      };
+    });
+
+  return { remainders: remainders, pressMeta: pressMeta, overflow: overflow };
 }
 
-function ensurePressFeatureSheets_() {
-  const ss = spreadsheet_();
-  ensureSheet_(ss, APP.SHEETS.ENTRIES, APP.ENTRY_HEADERS);
-  ensureSheet_(ss, APP.SHEETS.PRESS_REMAINDER, APP.PRESS_REMAINDER_HEADERS);
-}
+function rebuildPressRemainders_() {
+  const entries = getEntries_();
+  const model = buildPressAllocationModel_(entries, getPressAdjustments_());
+  const sh = pressRemainderSheet_(true);
 
-function writePressRemainders_(rows) {
-  const sh = sheet_(APP.SHEETS.PRESS_REMAINDER);
-  const lastRow = sh.getLastRow();
-  if (lastRow > 1) sh.getRange(2, 1, lastRow - 1, APP.PRESS_REMAINDER_HEADERS.length).clearContent();
-  if (!rows.length) return;
-
-  const values = rows.map(function (r) {
-    return [
-      r.id, r.sourceFillingId, r.tanggalFilling, r.produk, r.botol,
-      r.qtyFilling, r.qtyTerpress, r.qtySisa, r.status, r.createdAt, r.updatedAt
-    ];
-  });
-  sh.getRange(2, 1, values.length, APP.PRESS_REMAINDER_HEADERS.length).setValues(values);
-}
-
-function formatDateId_(dateText) {
-  const parts = String(dateText || '').split('-');
-  if (parts.length === 3) return parts[2] + '-' + parts[1] + '-' + parts[0];
-  return String(dateText || '');
-}
-
-function validateEntry_(data) {
-  if (!data) throw new Error('Data pengerjaan kosong.');
-  if (!data.operator || !data.produk || !data.botol) throw new Error('Operator, Produk, dan Botol wajib diisi.');
-  if (number_(data.qtyKardus) < 0 || number_(data.qtyBotolPerKardus) < 0 || number_(data.qtyBotolPecah) < 0) {
-    throw new Error('Qty tidak boleh negatif.');
+  if (sh.getLastRow() > 1) {
+    sh.getRange(2, 1, sh.getLastRow() - 1, APP.PRESS_REMAINDER_HEADERS.length).clearContent();
   }
+
+  if (model.remainders.length) {
+    const rows = model.remainders.map(function (item) {
+      return [
+        item.id, item.tanggalAsal, item.produk, item.botol,
+        item.qtyFilling, item.qtyPressTerpakai, item.qtyDitutup,
+        item.sisaQty, item.status, item.updatedAt
+      ];
+    });
+    sh.getRange(2, 1, rows.length, APP.PRESS_REMAINDER_HEADERS.length).setValues(rows);
+  }
+
+  // Update dua kolom terakhir Sheet Pengerjaan secara batch.
+  // Filling dikosongkan; Press akan memperoleh keterangan bila memakai sisa hari sebelumnya.
+  const entrySh = entrySheet_();
+  if (entrySh.getLastRow() > 1) {
+    const idsAndTabs = entrySh.getRange(2, 1, entrySh.getLastRow() - 1, 3).getValues();
+    const noteRows = idsAndTabs.map(function (row) {
+      const id = String(row[0] || '');
+      const tab = String(row[2] || '');
+      const meta = tab === 'press' ? model.pressMeta[id] : null;
+      return [meta ? meta.tanggalAsal : '', meta ? meta.keterangan : ''];
+    });
+    entrySh.getRange(2, 17, noteRows.length, 2).setValues(noteRows);
+  }
+
+  return model.remainders;
+}
+
+function getPressRemainders_() {
+  let sh = pressRemainderSheet_(false);
+
+  // Migrasi otomatis untuk deployment lama yang belum memiliki Sheet Sisa Press.
+  if (!sh) return rebuildPressRemainders_();
+
+  const values = sh.getDataRange().getValues();
+  const result = [];
+  for (let i = 1; i < values.length; i++) {
+    if (!values[i][0]) continue;
+    result.push({
+      id: String(values[i][0] || ''),
+      tanggalAsal: formatDateCell_(values[i][1]),
+      produk: String(values[i][2] || ''),
+      botol: String(values[i][3] || ''),
+      qtyFilling: number_(values[i][4]),
+      qtyPressTerpakai: number_(values[i][5]),
+      qtyDitutup: number_(values[i][6]),
+      sisaQty: number_(values[i][7]),
+      status: String(values[i][8] || ''),
+      updatedAt: isoCell_(values[i][9])
+    });
+  }
+
+  // Bila baru migrasi dan sheet masih kosong sementara data Filling lama ada, bangun sekali.
+  if (!result.length) {
+    const hasFilling = getEntries_().some(function (entry) {
+      return entry.tab === 'filling' && number_(entry.totalQty) > 0;
+    });
+    if (hasFilling) return rebuildPressRemainders_();
+  }
+
+  return result;
+}
+
+
+/**
+ * Memastikan saldo Press tidak pernah melampaui Filling.
+ * candidates dipakai untuk menentukan kombinasi Produk+Botol yang terdampak.
+ * existingId dilewati dari data sheet, lalu candidate terakhir (jika berbeda)
+ * diproyeksikan sebagai nilai baru.
+ */
+function assertProjectedBalance_(candidates, existingId) {
+  let entries = getEntries_().filter(function (entry) {
+    return !existingId || String(entry.id) !== String(existingId);
+  });
+
+  const projected = (candidates || []).length ? candidates[candidates.length - 1] : null;
+
+  // CREATE: masukkan candidate.
+  // UPDATE: existing dibuang lalu versi updated dimasukkan.
+  // DELETE: candidates hanya berisi existing, sehingga tidak dimasukkan lagi.
+  if (projected && (!existingId || (candidates || []).length > 1)) {
+    entries.push(projected);
+  }
+
+  const model = buildPressAllocationModel_(entries, getPressAdjustments_());
+  if (!model.overflow.length) return;
+
+  const overflow = projected && projected.tab === 'press'
+    ? model.overflow.find(function (item) { return String(item.id) === String(projected.id); }) || model.overflow[0]
+    : model.overflow[0];
+
+  throw new Error(
+    'Qty Press melebihi Qty Filling yang tersedia untuk produk ' + overflow.produk +
+    ' pada tanggal ' + overflow.tanggal + '. Kekurangan ' +
+    number_(overflow.kurang) + ' botol. Balance dihitung berdasarkan Nama Produk dan FIFO tanggal Filling.'
+  );
+}
+
+function pressAdjustmentSheet_(createIfMissing) {
+  const ss = spreadsheet_();
+  let sh = ss.getSheetByName(APP.SHEETS.PRESS_ADJUSTMENTS);
+  if (!sh && createIfMissing) {
+    sh = ensureSheet_(ss, APP.SHEETS.PRESS_ADJUSTMENTS, APP.PRESS_ADJUSTMENT_HEADERS);
+  }
+  return sh || null;
+}
+
+function getPressAdjustments_() {
+  const sh = pressAdjustmentSheet_(false);
+  if (!sh) return [];
+  const values = sh.getDataRange().getValues();
+  const result = [];
+  for (let i = 1; i < values.length; i++) {
+    if (!values[i][0]) continue;
+    result.push({
+      id: String(values[i][0] || ''),
+      tanggal: formatDateCell_(values[i][1]),
+      produk: String(values[i][2] || ''),
+      botol: String(values[i][3] || ''),
+      qtyDitutup: number_(values[i][4]),
+      alasan: String(values[i][5] || ''),
+      closedBy: String(values[i][6] || ''),
+      closedByName: String(values[i][7] || ''),
+      createdAt: isoCell_(values[i][8])
+    });
+  }
+  return result;
+}
+
+function pressBalanceForKey_(produk, botol) {
+  const key = balanceKey_(produk, botol);
+  let filling = 0;
+  let press = 0;
+  let closed = 0;
+
+  getEntries_().forEach(function (entry) {
+    if (balanceKey_(entry.produk, entry.botol) !== key) return;
+    if (entry.tab === 'filling') filling += number_(entry.totalQty);
+    if (entry.tab === 'press') press += number_(entry.totalQty);
+  });
+
+  getPressAdjustments_().forEach(function (adjustment) {
+    if (balanceKey_(adjustment.produk, adjustment.botol) === key) {
+      closed += number_(adjustment.qtyDitutup);
+    }
+  });
+
+  return { filling: filling, press: press, closed: closed, remaining: filling - press - closed };
+}
+
+function historicalPressBalancePair_(produkInput, botolInput) {
+  const produkRaw = String(produkInput || '').trim();
+  const botolRaw = String(botolInput || '').trim();
+  if (!produkRaw || !botolRaw) {
+    throw new Error('Produk dan Botol untuk penutupan sisa Press wajib diisi.');
+  }
+
+  const key = balanceKey_(produkRaw, botolRaw);
+  const entries = getEntries_();
+
+  // Penutupan adalah tindakan atas saldo historis, jadi referensi yang sah
+  // adalah data Filling yang memang pernah tersimpan — bukan Master saat ini.
+  // Ini memungkinkan produk/botol lama tetap ditutup setelah dihapus dari Master,
+  // tetapi mencegah request membuat penutupan untuk kombinasi fiktif.
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (entry.tab === 'filling' && balanceKey_(entry.produk, entry.botol) === key) {
+      return {
+        produk: String(entry.produk || '').trim(),
+        botol: String(entry.botol || '').trim()
+      };
+    }
+  }
+
+  throw new Error('Data Filling historis untuk ' + produkRaw + ' / ' + botolRaw + ' tidak ditemukan.');
+}
+
+function closePressRemainder_(user, data) {
+  if (!data) throw new Error('Data penutupan sisa Press kosong.');
+
+  // JANGAN validasi ke Master di sini. Master hanya membatasi INPUT BARU.
+  // Tutup Sisa harus tetap dapat memproses saldo historis yang produknya
+  // sudah dihapus dari Master.
+  const historicalPair = historicalPressBalancePair_(data.produk, data.botol);
+  const produk = historicalPair.produk;
+  const botol = historicalPair.botol;
+  const alasan = String(data.alasan || '').trim();
+  if (alasan.length < 5) throw new Error('Alasan Tutup Sisa wajib diisi minimal 5 karakter.');
+  if (alasan.length > 500) throw new Error('Alasan Tutup Sisa maksimal 500 karakter.');
+
+  const balance = pressBalanceForKey_(produk, botol);
+  if (balance.remaining <= 0) {
+    throw new Error('Sisa Press untuk ' + produk + ' / ' + botol + ' sudah tidak tersedia.');
+  }
+
+  const now = new Date();
+  const adjustment = {
+    id: Utilities.getUuid(),
+    tanggal: Utilities.formatDate(now, Session.getScriptTimeZone() || 'Asia/Jakarta', 'yyyy-MM-dd'),
+    produk: produk,
+    botol: botol,
+    qtyDitutup: balance.remaining,
+    alasan: alasan,
+    closedBy: user.username,
+    closedByName: user.name,
+    createdAt: now.toISOString()
+  };
+
+  const sh = pressAdjustmentSheet_(true);
+  sh.appendRow([
+    adjustment.id, adjustment.tanggal, adjustment.produk, adjustment.botol,
+    adjustment.qtyDitutup, adjustment.alasan, adjustment.closedBy,
+    adjustment.closedByName, adjustment.createdAt
+  ]);
+  return adjustment;
 }
 
 function makeReportId_(line, date) {

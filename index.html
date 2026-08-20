@@ -7,6 +7,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
+
+  <style>
+    
+  </style>
 </head>
 <body data-page="app">
   <div id="appScreen" class="app-shell" hidden>
@@ -68,23 +72,23 @@
               </label>
               <label class="field">
                 <span>Nama Operator</span>
-                <select class="f-operator" required><option value="">— pilih operator —</option></select>
+                <input type="text" class="f-operator master-search-input" data-master="operator" placeholder="Cari operator…" autocomplete="off" required>
               </label>
               <label class="field">
                 <span>Nama Produk</span>
-                <select class="f-produk" required><option value="">— pilih produk —</option></select>
+                <input type="text" class="f-produk master-search-input" data-master="produk" placeholder="Cari produk…" autocomplete="off" required>
               </label>
               <label class="field">
                 <span>Botol yang Digunakan</span>
-                <select class="f-botol" id="botolDigunakan" required><option value="">— pilih jenis botol —</option></select>
-              </label>
-              <label class="field">
-                <span>Qty Pengerjaan (Kardus)</span>
-                <input type="number" min="0" step="1" class="f-qty-kardus mono" required placeholder="0">
+                <input type="text" class="f-botol master-search-input" data-master="botol" placeholder="Cari jenis botol…" autocomplete="off" required>
               </label>
               <label class="field">
                 <span>Qty Botol / Kardus</span>
                 <input type="number" min="0" step="1" class="f-qty-botol mono" required placeholder="0">
+              </label>
+              <label class="field">
+                <span>Qty Pengerjaan (Kardus)</span>
+                <input type="number" min="0" step="1" class="f-qty-kardus mono" required placeholder="0">
               </label>
               <label class="field field-total">
                 <span>Total Qty Botol (otomatis)</span>
@@ -120,7 +124,7 @@
             <div class="search-bar">
               <label class="field field-inline">
                 <span>Cari Operator</span>
-                <select class="f-search-operator"><option value="">Semua operator</option></select>
+                <input type="search" class="f-search-operator master-search-input filter-master-search" data-master="operator" placeholder="Cari operator…" autocomplete="off">
               </label>
               <label class="field field-inline">
                 <span>Cari Tanggal</span>
@@ -189,7 +193,7 @@
             </div>
             <div class="table-wrap">
               <table class="data-table">
-                <thead><tr><th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th><th>Keterangan</th></tr></thead>
+                <thead><tr><th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th></tr></thead>
                 <tbody id="lap-tbody"></tbody>
               </table>
             </div>
@@ -202,7 +206,7 @@
       <section class="view" id="view-master" hidden>
         <div class="master-layout">
           <section class="panel">
-            <div class="panel-head"><h2>Data Master (Dropdown)</h2></div>
+            <div class="panel-head"><h2>Data Master (Sumber Search)</h2></div>
             <p class="hint-text">Sheet <code>Master</code>: kolom A = Nama Operator, kolom B = Nama Produk, kolom C = Nama Botol.</p>
             <div class="form-actions"><button type="button" class="btn btn-secondary" id="masterReload">↻ Muat Ulang</button><button type="button" class="btn btn-ghost" id="masterCsvExport">⭳ Export Master</button></div>
             <div class="master-cols">

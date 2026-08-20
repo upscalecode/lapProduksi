@@ -1,16 +1,30 @@
-UPDATE FILLING -> PRESS BALANCE
+UPDATE: TUTUP SISA PRESS + ALASAN WAJIB
 
-Perubahan utama:
-1. Press membaca availability Filling berdasarkan Nama Produk.
-2. Preview Press tidak boleh melebihi Filling tersimpan + Filling preview.
-3. Press yang bergantung pada Filling preview harus menunggu Filling disimpan dahulu.
-4. Sheet baru "Sisa Press" dibuat/dirapikan otomatis oleh backend.
-5. Sisa Press memakai FIFO tanggal Filling paling lama.
-6. Sheet Pengerjaan mendapat kolom tanggalAsalPress dan keterangan.
-7. Jika tinggalan tanggal sebelumnya dikerjakan hari berikutnya, keterangan otomatis contoh:
-   Sisa tinggalan Press tanggal 20-08-2026
+Perubahan:
+1. Tabel "Sisa Pengerjaan yang Menunggu Press" memiliki tombol:
+   - Gunakan
+   - Tutup Sisa
+2. Saat Tutup Sisa diklik, user WAJIB mengisi alasan minimal 5 karakter.
+3. Jika masih ada Preview Press untuk Produk/Botol tersebut, Tutup Sisa dinonaktifkan.
+   Simpan atau hapus preview dahulu agar saldo yang ditutup adalah saldo aktual.
+4. Penutupan TIDAK menghapus histori Filling atau Press.
+5. Sistem mencatat audit ke sheet "Penutupan Press":
+   id, tanggal, produk, botol, qtyDitutup, alasan, closedBy, closedByName, createdAt.
+6. Balance menjadi:
+   Total Filling - Total Press tersimpan - Qty Ditutup - Preview Press = Sisa Qty.
+7. Backend ikut menghitung Qty Ditutup ketika memvalidasi Press, sehingga Qty Press tidak bisa
+   melewati saldo meskipun request dimanipulasi dari luar halaman.
 
-Setelah mengganti Code.gs:
-- Deploy ulang Web App Apps Script (New version / Manage deployments > Edit > New version).
-- Pastikan script.js menunjuk URL /exec deployment yang benar.
-- setupSpreadsheet() boleh dijalankan lagi; tidak menghapus data lama dan akan memastikan header/sheet baru tersedia.
+PEMASANGAN:
+- Ganti index.html dan script.js di hosting/web Anda.
+- Ganti Code.gs di Google Apps Script.
+- Deploy ulang Web App Apps Script (Manage deployments > Edit/New version > Deploy).
+- Sheet "Penutupan Press" akan dibuat otomatis saat penutupan pertama dilakukan.
+  Anda juga boleh menjalankan setupSpreadsheet() satu kali untuk membuat sheet tersebut lebih awal.
+
+
+UPDATE HISTORIS MASTER:
+- Tombol Tutup Sisa tetap dapat digunakan untuk Produk/Botol yang sudah dihapus dari Master.
+- Backend memvalidasi penutupan terhadap data Filling historis, bukan Master aktif.
+- Tombol Gunakan dinonaktifkan bila Produk/Botol sudah tidak ada di Master, karena input Press baru tetap wajib menggunakan Master aktif.
+- Jika ingin melanjutkan pengerjaan Press untuk item lama, tambahkan kembali Produk/Botol tersebut ke Master.
