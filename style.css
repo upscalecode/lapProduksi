@@ -164,7 +164,7 @@ button{font-family:inherit;}
 .btn-ghost{background:#fff1dc; border-color:transparent; color:var(--ink-soft);}
 .btn-ghost:hover{background:#FBA834; color:#fff;}
 .btn-danger{background:var(--danger-soft); color:var(--danger); border-color:transparent;}
-.btn-danger:hover{background:#f4c9c2;}
+.btn-danger:hover{background:#f7573f; color:#fff}
 .btn-block{width:100%; justify-content:center;}
 .btn[disabled]{opacity:.45; cursor:not-allowed;}
 .file-btn{position:relative; cursor:pointer;}

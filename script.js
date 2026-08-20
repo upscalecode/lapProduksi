@@ -35,7 +35,7 @@
     FORM_DRAFT_KEY: "ppr_form_draft_v4",
     REQUEST_TIMEOUT: 30000, // safety net; simpan batch normalnya jauh lebih cepat
     PAGE_SIZE: 20,
-    PRESS_BALANCE_PAGE_SIZE: 10,
+    PRESS_BALANCE_PAGE_SIZE: 5,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL: "https://script.google.com/macros/s/AKfycbzVilOt10kroTiGqNsVDye1i1VP3fDHeDBIkHoiedZ_VLuyQC_gjiUzGI_KGqXrgEwHeg/exec"
@@ -546,11 +546,11 @@
               <tr>
                 <th>Tanggal Asal</th>
                 <th>Produk</th>
-                <th>Botol Filling</th>
-                <th>Qty Botol/Kardus</th>
+                <th>Botol</th>
+                <th>Qty (Kardus)</th>
                 <th>Qty Filling</th>
                 <th>Sudah Press</th>
-                <th>Sisa Qty</th>
+                <th>Sisa</th>
                 <th>Sumber</th>
                 <th>Aksi</th>
               </tr>
