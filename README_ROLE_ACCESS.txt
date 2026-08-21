@@ -20,6 +20,7 @@ Konsep akses:
    - Akses Filling
    - Akses Press
    - Akses Laporan
+   - Akses hapus Pengerjaan belum di press
    - Lihat Semua Data User / jika tidak dicentang hanya Data Sendiri
    - Edit Data Sendiri
    - Edit Data User Lain

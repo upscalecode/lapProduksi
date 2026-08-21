@@ -45,14 +45,132 @@
     </header>
 
     <nav class="tabbar" id="mainTabbar">
-      <button class="tab-btn active" data-view="filling">FILLING</button>
+      <button class="tab-btn active" data-view="dashboard">DASHBOARD</button>
+      <button class="tab-btn" data-view="filling">FILLING</button>
       <button class="tab-btn" data-view="press">PRESS</button>
       <button class="tab-btn" data-view="laporan">LAPORAN</button>
       <button class="tab-btn" data-view="master" id="masterTabBtn" hidden>SETTING</button>
     </nav>
 
     <main class="content">
-      <section class="view" id="view-filling" data-line="filling">
+      <section class="view dashboard-view" id="view-dashboard">
+        <div class="dashboard-shell">
+          <div class="dashboard-heading">
+            <div>
+              <p class="eyebrow">Ringkasan Produksi</p>
+              <h2>Dashboard Produksi Parfum</h2>
+              <p class="dashboard-subtitle">Ringkasan Filling, Press, sisa pengerjaan, alert, dan produktivitas operator.</p>
+            </div>
+            <div class="dashboard-heading-actions">
+              <span id="dashboardDate" class="dashboard-date mono">—</span>
+              <button type="button" class="btn btn-secondary" id="dashboardRefresh">↻ Refresh Dashboard</button>
+            </div>
+          </div>
+
+          <div class="dashboard-kpis">
+            <article class="dashboard-kpi kpi-filling">
+              <span class="dashboard-kpi-icon">◉</span>
+              <div><span class="dashboard-kpi-label">Filling Hari Ini</span><strong id="dashFillingToday">0</strong><span class="dashboard-kpi-unit">pcs</span></div>
+            </article>
+            <article class="dashboard-kpi kpi-press">
+              <span class="dashboard-kpi-icon">⚙</span>
+              <div><span class="dashboard-kpi-label">Press Hari Ini</span><strong id="dashPressToday">0</strong><span class="dashboard-kpi-unit">pcs</span></div>
+            </article>
+            <article class="dashboard-kpi kpi-waiting">
+              <span class="dashboard-kpi-icon">⌛</span>
+              <div><span class="dashboard-kpi-label">Sisa Menunggu Press</span><strong id="dashPressRemaining">0</strong><span class="dashboard-kpi-unit">pcs</span></div>
+            </article>
+            <article class="dashboard-kpi kpi-products">
+              <span class="dashboard-kpi-icon">▣</span>
+              <div><span class="dashboard-kpi-label">Produk Aktif</span><strong id="dashActiveProducts">0</strong><span class="dashboard-kpi-unit">produk</span></div>
+            </article>
+            <article class="dashboard-kpi kpi-broken">
+              <span class="dashboard-kpi-icon">!</span>
+              <div><span class="dashboard-kpi-label">Botol Pecah Hari Ini</span><strong id="dashBrokenToday">0</strong><span class="dashboard-kpi-unit">pcs</span></div>
+            </article>
+            <article class="dashboard-kpi kpi-oldest">
+              <span class="dashboard-kpi-icon">⌛</span>
+              <div><span class="dashboard-kpi-label">Sisa Terlama</span><strong id="dashOldestDays">0</strong><span class="dashboard-kpi-unit">hari</span></div>
+            </article>
+          </div>
+
+          <section class="dashboard-flow panel">
+            <div class="dashboard-flow-step">
+              <span class="dashboard-flow-icon filling">◉</span>
+              <div><span>FILLING</span><strong id="dashFlowFilling">0 pcs</strong></div>
+            </div>
+            <span class="dashboard-flow-arrow">→</span>
+            <div class="dashboard-flow-step">
+              <span class="dashboard-flow-icon waiting">⌛</span>
+              <div><span>MENUNGGU PRESS</span><strong id="dashFlowWaiting">0 pcs tertunda</strong></div>
+            </div>
+            <span class="dashboard-flow-arrow">→</span>
+            <div class="dashboard-flow-step">
+              <span class="dashboard-flow-icon press">⚙</span>
+              <div><span>PRESS</span><strong id="dashFlowPress">0 pcs</strong></div>
+            </div>
+            <span class="dashboard-flow-arrow">→</span>
+            <div class="dashboard-flow-step">
+              <span class="dashboard-flow-icon done">✓</span>
+              <div><span>SELESAI</span><strong id="dashFlowDone">0% selesai</strong></div>
+            </div>
+          </section>
+
+          <div class="dashboard-grid dashboard-grid-main">
+            <section class="panel dashboard-chart-panel">
+              <div class="panel-head dashboard-panel-head">
+                <div><p class="eyebrow">7 Hari Terakhir</p><h2>Filling vs Press</h2></div>
+                <div class="dashboard-legend"><span><i class="legend-dot filling"></i>Filling</span><span><i class="legend-dot press"></i>Press</span></div>
+              </div>
+              <div id="dashboardWeeklyChart" class="dashboard-weekly-chart"></div>
+            </section>
+
+            <section class="panel dashboard-alert-panel">
+              <div class="panel-head dashboard-panel-head">
+                <div><p class="eyebrow">Perlu Perhatian</p><h2>Alert Produksi</h2></div>
+                <span id="dashboardAlertCount" class="dashboard-alert-count">0 alert</span>
+              </div>
+              <div id="dashboardAlerts" class="dashboard-alerts"></div>
+            </section>
+          </div>
+
+          <section class="panel dashboard-priority-panel">
+            <div class="panel-head dashboard-panel-head">
+              <div><p class="eyebrow">FIFO &amp; Umur Sisa</p><h2>Prioritas Pengerjaan Press</h2></div>
+              <span class="hint-text">Urutan berdasarkan sisa paling lama.</span>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table dashboard-priority-table">
+                <thead><tr><th>Prioritas</th><th>Tanggal Filling</th><th>Produk</th><th>Botol</th><th>Filling</th><th>Sudah Press</th><th>Sisa</th><th>Umur</th><th>Aksi</th></tr></thead>
+                <tbody id="dashboardPriorityBody"><tr><td colspan="9" class="empty-row">Belum ada sisa pengerjaan Press.</td></tr></tbody>
+              </table>
+            </div>
+          </section>
+
+          <div class="dashboard-grid dashboard-grid-bottom">
+            <section class="panel">
+              <div class="panel-head dashboard-panel-head">
+                <div><p class="eyebrow">Backlog</p><h2>Sisa Press per Produk</h2></div>
+              </div>
+              <div id="dashboardRemainingBars" class="dashboard-horizontal-bars"></div>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head dashboard-panel-head">
+                <div><p class="eyebrow">Hari Ini</p><h2>Produktivitas Operator</h2></div>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table dashboard-operator-table">
+                  <thead><tr><th>Operator</th><th>Filling</th><th>Press</th><th>Total</th></tr></thead>
+                  <tbody id="dashboardOperatorBody"><tr><td colspan="4" class="empty-row">Belum ada data hari ini.</td></tr></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>
+
+      <section class="view" id="view-filling" data-line="filling" hidden>
         <div class="line-stack">
           <form class="panel form-panel" id="form-filling" data-line="filling" autocomplete="off">
             <div class="panel-head">
@@ -214,7 +332,7 @@
             </div>
           </section>
 
-          <section class="panel">
+          <section class="panel" id="userManagementPanel">
             <div class="panel-head"><h2>Kelola User</h2></div>
             <form id="userAddForm" class="user-add-form">
               <input type="text" id="newUserName" placeholder="Nama" required>
@@ -227,6 +345,202 @@
           </section>
         </div>
       </section>
+
+      <!-- =========================================
+     MODAL ATUR AKSES USER
+     ========================================= -->
+    <div id="permissionModal" class="permission-modal" hidden>
+
+      <div
+        class="permission-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="permissionTitle"
+      >
+
+        <div class="panel-head">
+
+          <div>
+            <p class="eyebrow">Pengaturan User</p>
+            <h2 id="permissionTitle">Atur Hak Akses</h2>
+            <p
+              id="permissionUserLabel"
+              class="hint-text"
+              style="margin-top:6px;margin-bottom:0"
+            >
+              —
+            </p>
+          </div>
+
+          <button
+            type="button"
+            id="permissionClose"
+            class="btn btn-ghost"
+            title="Tutup"
+          >
+            ✕
+          </button>
+
+        </div>
+
+
+        <div id="permissionGrid" class="permission-grid">
+
+          <!-- FILLING -->
+          <label>
+            <input
+              type="checkbox"
+              data-permission="accessFilling"
+            >
+            <span>
+              <strong>Akses Filling</strong><br>
+              <small>Dapat membuka dan menggunakan menu Filling.</small>
+            </span>
+          </label>
+
+
+          <!-- PRESS -->
+          <label>
+            <input
+              type="checkbox"
+              data-permission="accessPress"
+            >
+            <span>
+              <strong>Akses Press</strong><br>
+              <small>Dapat membuka dan menggunakan menu Press.</small>
+            </span>
+          </label>
+
+
+          <!-- LAPORAN -->
+          <label>
+            <input
+              type="checkbox"
+              data-permission="accessReports"
+            >
+            <span>
+              <strong>Akses Laporan</strong><br>
+              <small>Dapat melihat dan membuat laporan produksi.</small>
+            </span>
+          </label>
+
+
+          <!-- HAPUS SISA PRESS -->
+          <label>
+            <input
+              type="checkbox"
+              data-permission="deleteUnpressed"
+            >
+            <span>
+              <strong>Hapus Sisa Press</strong><br>
+              <small>Dapat menutup atau menghapus sisa pengerjaan Press.</small>
+            </span>
+          </label>
+
+
+          <!-- LIHAT SEMUA DATA -->
+          <label>
+            <input
+              type="checkbox"
+              data-permission="viewAllData"
+            >
+            <span>
+              <strong>Lihat Semua Data</strong><br>
+              <small>Dapat melihat data produksi milik semua user.</small>
+            </span>
+          </label>
+
+
+          <!-- EDIT DATA SENDIRI -->
+          <label>
+            <input
+              type="checkbox"
+              data-permission="editOwn"
+            >
+            <span>
+              <strong>Edit Data Sendiri</strong><br>
+              <small>Dapat mengubah data yang dibuat sendiri.</small>
+            </span>
+          </label>
+
+
+          <!-- EDIT DATA USER LAIN -->
+          <label>
+            <input
+              type="checkbox"
+              data-permission="editOthers"
+            >
+            <span>
+              <strong>Edit Data User Lain</strong><br>
+              <small>Dapat mengubah data yang dibuat user lain.</small>
+            </span>
+          </label>
+
+
+          <!-- HAPUS DATA SENDIRI -->
+          <label>
+            <input
+              type="checkbox"
+              data-permission="deleteOwn"
+            >
+            <span>
+              <strong>Hapus Data Sendiri</strong><br>
+              <small>Dapat menghapus data yang dibuat sendiri.</small>
+            </span>
+          </label>
+
+
+          <!-- HAPUS DATA USER LAIN -->
+          <label>
+            <input
+              type="checkbox"
+              data-permission="deleteOthers"
+            >
+            <span>
+              <strong>Hapus Data User Lain</strong><br>
+              <small>Dapat menghapus data milik user lain.</small>
+            </span>
+          </label>
+
+
+          <!-- SETTING -->
+          <label>
+            <input
+              type="checkbox"
+              data-permission="accessMaster"
+            >
+            <span>
+              <strong>Akses Setting</strong><br>
+              <small>Dapat membuka menu Setting / Master Data.</small>
+            </span>
+          </label>
+
+        </div>
+
+
+        <div class="form-actions permission-actions">
+
+          <button
+            type="button"
+            class="btn btn-ghost"
+            onclick="document.getElementById('permissionClose').click()"
+          >
+            Batal
+          </button>
+
+          <button
+            type="button"
+            class="btn btn-primary"
+            id="permissionSave"
+          >
+            Simpan Hak Akses
+          </button>
+
+        </div>
+
+      </div>
+
+    </div>
     </main>
   </div>
 
