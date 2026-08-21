@@ -45,9 +45,9 @@
     </header>
 
     <nav class="tabbar" id="mainTabbar">
-      <button class="tab-btn active" data-view="filling">FILLING</button>
-      <button class="tab-btn" data-view="press">PRESS</button>
-      <button class="tab-btn" data-view="laporan">LAPORAN</button>
+      <button class="tab-btn active" data-view="filling" id="fillingTabBtn">FILLING</button>
+      <button class="tab-btn" data-view="press" id="pressTabBtn">PRESS</button>
+      <button class="tab-btn" data-view="laporan" id="laporanTabBtn">LAPORAN</button>
       <button class="tab-btn" data-view="master" id="masterTabBtn" hidden>SETTING</button>
     </nav>
 
@@ -160,6 +160,22 @@
               <div class="pagination f-pagination" aria-label="Navigasi halaman"></div>
             </div>
           </section>
+
+          <section class="panel table-panel saved-data-panel">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">Data Spreadsheet</p>
+                <h2>Data Tersimpan — Filling</h2>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead><tr><th>ID</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Btl/Kardus</th><th>Total Qty</th><th>Pecah</th><th>Qty Pecah</th><th>Aksi</th></tr></thead>
+                <tbody class="f-saved-tbody"><tr><td colspan="11" class="empty-row">Memuat data tersimpan…</td></tr></tbody>
+              </table>
+            </div>
+            <div class="table-footer"><p class="table-summary f-saved-summary"></p><div class="pagination f-saved-pagination"></div></div>
+          </section>
         </div>
       </section>
 
@@ -202,7 +218,7 @@
 
       <section class="view" id="view-master" hidden>
         <div class="master-layout">
-          <section class="panel">
+          <section class="panel" id="masterDataPanel">
             <div class="panel-head"><h2>Data Master (Sumber Search)</h2></div>
             <p class="hint-text">Sheet <code>Master</code>: kolom A = Nama Operator, kolom B = Nama Produk, kolom C = Nama Botol.</p>
             <div class="form-actions"><button type="button" class="btn btn-secondary" id="masterReload">↻ Muat Ulang</button><button type="button" class="btn btn-ghost" id="masterCsvExport">⭳ Export Master</button></div>
@@ -214,8 +230,8 @@
             </div>
           </section>
 
-          <section class="panel">
-            <div class="panel-head"><h2>Kelola User</h2></div>
+          <section class="panel" id="userManagementPanel">
+            <div class="panel-head"><h2>Kelola User &amp; Hak Akses</h2></div>
             <form id="userAddForm" class="user-add-form">
               <input type="text" id="newUserName" placeholder="Nama" required>
               <input type="text" id="newUserUsername" placeholder="Username" required>
@@ -228,6 +244,31 @@
         </div>
       </section>
     </main>
+
+    <div class="permission-modal" id="permissionModal" hidden>
+      <div class="permission-dialog" role="dialog" aria-modal="true" aria-labelledby="permissionTitle">
+        <div class="panel-head">
+          <div><p class="eyebrow">Hak Akses User</p><h2 id="permissionTitle">Atur Akses</h2></div>
+          <button type="button" class="btn btn-ghost" id="permissionClose">Tutup</button>
+        </div>
+        <p class="hint-text" id="permissionUserLabel"></p>
+        <div class="permission-grid" id="permissionGrid">
+          <label><input type="checkbox" data-permission="accessFilling"> Akses Filling</label>
+          <label><input type="checkbox" data-permission="accessPress"> Akses Press</label>
+          <label><input type="checkbox" data-permission="accessReports"> Akses Laporan</label>
+          <label><input type="checkbox" data-permission="deleteUnpressed"> Akses hapus Pengerjaan belum di press</label>
+          <label><input type="checkbox" data-permission="viewAllData"> Lihat Semua Data User</label>
+          <label><input type="checkbox" data-permission="editOwn"> Edit Data Sendiri</label>
+          <label><input type="checkbox" data-permission="editOthers"> Edit Data User Lain</label>
+          <label><input type="checkbox" data-permission="deleteOwn"> Hapus Data Sendiri</label>
+          <label><input type="checkbox" data-permission="deleteOthers"> Hapus Data User Lain</label>
+          <label><input type="checkbox" data-permission="accessMaster"> Akses Setting / Master Data</label>
+        </div>
+        <div class="form-actions permission-actions">
+          <button type="button" class="btn btn-primary" id="permissionSave">Simpan Hak Akses</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script src="script.js"></script>

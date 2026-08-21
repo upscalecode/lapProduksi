@@ -1,30 +1,42 @@
-UPDATE: TUTUP SISA PRESS + ALASAN WAJIB
+UPDATE HAK AKSES USER / SUPER USER
 
-Perubahan:
-1. Tabel "Sisa Pengerjaan yang Menunggu Press" memiliki tombol:
-   - Gunakan
-   - Tutup Sisa
-2. Saat Tutup Sisa diklik, user WAJIB mengisi alasan minimal 5 karakter.
-3. Jika masih ada Preview Press untuk Produk/Botol tersebut, Tutup Sisa dinonaktifkan.
-   Simpan atau hapus preview dahulu agar saldo yang ditutup adalah saldo aktual.
-4. Penutupan TIDAK menghapus histori Filling atau Press.
-5. Sistem mencatat audit ke sheet "Penutupan Press":
-   id, tanggal, produk, botol, qtyDitutup, alasan, closedBy, closedByName, createdAt.
-6. Balance menjadi:
-   Total Filling - Total Press tersimpan - Qty Ditutup - Preview Press = Sisa Qty.
-7. Backend ikut menghitung Qty Ditutup ketika memvalidasi Press, sehingga Qty Press tidak bisa
-   melewati saldo meskipun request dimanipulasi dari luar halaman.
+File:
+- Code.gs
+- index.html
+- script.js
+- style.css
+- login.html (tidak diubah, disertakan agar paket lengkap)
 
-PEMASANGAN:
-- Ganti index.html dan script.js di hosting/web Anda.
-- Ganti Code.gs di Google Apps Script.
-- Deploy ulang Web App Apps Script (Manage deployments > Edit/New version > Deploy).
-- Sheet "Penutupan Press" akan dibuat otomatis saat penutupan pertama dilakukan.
-  Anda juga boleh menjalankan setupSpreadsheet() satu kali untuk membuat sheet tersebut lebih awal.
+Langkah pemasangan:
+1. Ganti file Code.gs pada Google Apps Script dengan versi ini.
+2. Ganti index.html, script.js, dan style.css pada hosting/web app frontend.
+3. Jalankan setupSpreadsheet() SATU KALI dari editor Apps Script.
+   - Header sheet Users akan menjadi:
+     A username
+     B passwordHash
+     C name
+     D role
+     E active
+     F createdAt
+     G permissionsJson
+   - User lama yang kolom G-nya kosong akan diisi otomatis.
+4. Deploy ulang Apps Script sebagai Web App / buat version deployment baru.
+5. Pastikan CONFIG.WEB_APP_URL pada script.js mengarah ke URL /exec deployment aktif.
+6. Login sebagai Super User, buka SETTING > Kelola User & Hak Akses > Atur Akses.
 
+Default USER BIASA:
+- Filling: YA
+- Press: YA
+- Laporan: TIDAK
+- Hapus Pengerjaan belum di press: TIDAK
+- Lihat semua data user: TIDAK
+- Edit data sendiri: YA
+- Edit data user lain: TIDAK
+- Hapus data sendiri: TIDAK
+- Hapus data user lain: TIDAK
+- Setting / Master Data: TIDAK
 
-UPDATE HISTORIS MASTER:
-- Tombol Tutup Sisa tetap dapat digunakan untuk Produk/Botol yang sudah dihapus dari Master.
-- Backend memvalidasi penutupan terhadap data Filling historis, bukan Master aktif.
-- Tombol Gunakan dinonaktifkan bila Produk/Botol sudah tidak ada di Master, karena input Press baru tetap wajib menggunakan Master aktif.
-- Jika ingin melanjutkan pengerjaan Press untuk item lama, tambahkan kembali Produk/Botol tersebut ke Master.
+Catatan keamanan:
+- Permission divalidasi di backend Apps Script, bukan hanya UI.
+- Super User selalu dianggap memiliki seluruh permission.
+- Kelola User & Hak Akses hanya tersedia untuk Super User dan tidak memiliki checkbox permission untuk User Biasa.

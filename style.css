@@ -609,3 +609,28 @@ body[data-page="login"] .login-screen{
     margin-left: 0;
   }
 }
+
+/* ---------- user permissions ---------- */
+.permission-modal{
+  position:fixed; inset:0; z-index:1200; background:rgba(15,23,42,.48);
+  display:flex; align-items:center; justify-content:center; padding:24px;
+}
+.permission-modal[hidden]{display:none;}
+.permission-dialog{
+  width:min(760px,100%); max-height:90vh; overflow:auto;
+  background:var(--surface); border:1px solid var(--line); border-radius:var(--radius);
+  box-shadow:0 24px 70px rgba(15,23,42,.28); padding:22px;
+}
+.permission-grid{
+  display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:14px;
+}
+.permission-grid label{
+  display:flex; align-items:flex-start; gap:9px; padding:10px 12px;
+  border:1px solid var(--line); border-radius:8px; background:var(--surface-2);
+  font-size:12.5px; font-weight:600; color:var(--ink);
+}
+.permission-grid input{margin-top:2px;}
+.permission-actions{justify-content:flex-end; margin-top:18px;}
+.permission-full{font-size:11px; font-weight:700; color:var(--success); white-space:nowrap;}
+.saved-data-panel{margin-top:0;}
+@media(max-width:700px){.permission-grid{grid-template-columns:1fr;}}

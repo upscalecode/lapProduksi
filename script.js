@@ -38,7 +38,7 @@
     PRESS_BALANCE_PAGE_SIZE: 5,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
-    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbzVilOt10kroTiGqNsVDye1i1VP3fDHeDBIkHoiedZ_VLuyQC_gjiUzGI_KGqXrgEwHeg/exec"
+    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbyzM7BTrMfpc6OvQBzxBcxHRUCQHpNm_F4ZheB3TUiLics1M8GXMRSDXgg1pBQoDGnaPA/exec"
   };
 
   const LINE_LABEL = { filling: "Filling", press: "Press" };
@@ -58,6 +58,7 @@
       press: { query: "" }
     },
     pages: { filling: 1, press: 1, laporan: 1 },
+    savedPages: { filling: 1, press: 1 },
     pressBalance: { search: "", page: 1 },
     lastLaporan: null
   };
@@ -82,6 +83,71 @@
   function el(id) { return document.getElementById(id); }
   function qs(selector, root = document) { return root.querySelector(selector); }
   function qsa(selector, root = document) { return Array.from(root.querySelectorAll(selector)); }
+
+  const DEFAULT_USER_PERMISSIONS = Object.freeze({
+    accessFilling: true,
+    accessPress: true,
+    accessReports: false,
+    deleteUnpressed: false,
+    viewAllData: false,
+    editOwn: true,
+    editOthers: false,
+    deleteOwn: false,
+    deleteOthers: false,
+    accessMaster: false
+  });
+
+  function permissionsOf(user = state.currentUser) {
+    if (!user) return { ...DEFAULT_USER_PERMISSIONS };
+    if (user.role === "superuser") {
+      return Object.fromEntries(Object.keys(DEFAULT_USER_PERMISSIONS).map(key => [key, true]));
+    }
+    return { ...DEFAULT_USER_PERMISSIONS, ...(user.permissions || {}) };
+  }
+
+  function can(permission, user = state.currentUser) {
+    return Boolean(user && (user.role === "superuser" || permissionsOf(user)[permission] === true));
+  }
+
+  function canEditEntry(entry) {
+    if (!state.currentUser || !entry) return false;
+    return entry.createdBy === state.currentUser.username ? can("editOwn") : can("editOthers");
+  }
+
+  function canDeleteEntry(entry) {
+    if (!state.currentUser || !entry) return false;
+    return entry.createdBy === state.currentUser.username ? can("deleteOwn") : can("deleteOthers");
+  }
+
+  function firstAllowedView() {
+    if (can("accessFilling")) return "filling";
+    if (can("accessPress")) return "press";
+    if (can("accessReports")) return "laporan";
+    if (can("accessMaster")) return "master";
+    return "";
+  }
+
+  function applyAccessControl() {
+    const accessMap = {
+      filling: can("accessFilling"),
+      press: can("accessPress"),
+      laporan: can("accessReports"),
+      master: can("accessMaster")
+    };
+    Object.entries(accessMap).forEach(([view, allowed]) => {
+      const btn = qs(`.tab-btn[data-view="${view}"]`);
+      if (btn) btn.hidden = !allowed;
+    });
+    const userPanel = el("userManagementPanel");
+    if (userPanel) userPanel.hidden = !state.currentUser || state.currentUser.role !== "superuser";
+
+    const active = qs(".tab-btn.active");
+    if (active && !accessMap[active.dataset.view]) {
+      const fallback = firstAllowedView();
+      qsa(".tab-btn").forEach(btn => btn.classList.toggle("active", btn.dataset.view === fallback));
+      qsa(".content > .view").forEach(node => { node.hidden = node.id !== "view-" + fallback; });
+    }
+  }
 
   /* ------------------------- LOCAL DRAFT / PREVIEW CACHE ------------------------- */
   function storageOwner() {
@@ -669,10 +735,13 @@
     restoreFormDraft("press");
     renderPreview("filling");
     renderPreview("press");
+    renderEntries("filling");
+    renderEntries("press");
     renderPressBalance();
     renderMasterChips();
     renderUsers();
     renderUserHeader();
+    applyAccessControl();
   }
 
   async function loadBootstrap() {
@@ -856,7 +925,7 @@
     if (avatar) avatar.textContent = (user.name || user.username || "U").trim().charAt(0).toUpperCase();
     if (el("userName")) el("userName").textContent = user.name || user.username;
     if (el("userRole")) el("userRole").textContent = user.role === "superuser" ? "Super User" : "User Biasa";
-    if (el("masterTabBtn")) el("masterTabBtn").hidden = user.role !== "superuser";
+    if (el("masterTabBtn")) el("masterTabBtn").hidden = !can("accessMaster", user);
     if (el("deviceDateDisplay")) {
       el("deviceDateDisplay").textContent = new Date().toLocaleDateString("id-ID", {
         weekday: "long", day: "2-digit", month: "long", year: "numeric"
@@ -891,7 +960,7 @@
   // Press hanya boleh disimpan setelah seluruh Preview Filling sudah
   // benar-benar disimpan ke Spreadsheet. Preview Press tetap boleh dibuat/edit.
   function hasUnsavedFillingPreview() {
-    return Array.isArray(state.preview.filling) && state.preview.filling.length > 0;
+    return can("accessFilling") && Array.isArray(state.preview.filling) && state.preview.filling.length > 0;
   }
 
   function updateSaveButtonState(line) {
@@ -1189,10 +1258,13 @@
         : row.source === "mixed"
           ? '<span class="sync-badge pending">Spreadsheet + Preview</span>'
           : '<span class="sync-badge saved">Spreadsheet</span>';
-      const deleteDisabled = row.hasPreview || !row.hasSpreadsheet;
-      const deleteTitle = row.hasPreview
-        ? 'Simpan Preview Filling terlebih dahulu sebelum menghapus sisa.'
-        : (!row.hasSpreadsheet ? 'Data ini belum tersimpan di Spreadsheet.' : 'Hapus sisa dengan alasan.');
+      const deleteAllowed = can("deleteUnpressed");
+      const deleteDisabled = !deleteAllowed || row.hasPreview || !row.hasSpreadsheet;
+      const deleteTitle = !deleteAllowed
+        ? 'Anda tidak memiliki akses menghapus pengerjaan yang belum di-Press.'
+        : row.hasPreview
+          ? 'Simpan Preview Filling terlebih dahulu sebelum menghapus sisa.'
+          : (!row.hasSpreadsheet ? 'Data ini belum tersimpan di Spreadsheet.' : 'Hapus sisa dengan alasan.');
 
       return `
       <tr>
@@ -1285,8 +1357,8 @@
     const syncState = entry._syncState || "";
     const isPending = syncState === "pending";
     const isError = syncState === "error";
-    const canEdit = !syncState && state.currentUser && (state.currentUser.role === "superuser" || entry.createdBy === state.currentUser.username);
-    const canDelete = !syncState && state.currentUser && state.currentUser.role === "superuser";
+    const canEdit = !syncState && canEditEntry(entry);
+    const canDelete = !syncState && canDeleteEntry(entry);
 
     let idCell = `<span class="id-badge">${esc(entry.reportId)}</span>`;
     if (isPending) {
@@ -1319,14 +1391,15 @@
   function renderEntries(line) {
     const section = el("view-" + line);
     if (!section) return;
-    const tbody = qs(".f-tbody", section);
-    const summary = qs(".f-summary", section);
-    const pagination = qs(".f-pagination", section);
+    const tbody = qs(".f-saved-tbody", section);
+    const summary = qs(".f-saved-summary", section);
+    const pagination = qs(".f-saved-pagination", section);
+    if (!tbody) return;
     const rows = filteredEntries(line);
 
     const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PAGE_SIZE));
-    state.pages[line] = Math.min(Math.max(1, state.pages[line]), totalPages);
-    const page = state.pages[line];
+    state.savedPages[line] = Math.min(Math.max(1, state.savedPages[line]), totalPages);
+    const page = state.savedPages[line];
     const start = (page - 1) * CONFIG.PAGE_SIZE;
     const visibleRows = rows.slice(start, start + CONFIG.PAGE_SIZE);
 
@@ -1347,9 +1420,9 @@
     summary.textContent = `${from}–${to} dari ${rows.length} entri · Total Qty Botol: ${totalQty.toLocaleString("id-ID")} · Total Botol Pecah: ${totalPecah.toLocaleString("id-ID")}${syncInfo ? ` · ${syncInfo}` : ""}`;
 
     renderPagination(pagination, page, totalPages, nextPage => {
-      state.pages[line] = nextPage;
+      state.savedPages[line] = nextPage;
       renderEntries(line);
-      qs(".table-panel", section)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      qs(".saved-data-panel", section)?.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
   
@@ -1447,6 +1520,7 @@
       if (botolPecah) botolPecah.value = "-";
       form.reset();
       editing.value = "";
+      editing.dataset.source = "";
       tanggal.value = todayStr();
       total.value = "0";
       qtyPecah.value = "0";
@@ -1538,9 +1612,14 @@
     form.addEventListener("submit", async event => {
       event.preventDefault();
       errorEl.hidden = true;
+      if (!can(line === "press" ? "accessPress" : "accessFilling")) {
+        errorEl.textContent = `Anda tidak memiliki akses ${LINE_LABEL[line]}.`;
+        errorEl.hidden = false;
+        return;
+      }
       const payload = {
         line,
-        tanggal: todayStr(),
+        tanggal: tanggal.value || todayStr(),
         operator: qs(".f-operator", form).value,
         produk: qs(".f-produk", form).value,
         botol: qs(".f-botol", form).value,
@@ -1579,6 +1658,25 @@
       if (pressError) {
         errorEl.textContent = pressError;
         errorEl.hidden = false;
+        return;
+      }
+
+      // UPDATE data yang sudah tersimpan langsung ke Spreadsheet.
+      if (id && editing.dataset.source === "saved") {
+        submitBtn.disabled = true;
+        try {
+          const response = await enqueueWrite(() => apiPost("entry.update", { id, data: payload }));
+          if (response.entry) upsertEntry(response.entry);
+          if (Array.isArray(response.remainders)) state.remainders = response.remainders;
+          resetForm();
+          renderEntries(line);
+          renderPressBalance();
+          toast("Data Spreadsheet berhasil diperbarui.");
+        } catch (err) {
+          errorEl.textContent = err.message;
+          errorEl.hidden = false;
+          submitBtn.disabled = false;
+        }
         return;
       }
 
@@ -1639,17 +1737,23 @@
       state.search[line].query = searchKeyword.value.trim();
       state.pages[line] = 1;
       renderPreview(line);
+      state.savedPages[line] = 1;
+      renderEntries(line);
     });
     searchKeyword.addEventListener("change", () => {
       state.search[line].query = searchKeyword.value.trim();
       state.pages[line] = 1;
+      state.savedPages[line] = 1;
       renderPreview(line);
+      renderEntries(line);
     });
     resetSearch.addEventListener("click", () => {
       state.search[line] = { query: "" };
       state.pages[line] = 1;
       searchKeyword.value = "";
+      state.savedPages[line] = 1;
       renderPreview(line);
+      renderEntries(line);
     });
 
     const saveBtn = qs(".f-save-btn", section);
@@ -1702,6 +1806,7 @@
           state.pages[line] = 1;
           persistPreview();
           renderPreview(line);
+          renderEntries(line);
           renderPressBalance();
 
           const successCount = savedIds.size;
@@ -1734,6 +1839,48 @@
       downloadText(`laporan-${line}-${todayStr()}.csv`, csv);
     });
 
+    qs(".f-saved-tbody", section)?.addEventListener("click", async event => {
+      const editBtn = event.target.closest(".btn-edit");
+      const deleteBtn = event.target.closest(".btn-delete");
+      if (editBtn) {
+        const entry = state.entries.find(x => x.id === editBtn.dataset.id);
+        if (!entry || !canEditEntry(entry)) return toast("Anda tidak memiliki akses mengedit data ini.", true);
+        editing.value = entry.id;
+        editing.dataset.source = "saved";
+        tanggal.value = entry.tanggal;
+        operator.value = entry.operator;
+        produk.value = entry.produk;
+        botol.value = entry.botol;
+        qtyKardus.value = entry.qtyKardus;
+        qtyBotol.value = entry.qtyBotolPerKardus;
+        if (botolPecah) botolPecah.value = entry.botolPecahJenis || entry.botol || "-";
+        qtyPecah.value = entry.qtyBotolPecah || 0;
+        recalc();
+        submitBtn.textContent = "Simpan Perubahan";
+        cancelBtn.hidden = false;
+        stamp.textContent = "EDIT DATA";
+        form.scrollIntoView({ behavior: "smooth", block: "start" });
+        return;
+      }
+      if (deleteBtn) {
+        const entry = state.entries.find(x => x.id === deleteBtn.dataset.id);
+        if (!entry || !canDeleteEntry(entry)) return toast("Anda tidak memiliki akses menghapus data ini.", true);
+        if (!confirm(`Hapus data ${entry.reportId}?`)) return;
+        deleteBtn.disabled = true;
+        try {
+          const response = await enqueueWrite(() => apiPost("entry.delete", { id: entry.id }));
+          state.entries = state.entries.filter(x => x.id !== entry.id);
+          if (Array.isArray(response.remainders)) state.remainders = response.remainders;
+          renderEntries(line);
+          renderPressBalance();
+          toast("Data berhasil dihapus.");
+        } catch (err) {
+          deleteBtn.disabled = false;
+          toast(err.message, true);
+        }
+      }
+    });
+
     qs(".f-tbody", section).addEventListener("click", event => {
       const editBtn = event.target.closest(".btn-preview-edit");
       const deleteBtn = event.target.closest(".btn-preview-delete");
@@ -1742,6 +1889,7 @@
         const entry = state.preview[line].find(x => x.id === editBtn.dataset.id);
         if (!entry) return;
         editing.value = entry.id;
+        editing.dataset.source = "preview";
         tanggal.value = entry.tanggal;
         qs(".f-operator", form).value = entry.operator;
         qs(".f-produk", form).value = entry.produk;
@@ -1779,7 +1927,11 @@
       const btn = event.target.closest(".tab-btn");
       if (!btn || !state.currentUser) return;
       const view = btn.dataset.view;
-      if (view === "master" && state.currentUser.role !== "superuser") return;
+      const allowed = view === "filling" ? can("accessFilling")
+        : view === "press" ? can("accessPress")
+          : view === "laporan" ? can("accessReports")
+            : view === "master" ? can("accessMaster") : false;
+      if (!allowed) return;
 
       qsa(".tab-btn", tabbar).forEach(node => node.classList.toggle("active", node === btn));
       qsa(".content > .view").forEach(node => { node.hidden = node.id !== "view-" + view; });
@@ -1984,6 +2136,7 @@
     if (!generate) return;
 
     generate.addEventListener("click", () => {
+      if (!can("accessReports")) return toast("Anda tidak memiliki akses Laporan.", true);
       const line = el("lap-line").value;
       const operator = el("lap-operator").value;
       const start = el("lap-start").value;
@@ -2185,6 +2338,7 @@
       wrap.addEventListener("click", async event => {
         const btn = event.target.closest("button[data-cat]");
         if (!btn) return;
+        if (!can("accessMaster")) return toast("Anda tidak memiliki akses Setting / Master Data.", true);
         if (!confirm(`Hapus "${btn.dataset.value}" dari master?`)) return;
         try {
           const data = await apiPost("master.remove", { category: btn.dataset.cat, value: btn.dataset.value });
@@ -2204,6 +2358,7 @@
       if (!input || !btn) return;
 
       async function addMaster() {
+        if (!can("accessMaster")) return toast("Anda tidak memiliki akses Setting / Master Data.", true);
         const value = input.value.trim();
         if (!value) return;
         btn.disabled = true;
@@ -2225,6 +2380,7 @@
     });
 
     el("masterReload")?.addEventListener("click", async event => {
+      if (!can("accessMaster")) return toast("Anda tidak memiliki akses Setting / Master Data.", true);
       const btn = event.currentTarget;
       btn.disabled = true;
       try { await loadBootstrap(); await loadAppData(); toast("Data terbaru sudah dimuat dari Spreadsheet."); }
@@ -2233,6 +2389,7 @@
     });
 
     el("masterCsvExport")?.addEventListener("click", () => {
+      if (!can("accessMaster")) return toast("Anda tidak memiliki akses Setting / Master Data.", true);
       const op = state.master.operator || [];
       const produk = state.master.produk || [];
       const botol = state.master.botol || [];
@@ -2255,7 +2412,10 @@
         <td>${esc(user.name)}</td>
         <td class="mono">${esc(user.username)}</td>
         <td><span class="role-tag ${esc(user.role)}">${user.role === "superuser" ? "Super User" : "User"}</span></td>
-        <td>${user.username === state.currentUser.username ? "" : `<button type="button" class="btn btn-danger btn-del-user" data-username="${esc(user.username)}">Hapus</button>`}</td>
+        <td class="row-actions">
+          ${user.role === "user" ? `<button type="button" class="btn btn-ghost btn-access-user" data-username="${esc(user.username)}">Atur Akses</button>` : '<span class="permission-full">Akses penuh</span>'}
+          ${user.username === state.currentUser.username ? "" : `<button type="button" class="btn btn-danger btn-del-user" data-username="${esc(user.username)}">Hapus</button>`}
+        </td>
       </tr>`).join("");
   }
 
@@ -2263,6 +2423,41 @@
     const form = el("userAddForm");
     const tbody = el("userTbody");
     if (!form || !tbody) return;
+    const modal = el("permissionModal");
+    const permissionGrid = el("permissionGrid");
+    let permissionUsername = "";
+
+    function closePermissionModal() {
+      permissionUsername = "";
+      if (modal) modal.hidden = true;
+    }
+
+    function openPermissionModal(user) {
+      if (!modal || !permissionGrid || !user || user.role !== "user") return;
+      permissionUsername = user.username;
+      el("permissionUserLabel").textContent = `${user.name} (@${user.username})`;
+      const perms = { ...DEFAULT_USER_PERMISSIONS, ...(user.permissions || {}) };
+      qsa("input[data-permission]", permissionGrid).forEach(input => { input.checked = perms[input.dataset.permission] === true; });
+      modal.hidden = false;
+    }
+
+    el("permissionClose")?.addEventListener("click", closePermissionModal);
+    modal?.addEventListener("click", event => { if (event.target === modal) closePermissionModal(); });
+    el("permissionSave")?.addEventListener("click", async () => {
+      if (!permissionUsername || !state.currentUser || state.currentUser.role !== "superuser") return;
+      const btn = el("permissionSave");
+      btn.disabled = true;
+      try {
+        const permissions = {};
+        qsa("input[data-permission]", permissionGrid).forEach(input => { permissions[input.dataset.permission] = input.checked; });
+        const data = await apiPost("user.permissions.set", { username: permissionUsername, permissions });
+        state.users = data.users || [];
+        renderUsers();
+        closePermissionModal();
+        toast("Hak akses user berhasil disimpan.");
+      } catch (err) { toast(err.message, true); }
+      finally { btn.disabled = false; }
+    });
 
     form.addEventListener("submit", async event => {
       event.preventDefault();
@@ -2284,6 +2479,12 @@
     });
 
     tbody.addEventListener("click", async event => {
+      const accessBtn = event.target.closest(".btn-access-user");
+      if (accessBtn) {
+        const user = state.users.find(item => item.username === accessBtn.dataset.username);
+        openPermissionModal(user);
+        return;
+      }
       const btn = event.target.closest(".btn-del-user");
       if (!btn) return;
       if (!confirm(`Hapus user "${btn.dataset.username}"?`)) return;
@@ -2335,8 +2536,11 @@
         restoreFormDraft("press");
         renderPreview("filling");
         renderPreview("press");
+        renderEntries("filling");
+        renderEntries("press");
         renderPressBalance();
         renderUserHeader();
+        applyAccessControl();
         el("appScreen").hidden = false;
         setConnection("loading", "Menyegarkan data…");
       }
