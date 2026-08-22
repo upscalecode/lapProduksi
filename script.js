@@ -1108,14 +1108,21 @@
     (state.remainders || []).forEach(item => {
       const remaining = Number(item.sisaQty ?? item.remaining) || 0;
       if (remaining <= 0) return;
+      const hasGroupStats = item.groupQtyFilling !== undefined && item.groupQtyPressTerpakai !== undefined;
       lots.push({
         id: String(item.id || ""),
         tanggalAsal: String(item.tanggalAsal || item.tanggal || ""),
         produk: String(item.produk || "").trim(),
         botol: String(item.botol || "").trim(),
         qtyBotolPerKardus: getQtyBotolPerKardusFromRemainder(item),
+        qtyBotolPerKardusValues: Array.isArray(item.groupQtyBotolPerKardusValues)
+          ? item.groupQtyBotolPerKardusValues.map(Number).filter(value => value > 0)
+          : [],
         qtyFilling: Number(item.qtyFilling) || remaining,
         qtyPressTerpakai: Number(item.qtyPressTerpakai) || 0,
+        groupQtyFilling: hasGroupStats ? (Number(item.groupQtyFilling) || 0) : null,
+        groupQtyPressTerpakai: hasGroupStats ? (Number(item.groupQtyPressTerpakai) || 0) : null,
+        previewPressTerpakai: 0,
         remaining,
         source: "spreadsheet"
       });
@@ -1133,6 +1140,9 @@
         qtyBotolPerKardus: Number(item.qtyBotolPerKardus) || 0,
         qtyFilling: qty,
         qtyPressTerpakai: 0,
+        groupQtyFilling: null,
+        groupQtyPressTerpakai: null,
+        previewPressTerpakai: 0,
         remaining: qty,
         source: "preview"
       });
@@ -1168,40 +1178,79 @@
           const used = Math.min(needed, lot.remaining);
           lot.remaining -= used;
           lot.qtyPressTerpakai += used;
+          lot.previewPressTerpakai = (Number(lot.previewPressTerpakai) || 0) + used;
           needed -= used;
         });
     });
 
-    // Gabungkan tampilan berdasarkan Nama Produk + Botol. Dengan demikian,
-    // Filling oleh operator berbeda tidak membuat baris duplikat pada Sisa Press.
+    // Gabungkan tampilan berdasarkan Nama Produk + Botol. Semua lot ikut
+    // dihitung, termasuk lot yang menjadi 0 karena Preview Press. Baris baru
+    // disembunyikan setelah total Sisa kombinasi benar-benar 0.
+    //
+    // Backend mengirim groupQtyFilling/groupQtyPressTerpakai agar histori lot
+    // yang sudah habis Press tetap masuk ke kolom Qty Filling dan Sudah Press.
     const grouped = new Map();
-    lots.filter(lot => lot.remaining > 0).forEach(lot => {
+    lots.forEach(lot => {
       const key = balanceKey(lot.produk, lot.botol);
       if (!grouped.has(key)) {
         grouped.set(key, {
           id: `balance-${key}`,
-          tanggalAsal: String(lot.tanggalAsal || ""),
+          tanggalAsal: "",
           produk: String(lot.produk || "").trim(),
           botol: String(lot.botol || "").trim(),
           qtyFilling: 0,
           qtyPressTerpakai: 0,
           remaining: 0,
+          savedGroupStatsApplied: false,
           qtyBotolPerKardusValues: new Set(),
           sources: new Set()
         });
       }
       const group = grouped.get(key);
       const tanggal = String(lot.tanggalAsal || "");
-      if (tanggal && (!group.tanggalAsal || tanggal < group.tanggalAsal)) group.tanggalAsal = tanggal;
-      group.qtyFilling += Number(lot.qtyFilling) || 0;
-      group.qtyPressTerpakai += Number(lot.qtyPressTerpakai) || 0;
+
+      // Tanggal Asal adalah lot tertua yang masih memiliki sisa setelah seluruh
+      // Preview Press dialokasikan.
+      if (lot.remaining > 0 && tanggal && (!group.tanggalAsal || tanggal < group.tanggalAsal)) {
+        group.tanggalAsal = tanggal;
+      }
+
+      if (lot.source === "spreadsheet" && lot.groupQtyFilling !== null && lot.groupQtyPressTerpakai !== null) {
+        // Nilai grup dari backend identik pada setiap lot aktif kombinasi yang sama,
+        // sehingga cukup dimasukkan satu kali agar tidak terduplikasi.
+        if (!group.savedGroupStatsApplied) {
+          group.qtyFilling += Number(lot.groupQtyFilling) || 0;
+          group.qtyPressTerpakai += Number(lot.groupQtyPressTerpakai) || 0;
+          group.savedGroupStatsApplied = true;
+        }
+      } else {
+        // Kompatibilitas deployment lama dan Preview Filling.
+        group.qtyFilling += Number(lot.qtyFilling) || 0;
+        group.qtyPressTerpakai += Number(lot.qtyPressTerpakai) || 0;
+      }
+
+      // Preview Press belum ada di angka grup backend, jadi tambahkan delta ini
+      // secara terpisah untuk semua lot yang dikonsumsi preview.
+      if (lot.source === "spreadsheet" && lot.groupQtyFilling !== null) {
+        group.qtyPressTerpakai += Number(lot.previewPressTerpakai) || 0;
+      }
+
       group.remaining += Number(lot.remaining) || 0;
+
+      const backendPerKardus = Array.isArray(lot.qtyBotolPerKardusValues)
+        ? lot.qtyBotolPerKardusValues
+        : [];
+      backendPerKardus.forEach(value => {
+        const qty = Number(value) || 0;
+        if (qty > 0) group.qtyBotolPerKardusValues.add(qty);
+      });
       const qtyPerKardus = Number(lot.qtyBotolPerKardus) || 0;
       if (qtyPerKardus > 0) group.qtyBotolPerKardusValues.add(qtyPerKardus);
       group.sources.add(lot.source || "spreadsheet");
     });
 
     return Array.from(grouped.values())
+      .filter(group => group.remaining > 0)
       .map(group => ({
         ...group,
         qtyBotolPerKardus: Array.from(group.qtyBotolPerKardusValues).sort((a, b) => a - b),

@@ -115,11 +115,12 @@ function doGet(e) {
       const visibleEntries = can_(session.user, 'viewAllData')
         ? featureEntries
         : featureEntries.filter(function (entry) { return entry.createdBy === session.user.username; });
+      const pressAdjustments = can_(session.user, 'accessPress') ? getPressAdjustments_() : [];
       return json_({
         ok: true,
         entries: visibleEntries,
-        adjustments: can_(session.user, 'accessPress') ? getPressAdjustments_() : [],
-        remainders: can_(session.user, 'accessPress') ? getPressRemainders_() : [],
+        adjustments: pressAdjustments,
+        remainders: can_(session.user, 'accessPress') ? getPressRemainders_(allEntries, pressAdjustments) : [],
         users: session.user.role === 'superuser' ? getUsers_() : []
       });
     }
@@ -567,7 +568,7 @@ function createEntriesBatch_(user, dataList) {
   }
 
   // Satu kali sinkronisasi untuk seluruh batch.
-  const remainders = writePressModel_(projectedEntries, model);
+  const remainders = writePressModel_(projectedEntries, model, adjustments);
 
   return {
     entries: resultEntries,
@@ -957,7 +958,67 @@ function buildPressAllocationModel_(entries, adjustments) {
   return { remainders: remainders, pressMeta: pressMeta, overflow: overflow };
 }
 
-function writePressModel_(entries, model) {
+function decoratePressRemainders_(remainders, entries, adjustments) {
+  const rows = Array.isArray(remainders) ? remainders : [];
+  const statsByKey = {};
+
+  function statsFor_(produk, botol) {
+    const key = balanceKey_(produk, botol);
+    if (!statsByKey[key]) {
+      statsByKey[key] = {
+        qtyFilling: 0,
+        qtyPressTerpakai: 0,
+        qtyDitutup: 0,
+        remaining: 0,
+        qtyBotolPerKardusValues: {}
+      };
+    }
+    return statsByKey[key];
+  }
+
+  // Total Filling harus memakai seluruh histori lot, termasuk lot yang sudah
+  // habis di-Press dan karenanya tidak lagi tersimpan sebagai baris aktif di
+  // Sheet "Sisa Press".
+  (entries || []).forEach(function (entry) {
+    if (entry.tab !== 'filling' || number_(entry.totalQty) <= 0) return;
+    const stats = statsFor_(entry.produk, entry.botol);
+    stats.qtyFilling += number_(entry.totalQty);
+    const perKardus = number_(entry.qtyBotolPerKardus);
+    if (perKardus > 0) stats.qtyBotolPerKardusValues[String(perKardus)] = perKardus;
+  });
+
+  (adjustments || []).forEach(function (adjustment) {
+    if (number_(adjustment.qtyDitutup) <= 0) return;
+    statsFor_(adjustment.produk, adjustment.botol).qtyDitutup += number_(adjustment.qtyDitutup);
+  });
+
+  // Sisa aktif tetap berasal dari Sheet/model Sisa Press.
+  rows.forEach(function (item) {
+    statsFor_(item.produk, item.botol).remaining += number_(item.sisaQty);
+  });
+
+  // Untuk setiap kombinasi Produk + Botol:
+  // Filling = Press terpakai + Ditutup + Sisa.
+  Object.keys(statsByKey).forEach(function (key) {
+    const stats = statsByKey[key];
+    stats.qtyPressTerpakai = Math.max(0, stats.qtyFilling - stats.qtyDitutup - stats.remaining);
+  });
+
+  return rows.map(function (item) {
+    const stats = statsFor_(item.produk, item.botol);
+    return Object.assign({}, item, {
+      groupQtyFilling: stats.qtyFilling,
+      groupQtyPressTerpakai: stats.qtyPressTerpakai,
+      groupQtyDitutup: stats.qtyDitutup,
+      groupSisaQty: stats.remaining,
+      groupQtyBotolPerKardusValues: Object.keys(stats.qtyBotolPerKardusValues)
+        .map(function (key) { return stats.qtyBotolPerKardusValues[key]; })
+        .sort(function (a, b) { return a - b; })
+    });
+  });
+}
+
+function writePressModel_(entries, model, adjustments) {
   const sh = pressRemainderSheet_(true);
 
   if (sh.getLastRow() > 1) {
@@ -986,16 +1047,17 @@ function writePressModel_(entries, model) {
     entrySh.getRange(2, 17, noteRows.length, 2).setValues(noteRows);
   }
 
-  return model.remainders;
+  return decoratePressRemainders_(model.remainders, entries, adjustments || []);
 }
 
 function rebuildPressRemainders_() {
   const entries = getEntries_();
-  const model = buildPressAllocationModel_(entries, getPressAdjustments_());
-  return writePressModel_(entries, model);
+  const adjustments = getPressAdjustments_();
+  const model = buildPressAllocationModel_(entries, adjustments);
+  return writePressModel_(entries, model, adjustments);
 }
 
-function getPressRemainders_() {
+function getPressRemainders_(entriesInput, adjustmentsInput) {
   let sh = pressRemainderSheet_(false);
 
   // Migrasi otomatis untuk deployment lama yang belum memiliki Sheet Sisa Press.
@@ -1021,13 +1083,16 @@ function getPressRemainders_() {
 
   // Bila baru migrasi dan sheet masih kosong sementara data Filling lama ada, bangun sekali.
   if (!result.length) {
-    const hasFilling = getEntries_().some(function (entry) {
+    const entriesForCheck = Array.isArray(entriesInput) ? entriesInput : getEntries_();
+    const hasFilling = entriesForCheck.some(function (entry) {
       return entry.tab === 'filling' && number_(entry.totalQty) > 0;
     });
     if (hasFilling) return rebuildPressRemainders_();
   }
 
-  return result;
+  const entries = Array.isArray(entriesInput) ? entriesInput : getEntries_();
+  const adjustments = Array.isArray(adjustmentsInput) ? adjustmentsInput : getPressAdjustments_();
+  return decoratePressRemainders_(result, entries, adjustments);
 }
 
 
