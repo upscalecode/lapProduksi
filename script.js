@@ -87,6 +87,7 @@
   function qsa(selector, root = document) { return Array.from(root.querySelectorAll(selector)); }
 
   const DEFAULT_USER_PERMISSIONS = Object.freeze({
+    accessDashboard: false,
     accessFilling: true,
     accessPress: true,
     accessReports: false,
@@ -122,16 +123,17 @@
   }
 
   function firstAllowedView() {
+    if (can("accessDashboard")) return "dashboard"
     if (can("accessFilling")) return "filling";
     if (can("accessPress")) return "press";
     if (can("accessReports")) return "laporan";
     if (can("accessMaster")) return "master";
-    return "dashboard";
+    return "";
   }
 
   function applyAccessControl() {
     const accessMap = {
-      dashboard: true,
+      dashboard: can("accessDashboard"),
       filling: can("accessFilling"),
       press: can("accessPress"),
       laporan: can("accessReports"),
@@ -147,8 +149,12 @@
     const active = qs(".tab-btn.active");
     if (active && !accessMap[active.dataset.view]) {
       const fallback = firstAllowedView();
-      qsa(".tab-btn").forEach(btn => btn.classList.toggle("active", btn.dataset.view === fallback));
-      qsa(".content > .view").forEach(node => { node.hidden = node.id !== "view-" + fallback; });
+      qsa(".tab-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.view === fallback);
+      });
+      qsa(".content > .view").forEach(node => { 
+        node.hidden = !fallback ||
+        node.id !== "view-" + fallback; });
     }
   }
 
@@ -411,7 +417,7 @@
         credentials: "omit"
       });
       const data = await parseApiResponse(response);
-      setConnection("online", "Spreadsheet terhubung");
+      setConnection("online", "Aktif");
       return data;
     } catch (err) {
       setConnection("error", "Koneksi gagal");
@@ -643,6 +649,9 @@
     clone.addEventListener("click", async event => {
       const deleteBtn = event.target.closest(".press-balance-delete");
       if (deleteBtn) {
+        if(!can("deleteUnpressed")){
+          return toast("Tidak ada akses", true);
+        }
         const produkValue = deleteBtn.dataset.produk || "";
         const botolValue = deleteBtn.dataset.botol || "";
         const row = getPressBalanceRows().find(item =>
@@ -1318,12 +1327,16 @@
           ? '<span class="sync-badge pending">Spreadsheet + Preview</span>'
           : '<span class="sync-badge saved">Spreadsheet</span>';
       const deleteAllowed = can("deleteUnpressed");
-      const deleteDisabled = !deleteAllowed || row.hasPreview || !row.hasSpreadsheet;
-      const deleteTitle = !deleteAllowed
-        ? 'Anda tidak memiliki akses menghapus pengerjaan yang belum di-Press.'
-        : row.hasPreview
-          ? 'Simpan Preview Filling terlebih dahulu sebelum menghapus sisa.'
-          : (!row.hasSpreadsheet ? 'Data ini belum tersimpan di Spreadsheet.' : 'Hapus sisa dengan alasan.');
+      const deleteDisabled = row.hasPreview || !row.hasSpreadsheet;
+      // !deleteAllowed || row.hasPreview || !row.hasSpreadsheet;
+      const deleteTitle = row.hasPreview
+      // !deleteAllowed
+      // ? 'Anda tidak memiliki akses menghapus pengerjaan yang belum di-Press.'
+        ? 'Simpan Preview Filling terlebih dahulu sebelum menghapus'
+        : (!row.hasSpreadsheet
+          ? 'Data ini belum disimpan.'
+          : 'Hapus sisa dengan alasan');
+          // : (!row.hasSpreadsheet ? 'Data ini belum tersimpan di Spreadsheet.' : 'Hapus sisa dengan alasan.');
 
       return `
       <tr>
@@ -1343,9 +1356,13 @@
             <button type="button" class="btn btn-ghost press-balance-use"
               data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}"
               ${!produkAktif ? 'disabled title="Produk sudah tidak ada di Master."' : ""}>Gunakan</button>
+            ${deleteAllowed ? `
             <button type="button" class="btn btn-danger press-balance-delete"
-              data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}"
-              ${deleteDisabled ? "disabled" : ""} title="${esc(deleteTitle)}">Hapus</button>
+            data-produk="${esc(row.produk)}"
+            data-botol="${esc(row.botol)}" ${deleteDisabled ? "disabled" : ""}
+            title="${esc(deleteTitle)}"> Hapus </button>
+              `:""
+            }
           </div>
         </td>
       </tr>`;
@@ -3065,14 +3082,28 @@
       const btn = event.target.closest(".tab-btn");
       if (!btn || !state.currentUser) return;
       const view = btn.dataset.view;
-      const allowed = view === "dashboard" ? true
-        : view === "filling" ? can("accessFilling")
-          : view === "press" ? can("accessPress")
-            : view === "laporan" ? can("accessReports")
-              : view === "master" ? can("accessMaster") : false;
-      if (!allowed) return;
+      const permissionMap = {
+        dashboard : "accessDashboard",
+        filling: "accessFilling",
+        press: "accessPress",
+        laporan: "accessReports",
+        master: "accessMaster"
+      };
 
-      qsa(".tab-btn", tabbar).forEach(node => node.classList.toggle("active", node === btn));
+      const permisson = permissionMap[view];
+      if(!permisson || !can(permisson)){
+        return;
+      }
+      // const allowed = view === "dashboard" ? can("accessDashboard")
+      //   : view === "filling" ? can("accessFilling")
+      //     : view === "press" ? can("accessPress")
+      //       : view === "laporan" ? can("accessReports")
+      //         : view === "master" ? can("accessMaster") : false;
+      // if (!allowed) return;
+
+      qsa(".tab-btn", tabbar).forEach(node => { 
+        node.classList.toggle("active", node === btn);
+      });
       qsa(".content > .view").forEach(node => { node.hidden = node.id !== "view-" + view; });
     });
   }
