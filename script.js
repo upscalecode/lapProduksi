@@ -2883,6 +2883,48 @@
       }
     } catch (_) {}
 
+    function initDashboardSlider() {
+    const track = document.getElementById("dashboardSliderTrack");
+    const prevBtn = document.getElementById("dashboardSliderPrev");
+    const nextBtn = document.getElementById("dashboardSliderNext");
+
+    if (!track || !prevBtn || !nextBtn) return;
+
+    const slides = Array.from(
+      track.querySelectorAll(".dashboard-slide")
+    );
+
+    let currentSlide = 0;
+
+    function updateSlider() {
+      track.style.transform =
+        `translateX(-${currentSlide * 100}%)`;
+
+      prevBtn.disabled = currentSlide === 0;
+      nextBtn.disabled =
+        currentSlide === slides.length - 1;
+    }
+
+    prevBtn.addEventListener("click", () => {
+      if (currentSlide > 0) {
+        currentSlide--;
+        updateSlider();
+      }
+    });
+
+    nextBtn.addEventListener("click", () => {
+      if (currentSlide < slides.length - 1) {
+        currentSlide++;
+        updateSlider();
+      }
+    });
+
+    updateSlider();
+  }
+
+  document.addEventListener("DOMContentLoaded", () => {
+  initDashboardSlider();
+  });
     try {
       // Bootstrap sekarang ringan: hanya validasi user + master dropdown.
       await loadBootstrap();

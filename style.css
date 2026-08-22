@@ -701,6 +701,60 @@ body[data-page="login"] .login-screen{
   width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;
   flex:0 0 44px;font-family:var(--font-display);font-size:20px;font-weight:700;
 }
+
+/* ================================
+   DASHBOARD SLIDER
+   ================================ */
+.dashboard-slider {position: relative;width: 100%;}
+.dashboard-slider-viewport {width: 100%;overflow: hidden;}
+.dashboard-slider-track {display: flex; width: 100%;transition: transform 0.45s ease;}
+.dashboard-slide {flex: 0 0 100%;width: 100%;}
+
+
+/* tombol kiri kanan */
+.dashboard-slider-btn {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  width: 42px;
+  height: 70px;
+  border: none;
+  background: rgba(255, 255, 255, 0.9);
+  color: #1f2937;
+  font-size: 42px;
+  font-weight: 300;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.12);
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease;
+}
+.fa-circle-chevron-left{width: 26px; height: 26px; color: #1672d8;}
+.fa-circle-chevron-right{width: 26px; height: 26px; color: #1672d8;}
+
+.dashboard-slider-btn:hover {background: #ffffff;}
+
+/* panah kiri */
+.dashboard-slider-prev {left: -18px;}
+
+/* panah kanan */
+.dashboard-slider-next {right: -18px;}
+
+/* tombol ketika slide sudah mentok */
+.dashboard-slider-btn:disabled {opacity: 0.25; cursor: default;}
+
+/* Mobile */
+@media (max-width: 650px) {
+  .dashboard-slider-prev {left: 2px;}
+  .dashboard-slider-next {right: 2px;}
+  .dashboard-slider-btn {width: 34px;height: 55px; font-size: 32px;}
+}
+
 .dashboard-flow-icon.filling{background:var(--dash-blue-soft);color:var(--dash-blue);}
 .dashboard-flow-icon.waiting{background:var(--dash-teal-soft);color:var(--dash-teal);}
 .dashboard-flow-icon.press{background:var(--dash-purple-soft);color:var(--dash-purple);}

@@ -6,6 +6,7 @@
   <title>Laporan Produksi — Filling &amp; Press</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+  <script src="https://kit.fontawesome.com/59dfa0db6c.js" crossorigin="anonymous"></script>
   <link rel="stylesheet" href="style.css">
 
   <style>
@@ -40,7 +41,9 @@
             <span id="userRole" class="user-role">—</span>
           </div>
         </div>
-        <button id="logoutBtn" class="btn btn-ghost">Keluar</button>
+        <button id="logoutBtn" class="btn btn-ghost">
+          <i class="fa-solid fa-right-from-bracket"></i>
+        </button>
       </div>
     </header>
 
@@ -63,77 +66,141 @@
             </div>
             <div class="dashboard-heading-actions">
               <span id="dashboardDate" class="dashboard-date mono">—</span>
-              <button type="button" class="btn btn-secondary" id="dashboardRefresh">↻ Refresh Dashboard</button>
+              <button type="button" class="btn btn-secondary" id="dashboardRefresh">
+                <i class="fa-solid fa-retweet"></i> Refresh
+              </button>
             </div>
           </div>
 
           <div class="dashboard-kpis">
+            <article class="dashboard-kpi kpi-products">
+              <span class="dashboard-kpi-icon">
+                <i class="fa-solid fa-spray-can-sparkles"></i>
+              </span>
+              <div><span class="dashboard-kpi-label">Produk Aktif</span><strong id="dashActiveProducts">0</strong><span class="dashboard-kpi-unit">produk</span></div>
+            </article>
             <article class="dashboard-kpi kpi-filling">
-              <span class="dashboard-kpi-icon">◉</span>
+              <span class="dashboard-kpi-icon">
+                <i class="fa-solid fa-droplet"></i>
+              </span>
               <div><span class="dashboard-kpi-label">Filling Hari Ini</span><strong id="dashFillingToday">0</strong><span class="dashboard-kpi-unit">pcs</span></div>
             </article>
             <article class="dashboard-kpi kpi-press">
-              <span class="dashboard-kpi-icon">⚙</span>
+              <span class="dashboard-kpi-icon">
+                <i class="fa-solid fa-circle-down"></i>
+              </span>
               <div><span class="dashboard-kpi-label">Press Hari Ini</span><strong id="dashPressToday">0</strong><span class="dashboard-kpi-unit">pcs</span></div>
             </article>
             <article class="dashboard-kpi kpi-waiting">
-              <span class="dashboard-kpi-icon">⌛</span>
-              <div><span class="dashboard-kpi-label">Sisa Menunggu Press</span><strong id="dashPressRemaining">0</strong><span class="dashboard-kpi-unit">pcs</span></div>
-            </article>
-            <article class="dashboard-kpi kpi-products">
-              <span class="dashboard-kpi-icon">▣</span>
-              <div><span class="dashboard-kpi-label">Produk Aktif</span><strong id="dashActiveProducts">0</strong><span class="dashboard-kpi-unit">produk</span></div>
+              <span class="dashboard-kpi-icon">
+                <i class="fa-solid fa-hourglass-start"></i>
+              </span>
+              <div><span class="dashboard-kpi-label">Menunggu Press</span><strong id="dashPressRemaining">0</strong><span class="dashboard-kpi-unit">pcs</span></div>
             </article>
             <article class="dashboard-kpi kpi-broken">
-              <span class="dashboard-kpi-icon">!</span>
-              <div><span class="dashboard-kpi-label">Botol Pecah Hari Ini</span><strong id="dashBrokenToday">0</strong><span class="dashboard-kpi-unit">pcs</span></div>
+              <span class="dashboard-kpi-icon">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+              </span>
+              <div><span class="dashboard-kpi-label">Pecah Hari ini</span><strong id="dashBrokenToday">0</strong><span class="dashboard-kpi-unit">pcs</span></div>
             </article>
             <article class="dashboard-kpi kpi-oldest">
-              <span class="dashboard-kpi-icon">⌛</span>
-              <div><span class="dashboard-kpi-label">Sisa Terlama</span><strong id="dashOldestDays">0</strong><span class="dashboard-kpi-unit">hari</span></div>
+              <span class="dashboard-kpi-icon">
+                <i class="fa-regular fa-calendar-check"></i>
+              </span>
+              <div><span class="dashboard-kpi-label">Waktu Terlama</span><strong id="dashOldestDays">0</strong><span class="dashboard-kpi-unit">hari</span></div>
             </article>
           </div>
 
           <section class="dashboard-flow panel">
             <div class="dashboard-flow-step">
-              <span class="dashboard-flow-icon filling">◉</span>
+              <span class="dashboard-flow-icon filling">
+                <i class="fa-solid fa-droplet"></i>
+              </span>
               <div><span>FILLING</span><strong id="dashFlowFilling">0 pcs</strong></div>
             </div>
-            <span class="dashboard-flow-arrow">→</span>
+            <span class="dashboard-flow-arrow">
+              <i class="fa-solid fa-arrow-right"></i>
+            </span>
             <div class="dashboard-flow-step">
-              <span class="dashboard-flow-icon waiting">⌛</span>
+              <span class="dashboard-flow-icon waiting">
+                <i class="fa-solid fa-hourglass-start"></i>
+              </span>
               <div><span>MENUNGGU PRESS</span><strong id="dashFlowWaiting">0 pcs tertunda</strong></div>
             </div>
-            <span class="dashboard-flow-arrow">→</span>
+            <span class="dashboard-flow-arrow">
+              <i class="fa-solid fa-arrow-right"></i>
+            </span>
             <div class="dashboard-flow-step">
-              <span class="dashboard-flow-icon press">⚙</span>
+              <span class="dashboard-flow-icon press">
+                <i class="fa-solid fa-circle-down"></i>
+              </span>
               <div><span>PRESS</span><strong id="dashFlowPress">0 pcs</strong></div>
             </div>
-            <span class="dashboard-flow-arrow">→</span>
+            <span class="dashboard-flow-arrow">
+              <i class="fa-solid fa-arrow-right"></i>
+            </span>
             <div class="dashboard-flow-step">
-              <span class="dashboard-flow-icon done">✓</span>
+              <span class="dashboard-flow-icon done">
+                <i class="fa-solid fa-check-double"></i>
+              </span>
               <div><span>SELESAI</span><strong id="dashFlowDone">0% selesai</strong></div>
             </div>
           </section>
+          <div class="dashboard-slider">
+            <button type="button" class="dashboard-slider-btn dashboard-slider-prev" id="dashboardSliderPrev" aria-label="Sebelumnya">
+              <i class="fa-solid fa-circle-chevron-left"></i>
+            </button>
+            <div class="dashboard-slider-viewport">
+              <div class="dashboard-slider-track" id="dashboardSliderTrack">
+                <!-- SLIDE PERTAMA -->
+                 <div class="dashboard-slide">
+                    <div class="dashboard-grid dashboard-grid-main">
+                      <section class="panel dashboard-chart-panel">
+                        <div class="panel-head dashboard-panel-head">
+                          <div><p class="eyebrow">7 Hari Terakhir</p><h2>Filling vs Press</h2></div>
+                          <div class="dashboard-legend"><span><i class="legend-dot filling"></i>Filling</span><span><i class="legend-dot press"></i>Press</span></div>
+                        </div>
+                        <div id="dashboardWeeklyChart" class="dashboard-weekly-chart"></div>
+                      </section>
 
-          <div class="dashboard-grid dashboard-grid-main">
-            <section class="panel dashboard-chart-panel">
-              <div class="panel-head dashboard-panel-head">
-                <div><p class="eyebrow">7 Hari Terakhir</p><h2>Filling vs Press</h2></div>
-                <div class="dashboard-legend"><span><i class="legend-dot filling"></i>Filling</span><span><i class="legend-dot press"></i>Press</span></div>
+                      <section class="panel dashboard-alert-panel">
+                        <div class="panel-head dashboard-panel-head">
+                          <div><p class="eyebrow">Perlu Perhatian</p><h2>Alert Produksi</h2></div>
+                          <span id="dashboardAlertCount" class="dashboard-alert-count">0 alert</span>
+                        </div>
+                        <div id="dashboardAlerts" class="dashboard-alerts"></div>
+                      </section>
+                  </div>
+                 </div>
+                 <!-- SLIDE KEDUA -->
+                 <div class="dashboard-slide">
+                  <div class="dashboard-grid dashboard-grid-main">
+                    <section class="panel">
+                      <div class="panel-head dashboard-panel-head">
+                        <div>
+                          <p class="eyebrow">Dashboard</p>
+                          <h2>Konten Slide 2</h2>
+                        </div>
+                      </div>
+                      <p>Isi panel berikutnya di sini.</p>
+                    </section>
+                    <section class="panel">
+                      <div class="panel-head dashboard-panel-head">
+                        <div>
+                          <p class="eyebrow">Informasi</p>
+                          <h2>Panel Berikutnya</h2>
+                        </div>
+                      </div>
+                      <p>Isi panel berikutnya di sini.</p>
+                    </section>
+                  </div>
+                </div>
               </div>
-              <div id="dashboardWeeklyChart" class="dashboard-weekly-chart"></div>
-            </section>
-
-            <section class="panel dashboard-alert-panel">
-              <div class="panel-head dashboard-panel-head">
-                <div><p class="eyebrow">Perlu Perhatian</p><h2>Alert Produksi</h2></div>
-                <span id="dashboardAlertCount" class="dashboard-alert-count">0 alert</span>
-              </div>
-              <div id="dashboardAlerts" class="dashboard-alerts"></div>
-            </section>
+            </div>
+            <button type="button" class="dashboard-slider-btn dashboard-slider-next" id="dashboardSliderNext" aria-label="Berikutnya">
+              <i class="fa-solid fa-circle-chevron-right"></i>
+            </button>
           </div>
-
           <section class="panel dashboard-priority-panel">
             <div class="panel-head dashboard-panel-head">
               <div><p class="eyebrow">FIFO &amp; Umur Sisa</p><h2>Prioritas Pengerjaan Press</h2></div>
@@ -225,8 +292,10 @@
 
             <p class="form-error f-error" hidden></p>
             <div class="form-actions">
-              <button type="submit" class="btn btn-primary f-submit-btn">+ Tambah List</button>
-              <button type="button" class="btn btn-ghost f-cancel-btn" hidden>Batal Edit</button>
+              <button type="submit" class="btn btn-primary f-submit-btn">
+                <i class="fa-solid fa-circle-plus"></i> Tambah List</button>
+              <button type="button" class="btn btn-ghost f-cancel-btn" hidden>
+                <i class="fa-solid fa-ban"></i> Batal Edit</button>
             </div>
           </form>
 
@@ -236,7 +305,8 @@
                 <p class="eyebrow">Preview Data</p>
                 <h2>Daftar Pengerjaan — Filling</h2>
               </div>
-              <button type="button" class="btn btn-secondary f-export-btn" id="exportPreview">⭳ Export CSV</button>
+              <button type="button" class="btn btn-secondary f-export-btn" id="exportPreview">
+                <i class="fa-solid fa-file-export"></i> Export CSV</button>
             </div>
 
             <div class="search-bar">
@@ -245,7 +315,8 @@
                 <input type="search" class="f-search-keyword" placeholder="Cari nama operator atau produk…" autocomplete="off">
               </label>
               <button type="button" class="btn btn-ghost f-search-reset">Reset</button>
-              <button type="button" class="btn btn-secondary f-save-btn" id="save-btn" disabled>Simpan</button>
+              <button type="button" class="btn btn-secondary f-save-btn" id="save-btn" disabled>
+                <i class="fa-solid fa-cloud-arrow-up"></i> Simpan</button>
             </div>
 
             <div class="table-wrap">
@@ -291,13 +362,19 @@
             <label class="field field-inline"><span>Operator</span><select id="lap-operator"><option value="">Semua operator</option></select></label>
             <label class="field field-inline"><span>Dari Tanggal</span><input type="date" id="lap-start"></label>
             <label class="field field-inline"><span>Sampai Tanggal</span><input type="date" id="lap-end"></label>
-            <button type="button" class="btn btn-primary" id="lap-generate">Buat Laporan</button>
+            <button type="button" class="btn btn-primary" id="lap-generate">
+              <i class="fa-solid fa-file-lines"></i> Buat Laporan</button>
           </div>
 
           <div id="lap-result" class="report-block" hidden>
             <div class="report-head">
               <div><p class="eyebrow">Laporan Produksi</p><h3 id="lap-id" class="mono stamp stamp-lg">—</h3></div>
               <div class="report-meta"><p>Dibuat: <span id="lap-created" class="mono"></span></p><p>Oleh: <span id="lap-by" class="mono"></span></p><p>Periode: <span id="lap-period" class="mono"></span></p></div>
+              <div class="form-actions">
+                <button type="button" class="btn btn-secondary" id="lap-export"><i class="fa-solid fa-file-export"></i> Export CSV</button>
+                <button type="button" class="btn btn-primary" id="lap-pdf"><i class="fa-solid fa-file"></i> PDF</button>
+              <!-- <button type="button" class="btn btn-ghost" id="lap-print">🖶 Cetak</button></div> -->
+              </div>
             </div>
             <div class="report-stats">
               <div class="stat"><span class="stat-value" id="lap-total-entries">0</span><span class="stat-label">Total Entri</span></div>
@@ -312,7 +389,9 @@
               </table>
             </div>
             <div class="table-footer"><p id="lap-page-summary" class="table-summary"></p><div id="lap-pagination" class="pagination"></div></div>
-            <div class="form-actions"><button type="button" class="btn btn-secondary" id="lap-export">⭳ Export CSV</button><button type="button" class="btn btn-primary" id="lap-pdf">Cetak PDF</button>
+            <div class="form-actions">
+              <button type="button" class="btn btn-secondary" id="lap-export"><i class="fa-solid fa-file-export"></i> Export CSV</button>
+              <button type="button" class="btn btn-primary" id="lap-pdf"><i class="fa-solid fa-file"></i> PDF</button>
               <!-- <button type="button" class="btn btn-ghost" id="lap-print">🖶 Cetak</button></div> -->
           </div>
         </div>
@@ -323,7 +402,7 @@
           <section class="panel">
             <div class="panel-head"><h2>Data Master (Sumber Search)</h2></div>
             <p class="hint-text">Sheet <code>Master</code>: kolom A = Nama Operator, kolom B = Nama Produk, kolom C = Nama Botol.</p>
-            <div class="form-actions"><button type="button" class="btn btn-secondary" id="masterReload">↻ Muat Ulang</button><button type="button" class="btn btn-ghost" id="masterCsvExport">⭳ Export Master</button></div>
+            <div class="form-actions"><button type="button" class="btn btn-secondary" id="masterReload"><i class="fa-solid fa-retweet"></i> Refresh</button><button type="button" class="btn btn-ghost" id="masterCsvExport"><i class="fa-solid fa-file-export"></i> Export Master</button></div>
             <div class="master-cols">
               <div class="master-col" data-cat="operator"><h3>Operator</h3><div class="chip-list" data-cat="operator"></div><div class="chip-add" data-cat="operator"><input type="text" placeholder="Tambah operator…"><button type="button" class="btn btn-ghost">+</button></div></div>
               <div class="master-col" data-cat="produk"><h3>Produk</h3><div class="chip-list" data-cat="produk"></div><div class="chip-add" data-cat="produk"><input type="text" placeholder="Tambah produk…"><button type="button" class="btn btn-ghost">+</button></div></div>
@@ -532,8 +611,8 @@
             type="button"
             class="btn btn-primary"
             id="permissionSave"
-          >
-            Simpan Hak Akses
+          ><i class="fa-solid fa-cloud-arrow-up"></i>
+            Simpan
           </button>
 
         </div>
