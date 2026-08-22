@@ -36,6 +36,7 @@
     REQUEST_TIMEOUT: 30000, // safety net; simpan batch normalnya jauh lebih cepat
     PAGE_SIZE: 20,
     PRESS_BALANCE_PAGE_SIZE: 5,
+    DASHBOARD_PRIORITY_PAGE_SIZE: 6,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL: "https://script.google.com/macros/s/AKfycbyzM7BTrMfpc6OvQBzxBcxHRUCQHpNm_F4ZheB3TUiLics1M8GXMRSDXgg1pBQoDGnaPA/exec"
@@ -60,6 +61,7 @@
     pages: { filling: 1, press: 1, laporan: 1 },
     savedPages: { filling: 1, press: 1 },
     pressBalance: { search: "", page: 1 },
+    dashboard: {chartMode: "7days", chartMonth:"", chartYear:"", chartStart:"", chartEnd:"", priorityPage: 1 },
     lastLaporan: null
   };
 
@@ -945,8 +947,14 @@
 
   function filteredEntries(line) {
     const filter = state.search[line] || { query: "" };
+    const today = todayStr();
+
+    // Tabel data tersimpan pada menu Filling / Press hanya menampilkan
+    // pengerjaan dengan tanggal hari ini. Data tanggal lain tetap berada di
+    // state.entries sehingga fitur Laporan, Dashboard, dan balance Press tetap
+    // menggunakan histori sesuai logic yang sudah ada.
     return state.entries
-      .filter(e => e.tab === line)
+      .filter(e => e.tab === line && e.tanggal === today)
       .filter(e => matchesPreviewSearch(e, filter.query))
       .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
   }
@@ -1440,63 +1448,21 @@
       </tr>`;
   }
 
-  function renderEntries(line) {
-    const section = el("view-" + line);
-    if (!section) return;
-    const tbody = qs(".f-saved-tbody", section);
-    const summary = qs(".f-saved-summary", section);
-    const pagination = qs(".f-saved-pagination", section);
-    if (!tbody) return;
-    const rows = filteredEntries(line);
+  function combinedWorkEntries(line) {
+    const saved = filteredEntries(line).map(entry => ({ ...entry, _displaySource: "saved" }));
+    const preview = filteredPreviewEntries(line).map(entry => ({ ...entry, _displaySource: "preview" }));
 
-    const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PAGE_SIZE));
-    state.savedPages[line] = Math.min(Math.max(1, state.savedPages[line]), totalPages);
-    const page = state.savedPages[line];
-    const start = (page - 1) * CONFIG.PAGE_SIZE;
-    const visibleRows = rows.slice(start, start + CONFIG.PAGE_SIZE);
-
-    tbody.innerHTML = visibleRows.length
-      ? visibleRows.map(renderEntryRow).join("")
-      : '<tr><td colspan="11" class="empty-row">Belum ada data.</td></tr>';
-
-    const totalQty = rows.reduce((sum, e) => sum + (Number(e.totalQty) || 0), 0);
-    const totalPecah = rows.reduce((sum, e) => sum + (Number(e.qtyBotolPecah) || 0), 0);
-    const from = rows.length ? start + 1 : 0;
-    const to = Math.min(start + CONFIG.PAGE_SIZE, rows.length);
-    const pendingCount = rows.filter(e => e._syncState === "pending").length;
-    const errorCount = rows.filter(e => e._syncState === "error").length;
-    const syncInfo = [
-      pendingCount ? `${pendingCount} sedang disimpan` : "",
-      errorCount ? `${errorCount} gagal` : ""
-    ].filter(Boolean).join(" · ");
-    summary.textContent = `${from}–${to} dari ${rows.length} entri · Total Qty Botol: ${totalQty.toLocaleString("id-ID")} · Total Botol Pecah: ${totalPecah.toLocaleString("id-ID")}${syncInfo ? ` · ${syncInfo}` : ""}`;
-
-    renderPagination(pagination, page, totalPages, nextPage => {
-      state.savedPages[line] = nextPage;
-      renderEntries(line);
-      qs(".saved-data-panel", section)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
+    // Preview dan data tersimpan hari ini ditampilkan pada satu tabel.
+    // Pembeda visual sengaja hanya melalui kolom ID:
+    // - preview  => PREVIEW
+    // - tersimpan => reportId dari Spreadsheet
+    return [...saved, ...preview].sort((a, b) =>
+      String(b.createdAt || "").localeCompare(String(a.createdAt || ""))
+    );
   }
-  
 
-  function renderPreview(line) {
-    const section = el("view-" + line);
-    if (!section) return;
-
-    const tbody = qs(".f-tbody", section);
-    const summary = qs(".f-summary", section);
-    const pagination = qs(".f-pagination", section);
-    const saveBtn = qs(".f-save-btn", section);
-    if (!tbody) return;
-
-    const rows = filteredPreviewEntries(line);
-    const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PAGE_SIZE));
-    state.pages[line] = Math.min(Math.max(1, state.pages[line]), totalPages);
-    const page = state.pages[line];
-    const start = (page - 1) * CONFIG.PAGE_SIZE;
-    const visibleRows = rows.slice(start, start + CONFIG.PAGE_SIZE);
-
-    tbody.innerHTML = visibleRows.length ? visibleRows.map(entry => `
+  function renderPreviewRow(entry) {
+    return `
       <tr>
         <td><span class="id-badge">PREVIEW</span></td>
         <td>${esc(entry.tanggal)}</td>
@@ -1512,15 +1478,46 @@
           <button type="button" class="btn btn-ghost btn-preview-edit" data-id="${esc(entry.id)}">Edit</button>
           <button type="button" class="btn btn-danger btn-preview-delete" data-id="${esc(entry.id)}">Hapus</button>
         </td>
-      </tr>`).join("")
-      : '<tr><td colspan="11" class="empty-row">Belum ada data yang diinput untuk preview</td></tr>';
+      </tr>`;
+  }
+
+  // Dipertahankan sebagai compatibility wrapper karena beberapa alur lama
+  // masih memanggil renderEntries(). Sekarang seluruh data dirender di tabel
+  // yang sama melalui renderPreview().
+  function renderEntries(line) {
+    renderPreview(line);
+  }
+
+  function renderPreview(line) {
+    const section = el("view-" + line);
+    if (!section) return;
+
+    const tbody = qs(".f-tbody", section);
+    const summary = qs(".f-summary", section);
+    const pagination = qs(".f-pagination", section);
+    const saveBtn = qs(".f-save-btn", section);
+    if (!tbody) return;
+
+    const rows = combinedWorkEntries(line);
+    const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PAGE_SIZE));
+    state.pages[line] = Math.min(Math.max(1, state.pages[line]), totalPages);
+    const page = state.pages[line];
+    const start = (page - 1) * CONFIG.PAGE_SIZE;
+    const visibleRows = rows.slice(start, start + CONFIG.PAGE_SIZE);
+
+    tbody.innerHTML = visibleRows.length
+      ? visibleRows.map(entry => entry._displaySource === "preview"
+          ? renderPreviewRow(entry)
+          : renderEntryRow(entry)
+        ).join("")
+      : '<tr><td colspan="11" class="empty-row">Belum ada pengerjaan hari ini.</td></tr>';
 
     const totalQty = rows.reduce((sum, e) => sum + (Number(e.totalQty) || 0), 0);
     const totalPecah = rows.reduce((sum, e) => sum + (Number(e.qtyBotolPecah) || 0), 0);
     const from = rows.length ? start + 1 : 0;
     const to = Math.min(start + CONFIG.PAGE_SIZE, rows.length);
     if (summary) {
-      summary.textContent = `${from}–${to} dari ${rows.length} data preview · Total Qty Botol: ${totalQty.toLocaleString("id-ID")} · Total Botol Pecah: ${totalPecah.toLocaleString("id-ID")}`;
+      summary.textContent = `${from}–${to} dari ${rows.length} data hari ini · Total Qty Botol: ${totalQty.toLocaleString("id-ID")} · Total Botol Pecah: ${totalPecah.toLocaleString("id-ID")}`;
     }
 
     if (saveBtn) {
@@ -1536,6 +1533,7 @@
       renderPreview(line);
     });
   }
+
 
   function wireLineView(line) {
     const section = el("view-" + line);
@@ -1891,11 +1889,13 @@
       downloadText(`laporan-${line}-${todayStr()}.csv`, csv);
     });
 
-    qs(".f-saved-tbody", section)?.addEventListener("click", async event => {
-      const editBtn = event.target.closest(".btn-edit");
-      const deleteBtn = event.target.closest(".btn-delete");
-      if (editBtn) {
-        const entry = state.entries.find(x => x.id === editBtn.dataset.id);
+    qs(".f-tbody", section).addEventListener("click", async event => {
+      // Data tersimpan memakai tombol Update/Hapus seperti sebelumnya.
+      const savedEditBtn = event.target.closest(".btn-edit");
+      const savedDeleteBtn = event.target.closest(".btn-delete");
+
+      if (savedEditBtn) {
+        const entry = state.entries.find(x => x.id === savedEditBtn.dataset.id);
         if (!entry || !canEditEntry(entry)) return toast("Anda tidak memiliki akses mengedit data ini.", true);
         editing.value = entry.id;
         editing.dataset.source = "saved";
@@ -1914,31 +1914,32 @@
         form.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
-      if (deleteBtn) {
-        const entry = state.entries.find(x => x.id === deleteBtn.dataset.id);
+
+      if (savedDeleteBtn) {
+        const entry = state.entries.find(x => x.id === savedDeleteBtn.dataset.id);
         if (!entry || !canDeleteEntry(entry)) return toast("Anda tidak memiliki akses menghapus data ini.", true);
         if (!confirm(`Hapus data ${entry.reportId}?`)) return;
-        deleteBtn.disabled = true;
+        savedDeleteBtn.disabled = true;
         try {
           const response = await enqueueWrite(() => apiPost("entry.delete", { id: entry.id }));
           state.entries = state.entries.filter(x => x.id !== entry.id);
           if (Array.isArray(response.remainders)) state.remainders = response.remainders;
-          renderEntries(line);
+          renderPreview(line);
           renderPressBalance();
           toast("Data berhasil dihapus.");
         } catch (err) {
-          deleteBtn.disabled = false;
+          savedDeleteBtn.disabled = false;
           toast(err.message, true);
         }
+        return;
       }
-    });
 
-    qs(".f-tbody", section).addEventListener("click", event => {
-      const editBtn = event.target.closest(".btn-preview-edit");
-      const deleteBtn = event.target.closest(".btn-preview-delete");
+      // Data yang belum disimpan tetap memakai aksi Edit/Hapus preview.
+      const previewEditBtn = event.target.closest(".btn-preview-edit");
+      const previewDeleteBtn = event.target.closest(".btn-preview-delete");
 
-      if (editBtn) {
-        const entry = state.preview[line].find(x => x.id === editBtn.dataset.id);
+      if (previewEditBtn) {
+        const entry = state.preview[line].find(x => x.id === previewEditBtn.dataset.id);
         if (!entry) return;
         editing.value = entry.id;
         editing.dataset.source = "preview";
@@ -1960,8 +1961,8 @@
         return;
       }
 
-      if (deleteBtn) {
-        state.preview[line] = state.preview[line].filter(x => x.id !== deleteBtn.dataset.id);
+      if (previewDeleteBtn) {
+        state.preview[line] = state.preview[line].filter(x => x.id !== previewDeleteBtn.dataset.id);
         state.pages[line] = 1;
         persistPreview();
         renderPreview(line);
@@ -2022,42 +2023,604 @@
     return { key: "normal", label: "Hari ini" };
   }
 
-  function renderDashboardWeekly(entries) {
-    const chart = el("dashboardWeeklyChart");
-    if (!chart) return;
+  /* =========================================================
+   DASHBOARD CHART FILTER
+   ========================================================= */
 
-    const today = dashboardDateParts(todayStr()) || new Date();
-    const days = [];
-    for (let offset = 6; offset >= 0; offset--) {
-      const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset);
-      const key = dashboardDateKey(date);
-      const filling = entries
-        .filter(entry => entry.tab === "filling" && entry.tanggal === key)
-        .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
-      const press = entries
-        .filter(entry => entry.tab === "press" && entry.tanggal === key)
-        .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
-      days.push({ key, date, filling, press });
+  function dashboardAddDays(date, amount) {
+    return new Date(
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate() + amount
+    );
+  }
+
+
+  function dashboardMonthKey(date) {
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+
+    return `${date.getFullYear()}-${month}`;
+  }
+
+
+  function dashboardDaysBetween(start, end) {
+    const diff = end.getTime() - start.getTime();
+
+    return Math.floor(diff / 86400000) + 1;
+  }
+
+
+  function dashboardChartConfig() {
+    const today =
+      dashboardDateParts(todayStr()) ||
+      new Date();
+
+    const mode =
+      state.dashboard?.chartMode ||
+      "7days";
+
+
+    /* =============================
+      7 HARI TERAKHIR
+      ============================= */
+    if (mode === "7days") {
+
+      return {
+        mode,
+        groupBy: "day",
+
+        start: dashboardAddDays(today, -6),
+        end: today,
+
+        label: "7 Hari Terakhir"
+      };
     }
 
-    const maxValue = Math.max(1, ...days.flatMap(day => [day.filling, day.press]));
-    chart.innerHTML = days.map(day => {
-      const fillingHeight = day.filling > 0 ? Math.max(5, (day.filling / maxValue) * 100) : 0;
-      const pressHeight = day.press > 0 ? Math.max(5, (day.press / maxValue) * 100) : 0;
-      const label = day.date.toLocaleDateString("id-ID", { day: "2-digit", month: "short" });
-      return `
-        <div class="dashboard-day-group">
-          <div class="dashboard-bar-area">
-            <div class="dashboard-vbar filling" style="height:${fillingHeight}%" title="Filling ${dashboardQty(day.filling)} pcs">
-              <span>${day.filling ? dashboardQty(day.filling) : "0"}</span>
+
+    /* =============================
+      30 HARI TERAKHIR
+      ============================= */
+    if (mode === "30days") {
+
+      return {
+        mode,
+        groupBy: "day",
+
+        start: dashboardAddDays(today, -29),
+        end: today,
+
+        label: "30 Hari Terakhir"
+      };
+    }
+
+
+    /* =============================
+      BERDASARKAN BULAN
+      ============================= */
+    if (mode === "month") {
+
+      let monthValue =
+        state.dashboard.chartMonth;
+
+      if (!monthValue) {
+        monthValue = dashboardMonthKey(today);
+      }
+
+      const parts = monthValue.split("-");
+
+      const year = Number(parts[0]);
+      const month = Number(parts[1]) - 1;
+
+      const start =
+        new Date(year, month, 1);
+
+      const end =
+        new Date(year, month + 1, 0);
+
+      const label =
+        start.toLocaleDateString("id-ID", {
+          month: "long",
+          year: "numeric"
+        });
+
+      return {
+        mode,
+        groupBy: "day",
+        start,
+        end,
+        label
+      };
+    }
+
+
+    /* =============================
+      BERDASARKAN TAHUN
+      ============================= */
+    if (mode === "year") {
+
+      const year =
+        Number(state.dashboard.chartYear) ||
+        today.getFullYear();
+
+      return {
+        mode,
+        groupBy: "month",
+
+        start: new Date(year, 0, 1),
+        end: new Date(year, 11, 31),
+
+        label: `Tahun ${year}`
+      };
+    }
+
+
+    /* =============================
+      RENTANG TANGGAL
+      ============================= */
+    if (mode === "range") {
+
+      let start =
+        dashboardDateParts(
+          state.dashboard.chartStart
+        );
+
+      let end =
+        dashboardDateParts(
+          state.dashboard.chartEnd
+        );
+
+
+      if (!start) {
+        start = dashboardAddDays(today, -6);
+      }
+
+      if (!end) {
+        end = today;
+      }
+
+
+      /*
+        Jika user secara tidak sengaja
+        memilih tanggal akhir lebih kecil
+        dari tanggal awal, otomatis dibalik.
+      */
+      if (start > end) {
+        const temp = start;
+        start = end;
+        end = temp;
+      }
+
+
+      const totalDays =
+        dashboardDaysBetween(start, end);
+
+
+      /*
+        Jika rentang <= 62 hari
+        tampilkan per hari.
+
+        Jika > 62 hari
+        otomatis agregasi per bulan
+        supaya chart tidak berisi
+        ratusan batang.
+      */
+      const groupBy =
+        totalDays <= 62
+          ? "day"
+          : "month";
+
+
+      const startLabel =
+        start.toLocaleDateString("id-ID", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric"
+        });
+
+      const endLabel =
+        end.toLocaleDateString("id-ID", {
+          day: "2-digit",
+          month: "short",
+          year: "numeric"
+        });
+
+
+      return {
+        mode,
+        groupBy,
+        start,
+        end,
+        label: `${startLabel} – ${endLabel}`
+      };
+    }
+
+
+    return {
+      mode: "7days",
+      groupBy: "day",
+      start: dashboardAddDays(today, -6),
+      end: today,
+      label: "7 Hari Terakhir"
+    };
+  }
+
+
+  /* =========================================================
+    BUAT DATA CHART PER HARI
+    ========================================================= */
+
+  function dashboardDailyBuckets(
+    entries,
+    start,
+    end
+  ) {
+
+    const buckets = [];
+
+    for (
+      let date = new Date(start);
+      date <= end;
+      date = dashboardAddDays(date, 1)
+    ) {
+
+      const key =
+        dashboardDateKey(date);
+
+
+      const filling =
+        entries
+          .filter(entry =>
+            entry.tab === "filling" &&
+            entry.tanggal === key
+          )
+          .reduce(
+            (sum, entry) =>
+              sum +
+              (Number(entry.totalQty) || 0),
+            0
+          );
+
+
+      const press =
+        entries
+          .filter(entry =>
+            entry.tab === "press" &&
+            entry.tanggal === key
+          )
+          .reduce(
+            (sum, entry) =>
+              sum +
+              (Number(entry.totalQty) || 0),
+            0
+          );
+
+
+      buckets.push({
+        key,
+
+        date: new Date(date),
+
+        label:
+          date.toLocaleDateString(
+            "id-ID",
+            {
+              day: "2-digit",
+              month: "short"
+            }
+          ),
+
+        filling,
+        press
+      });
+    }
+
+
+    return buckets;
+  }
+
+
+  /* =========================================================
+    BUAT DATA CHART PER BULAN
+    ========================================================= */
+
+  function dashboardMonthlyBuckets(
+    entries,
+    start,
+    end
+  ) {
+
+    const buckets = [];
+
+    let current =
+      new Date(
+        start.getFullYear(),
+        start.getMonth(),
+        1
+      );
+
+
+    const last =
+      new Date(
+        end.getFullYear(),
+        end.getMonth(),
+        1
+      );
+
+
+    while (current <= last) {
+
+      const key =
+        dashboardMonthKey(current);
+
+
+      /*
+        Tetap filter berdasarkan start-end asli.
+
+        Jadi misalnya:
+        15 Januari sampai 20 Maret,
+
+        data tanggal 1-14 Januari
+        tidak ikut dihitung.
+      */
+      const periodEntries =
+        entries.filter(entry => {
+
+          const date =
+            dashboardDateParts(
+              entry.tanggal
+            );
+
+          if (!date) return false;
+
+          return (
+            date >= start &&
+            date <= end &&
+            dashboardMonthKey(date) === key
+          );
+        });
+
+
+      const filling =
+        periodEntries
+          .filter(
+            entry =>
+              entry.tab === "filling"
+          )
+          .reduce(
+            (sum, entry) =>
+              sum +
+              (Number(entry.totalQty) || 0),
+            0
+          );
+
+
+      const press =
+        periodEntries
+          .filter(
+            entry =>
+              entry.tab === "press"
+          )
+          .reduce(
+            (sum, entry) =>
+              sum +
+              (Number(entry.totalQty) || 0),
+            0
+          );
+
+
+      buckets.push({
+        key,
+
+        date: new Date(current),
+
+        label:
+          current.toLocaleDateString(
+            "id-ID",
+            {
+              month: "short",
+              year:
+                start.getFullYear() !==
+                end.getFullYear()
+                  ? "2-digit"
+                  : undefined
+            }
+          ),
+
+        filling,
+        press
+      });
+
+
+      current =
+        new Date(
+          current.getFullYear(),
+          current.getMonth() + 1,
+          1
+        );
+    }
+
+
+    return buckets;
+  }
+
+
+  /* =========================================================
+    RENDER CHART
+    ========================================================= */
+
+  function renderDashboardWeekly(entries) {
+
+    const chart =
+      el("dashboardWeeklyChart");
+
+    if (!chart) return;
+
+
+    const config =
+      dashboardChartConfig();
+
+
+    /*
+      Ubah tulisan eyebrow secara otomatis
+      mengikuti filter.
+    */
+    dashboardSetText(
+      "dashboardChartPeriodLabel",
+      config.label
+    );
+
+
+    const buckets =
+      config.groupBy === "month"
+        ? dashboardMonthlyBuckets(
+            entries,
+            config.start,
+            config.end
+          )
+        : dashboardDailyBuckets(
+            entries,
+            config.start,
+            config.end
+          );
+
+
+    const maxValue =
+      Math.max(
+        1,
+        ...buckets.flatMap(
+          item => [
+            item.filling,
+            item.press
+          ]
+        )
+      );
+
+
+    chart.innerHTML =
+      buckets.map(item => {
+
+        const fillingHeight =
+          item.filling > 0
+            ? Math.max(
+                5,
+                (
+                  item.filling /
+                  maxValue
+                ) * 100
+              )
+            : 0;
+
+
+        const pressHeight =
+          item.press > 0
+            ? Math.max(
+                5,
+                (
+                  item.press /
+                  maxValue
+                ) * 100
+              )
+            : 0;
+
+
+        return `
+          <div class="dashboard-day-group">
+
+            <div class="dashboard-bar-area">
+
+              <div
+                class="dashboard-vbar filling"
+                style="height:${fillingHeight}%"
+                title="Filling ${dashboardQty(item.filling)} pcs"
+              >
+                <span>
+                  ${item.filling
+                    ? dashboardQty(item.filling)
+                    : "0"}
+                </span>
+              </div>
+
+
+              <div
+                class="dashboard-vbar press"
+                style="height:${pressHeight}%"
+                title="Press ${dashboardQty(item.press)} pcs"
+              >
+                <span>
+                  ${item.press
+                    ? dashboardQty(item.press)
+                    : "0"}
+                </span>
+              </div>
+
             </div>
-            <div class="dashboard-vbar press" style="height:${pressHeight}%" title="Press ${dashboardQty(day.press)} pcs">
-              <span>${day.press ? dashboardQty(day.press) : "0"}</span>
-            </div>
+
+            <strong>
+              ${esc(item.label)}
+            </strong>
+
           </div>
-          <strong>${esc(label)}</strong>
-        </div>`;
-    }).join("");
+        `;
+
+      }).join("");
+  }
+  // function renderDashboardWeekly(entries) {
+  //   const chart = el("dashboardWeeklyChart");
+  //   if (!chart) return;
+
+  //   const today = dashboardDateParts(todayStr()) || new Date();
+  //   const days = [];
+  //   for (let offset = 6; offset >= 0; offset--) {
+  //     const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() - offset);
+  //     const key = dashboardDateKey(date);
+  //     const filling = entries
+  //       .filter(entry => entry.tab === "filling" && entry.tanggal === key)
+  //       .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
+  //     const press = entries
+  //       .filter(entry => entry.tab === "press" && entry.tanggal === key)
+  //       .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
+  //     days.push({ key, date, filling, press });
+  //   }
+
+  //   const maxValue = Math.max(1, ...days.flatMap(day => [day.filling, day.press]));
+  //   chart.innerHTML = days.map(day => {
+  //     const fillingHeight = day.filling > 0 ? Math.max(5, (day.filling / maxValue) * 100) : 0;
+  //     const pressHeight = day.press > 0 ? Math.max(5, (day.press / maxValue) * 100) : 0;
+  //     const label = day.date.toLocaleDateString("id-ID", { day: "2-digit", month: "short" });
+  //     return `
+  //       <div class="dashboard-day-group">
+  //         <div class="dashboard-bar-area">
+  //           <div class="dashboard-vbar filling" style="height:${fillingHeight}%" title="Filling ${dashboardQty(day.filling)} pcs">
+  //             <span>${day.filling ? dashboardQty(day.filling) : "0"}</span>
+  //           </div>
+  //           <div class="dashboard-vbar press" style="height:${pressHeight}%" title="Press ${dashboardQty(day.press)} pcs">
+  //             <span>${day.press ? dashboardQty(day.press) : "0"}</span>
+  //           </div>
+  //         </div>
+  //         <strong>${esc(label)}</strong>
+  //       </div>`;
+  //   }).join("");
+  // }
+  function updateDashboardChartFilterUI() {
+    const mode = state.dashboard.chartMode || "7days";
+    const monthWrap = el("dashboardChartMonthWrap");
+    const yearWrap = el("dashboardChartYearWrap");
+    const startWrap = el("dashboardChartStartWrap");
+    const endWrap = el("dashboardChartEndWrap");
+
+    if (monthWrap) {
+      monthWrap.hidden = mode !== "month";
+    }
+    if (yearWrap) {
+      yearWrap.hidden = mode !== "year";
+    }
+    const showRange = mode === "range";
+    if (startWrap) {
+      startWrap.hidden = !showRange;
+    }
+    if (endWrap) {
+      endWrap.hidden = !showRange;
+    }
   }
 
   function renderDashboardAlerts(balanceRows, brokenToday) {
@@ -2127,42 +2690,151 @@
 
   function renderDashboardPriority(balanceRows) {
     const tbody = el("dashboardPriorityBody");
+    const pagination = el("dashboardPriorityPagination");
+    const summary = el("dashboardPrioritySummary");
+
     if (!tbody) return;
-
-    const rows = balanceRows.slice().sort((a, b) =>
-      dashboardAgeDays(b.tanggalAsal) - dashboardAgeDays(a.tanggalAsal) ||
-      String(a.tanggalAsal || "").localeCompare(String(b.tanggalAsal || "")) ||
-      (Number(b.remaining) || 0) - (Number(a.remaining) || 0)
-    ).slice(0, 6);
-
-    if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty-row">Tidak ada sisa Filling yang menunggu Press.</td></tr>';
+    /* =====================================
+      URUTKAN FIFO / UMUR
+      Logic lama tetap dipertahankan
+      ===================================== */
+    const allRows = balanceRows
+        .slice()
+        .sort((a, b) =>
+          dashboardAgeDays(b.tanggalAsal) - dashboardAgeDays(a.tanggalAsal) ||
+          String(a.tanggalAsal || "").localeCompare(String(b.tanggalAsal || "")) ||
+          (Number(b.remaining) || 0) - (Number(a.remaining) || 0)
+        );
+    /* =====================================
+      PAGINATION
+      ===================================== */
+    const pageSize = CONFIG.DASHBOARD_PRIORITY_PAGE_SIZE;
+    const totalPages =
+      Math.max(1, Math.ceil(allRows.length /pageSize));
+      state.dashboard.priorityPage = Math.min(Math.max(1, state.dashboard.priorityPage || 1), totalPages);
+    const page = state.dashboard.priorityPage;
+    const start = (page - 1) * pageSize;
+    const rows = allRows.slice(start, start + pageSize);
+    /* =====================================
+      DATA KOSONG
+      ===================================== */
+    if (!allRows.length) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="9" class="empty-row">
+            Tidak ada sisa Filling yang menunggu Press.
+          </td>
+        </tr>
+      `;
+      if (summary) {
+        summary.textContent = "0 data prioritas";
+      }
+      if (pagination) {
+        pagination.innerHTML = "";
+      }
       return;
     }
-
-    tbody.innerHTML = rows.map(row => {
-      const level = dashboardPriorityLevel(row);
-      const age = dashboardAgeDays(row.tanggalAsal);
-      const canUse = can("accessPress") && isMasterValue("produk", row.produk) && isMasterValue("botol", row.botol);
-      const actionTitle = !can("accessPress")
-        ? "Anda tidak memiliki akses Press."
-        : !isMasterValue("produk", row.produk) || !isMasterValue("botol", row.botol)
-          ? "Produk/Botol historis tidak tersedia di Master."
-          : "Buka form Press dengan produk ini.";
-      return `
-        <tr>
-          <td><span class="dashboard-priority-dot ${level.key}" title="${esc(level.label)}"></span></td>
-          <td><strong>${esc(dashboardShortDate(row.tanggalAsal))}</strong></td>
-          <td>${esc(row.produk)}</td>
-          <td>${esc(row.botol || "—")}</td>
-          <td>${dashboardQty(row.qtyFilling)}</td>
-          <td>${dashboardQty(row.qtyPressTerpakai)}</td>
-          <td><strong class="dashboard-sisa-value">${dashboardQty(row.remaining)}</strong></td>
-          <td><span class="dashboard-age ${level.key}">${age === 0 ? "Hari ini" : `${age} hari`}</span></td>
-          <td><button type="button" class="btn btn-primary dashboard-work-btn" data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}" ${canUse ? "" : "disabled"} title="${esc(actionTitle)}">Kerjakan ›</button></td>
-        </tr>`;
-    }).join("");
+    /* =====================================
+      RENDER ROW
+      ===================================== */
+    tbody.innerHTML =
+      rows.map(row => {
+        const level = dashboardPriorityLevel(row);
+        const age = dashboardAgeDays(row.tanggalAsal);
+        const canUse = can("accessPress") && 
+            isMasterValue("produk", row.produk) && isMasterValue("botol", row.botol);
+        const actionTitle = !can("accessPress")
+            ? "Anda tidak memiliki akses Press."
+            : !isMasterValue("produk", row.produk) || !isMasterValue("botol",row.botol)
+            ? "Produk/Botol historis tidak tersedia di Master."
+            : "Buka form Press dengan produk ini.";
+        return `
+          <tr>
+            <td>
+              <span class="dashboard-priority-dot ${level.key}"title="${esc(level.label)}"></span>
+            </td>
+            <td>
+              <strong>${esc(dashboardShortDate(row.tanggalAsal))}</strong>
+            </td>
+            <td>${esc(row.produk)}</td>
+            <td>${esc(row.botol || "—")}</td>
+            <td>${dashboardQty(row.qtyFilling)}</td>
+            <td>${dashboardQty(row.qtyPressTerpakai)}</td>
+            <td>
+              <strong class="dashboard-sisa-value">${dashboardQty(row.remaining)}</strong>
+            </td>
+            <td>
+              <span class="dashboard-age ${level.key}">
+                ${age === 0 ? "Hari ini": `${age} hari`}
+              </span>
+            </td>
+            <td>
+              <button type="button" class="btn btn-primary 
+                dashboard-work-btn" data-produk="${esc(row.produk)}"
+                data-botol="${esc(row.botol)}" ${canUse ? "" : "disabled"}
+                title="${esc(actionTitle)}">
+                Kerjakan ›
+              </button>
+            </td>
+          </tr>
+        `;
+      }).join("");
+    /* =====================================
+      SUMMARY
+      ===================================== */
+    const from = start + 1;
+    const to = Math.min(start + pageSize, allRows.length);
+    if (summary) {
+      summary.textContent =`${from}–${to} dari ${allRows.length} prioritas pengerjaan`;}
+    /* =====================================
+      TOMBOL PAGINATION
+      ===================================== */
+    renderPagination(pagination, page, totalPages, nextPage => {
+        state.dashboard.priorityPage = nextPage;
+        renderDashboardPriority(balanceRows);
+        document.querySelector(".dashboard-priority-panel")
+        ?.scrollIntoView({behavior: "smooth", block: "start"});
+      }
+    );
   }
+  // function renderDashboardPriority(balanceRows) {
+  //   const tbody = el("dashboardPriorityBody");
+  //   if (!tbody) return;
+
+  //   const rows = balanceRows.slice().sort((a, b) =>
+  //     dashboardAgeDays(b.tanggalAsal) - dashboardAgeDays(a.tanggalAsal) ||
+  //     String(a.tanggalAsal || "").localeCompare(String(b.tanggalAsal || "")) ||
+  //     (Number(b.remaining) || 0) - (Number(a.remaining) || 0)
+  //   ).slice(0, 6);
+
+  //   if (!rows.length) {
+  //     tbody.innerHTML = '<tr><td colspan="9" class="empty-row">Tidak ada sisa Filling yang menunggu Press.</td></tr>';
+  //     return;
+  //   }
+
+  //   tbody.innerHTML = rows.map(row => {
+  //     const level = dashboardPriorityLevel(row);
+  //     const age = dashboardAgeDays(row.tanggalAsal);
+  //     const canUse = can("accessPress") && isMasterValue("produk", row.produk) && isMasterValue("botol", row.botol);
+  //     const actionTitle = !can("accessPress")
+  //       ? "Anda tidak memiliki akses Press."
+  //       : !isMasterValue("produk", row.produk) || !isMasterValue("botol", row.botol)
+  //         ? "Produk/Botol historis tidak tersedia di Master."
+  //         : "Buka form Press dengan produk ini.";
+  //     return `
+  //       <tr>
+  //         <td><span class="dashboard-priority-dot ${level.key}" title="${esc(level.label)}"></span></td>
+  //         <td><strong>${esc(dashboardShortDate(row.tanggalAsal))}</strong></td>
+  //         <td>${esc(row.produk)}</td>
+  //         <td>${esc(row.botol || "—")}</td>
+  //         <td>${dashboardQty(row.qtyFilling)}</td>
+  //         <td>${dashboardQty(row.qtyPressTerpakai)}</td>
+  //         <td><strong class="dashboard-sisa-value">${dashboardQty(row.remaining)}</strong></td>
+  //         <td><span class="dashboard-age ${level.key}">${age === 0 ? "Hari ini" : `${age} hari`}</span></td>
+  //         <td><button type="button" class="btn btn-primary dashboard-work-btn" data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}" ${canUse ? "" : "disabled"} title="${esc(actionTitle)}">Kerjakan ›</button></td>
+  //       </tr>`;
+  //   }).join("");
+  // }
 
   function renderDashboardRemaining(balanceRows) {
     const wrap = el("dashboardRemainingBars");
@@ -2177,7 +2849,7 @@
     const rows = Array.from(grouped.entries())
       .map(([produk, remaining]) => ({ produk, remaining }))
       .sort((a, b) => b.remaining - a.remaining)
-      .slice(0, 6);
+      .slice(0, 10);
 
     if (!rows.length) {
       wrap.innerHTML = '<div class="dashboard-empty-state">Tidak ada sisa Press.</div>';
@@ -2271,6 +2943,74 @@
   }
 
   function initDashboard() {
+  /* =====================================================
+     FILTER CHART DASHBOARD
+     ===================================================== */
+    const today = dashboardDateParts(todayStr()) || new Date();
+    const currentMonth = dashboardMonthKey(today);
+    const currentYear = String(today.getFullYear());
+
+    if (!state.dashboard.chartMonth) {
+      state.dashboard.chartMonth = currentMonth;
+    }
+    if (!state.dashboard.chartYear) {
+      state.dashboard.chartYear = currentYear;
+    }
+    const modeInput = el("dashboardChartMode");
+    const monthInput = el("dashboardChartMonth");
+    const yearInput = el("dashboardChartYear");
+    const startInput = el("dashboardChartStart");
+    const endInput = el("dashboardChartEnd");
+    if (modeInput) {
+      modeInput.value = state.dashboard.chartMode;
+    }
+    if (monthInput) {
+      monthInput.value = state.dashboard.chartMonth;
+    }
+    if (yearInput) {
+      yearInput.value = state.dashboard.chartYear;
+    }
+    updateDashboardChartFilterUI();
+    modeInput?.addEventListener(
+      "change", () => {
+        state.dashboard.chartMode = modeInput.value;
+        updateDashboardChartFilterUI();
+        renderDashboardWeekly(dashboardEntries()
+        );
+      }
+    );
+
+    monthInput?.addEventListener(
+      "change", () => {
+        state.dashboard.chartMonth = monthInput.value;
+        renderDashboardWeekly(dashboardEntries());
+      }
+    );
+
+    yearInput?.addEventListener(
+      "change", () => {
+        state.dashboard.chartYear = yearInput.value;
+        renderDashboardWeekly(dashboardEntries());
+      }
+    );
+
+    startInput?.addEventListener(
+      "change", () => {
+        state.dashboard.chartStart = startInput.value;
+        if (state.dashboard.chartMode === "range") {
+          renderDashboardWeekly(dashboardEntries());
+        }
+      }
+    );
+
+    endInput?.addEventListener(
+      "change", () => {
+        state.dashboard.chartEnd = endInput.value;
+        if (state.dashboard.chartMode === "range") {
+          renderDashboardWeekly(dashboardEntries());
+        }
+      }
+    );
     const refreshBtn = el("dashboardRefresh");
     refreshBtn?.addEventListener("click", async () => {
       refreshBtn.disabled = true;

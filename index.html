@@ -157,8 +157,50 @@
                     <div class="dashboard-grid dashboard-grid-main">
                       <section class="panel dashboard-chart-panel">
                         <div class="panel-head dashboard-panel-head">
-                          <div><p class="eyebrow">7 Hari Terakhir</p><h2>Filling vs Press</h2></div>
-                          <div class="dashboard-legend"><span><i class="legend-dot filling"></i>Filling</span><span><i class="legend-dot press"></i>Press</span></div>
+                          <div>
+                            <p class="eyebrow" id="dashboardChartPeriodLabel">7 Hari Terakhir</p>
+                            <h2>Filling vs Press</h2>
+                          </div>
+                          <div class="dashboard-legend">
+                            <span>
+                              <i class="legend-dot filling"></i>Filling</span>
+                            <span>
+                              <i class="legend-dot press"></i>Press</span>
+                          </div>
+                        </div>
+                        <!-- =====================================
+                            FILTER CHART
+                        ===================================== -->
+                        <div class="dashboard-chart-filters">
+                          <label class="field dashboard-chart-filter">
+                            <span>Periode</span>
+                            <select id="dashboardChartMode">
+                              <option value="7days">7 Hari Terakhir</option>
+                              <option value="30days">30 Hari Terakhir</option>
+                              <option value="month">Berdasarkan Bulan</option>
+                              <option value="year">Berdasarkan Tahun</option>
+                              <option value="range">Rentang Tanggal</option>
+                            </select>
+                          </label>
+                          <!-- BULAN -->
+                          <label class="field dashboard-chart-filter" id="dashboardChartMonthWrap" hidden>
+                            <span>Bulan</span>
+                            <input type="month" id="dashboardChartMonth">
+                          </label>
+                          <!-- TAHUN -->
+                          <label class="field dashboard-chart-filter dashboard-chart-year" id="dashboardChartYearWrap" hidden>
+                            <span>Tahun</span>
+                            <input type="number" id="dashboardChartYear" min="2000" max="2100" step="1">
+                          </label>
+                          <!-- RENTANG -->
+                          <label class="field dashboard-chart-filter" id="dashboardChartStartWrap" hidden>
+                            <span>Dari Tanggal</span>
+                            <input type="date" id="dashboardChartStart">
+                          </label>
+                          <label class="field dashboard-chart-filter" id="dashboardChartEndWrap" hidden>
+                            <span>Sampai Tanggal</span>
+                            <input type="date" id="dashboardChartEnd">
+                          </label>
                         </div>
                         <div id="dashboardWeeklyChart" class="dashboard-weekly-chart"></div>
                       </section>
@@ -211,6 +253,10 @@
                 <thead><tr><th>Prioritas</th><th>Tanggal Filling</th><th>Produk</th><th>Botol</th><th>Filling</th><th>Sudah Press</th><th>Sisa</th><th>Umur</th><th>Aksi</th></tr></thead>
                 <tbody id="dashboardPriorityBody"><tr><td colspan="9" class="empty-row">Belum ada sisa pengerjaan Press.</td></tr></tbody>
               </table>
+            </div>
+            <div class="table-footer">
+                <P id="dashboardPrioritySummary" class="table-summary"></P>
+                <div id="dashboardPriorityPagination" class="pagination" aria-label="Navigasi halaman"></div>
             </div>
           </section>
 
@@ -302,7 +348,7 @@
           <section class="panel table-panel">
             <div class="panel-head">
               <div>
-                <p class="eyebrow">Preview Data</p>
+                <p class="eyebrow">Pengerjaan Hari Ini</p>
                 <h2>Daftar Pengerjaan — Filling</h2>
               </div>
               <button type="button" class="btn btn-secondary f-export-btn" id="exportPreview">
@@ -349,6 +395,7 @@
               <div class="pagination f-pagination" aria-label="Navigasi halaman"></div>
             </div>
           </section>
+
         </div>
       </section>
 

@@ -177,6 +177,36 @@ button{font-family:inherit;}
 .btn[disabled]{opacity:.45; cursor:not-allowed;}
 .file-btn{position:relative; cursor:pointer;}
 
+/* ===========================================================
+   DASHBOARD — FILTER FILLING VS PRESS
+   =========================================================== */
+
+.dashboard-chart-filters{display:flex; align-items:flex-end; gap:10px; flex-wrap:wrap; margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid var(--line);}
+.dashboard-chart-filter{min-width:160px;}
+.dashboard-chart-filter:first-child{min-width:190px;}
+.dashboard-chart-year{max-width:140px;}
+.dashboard-chart-filter input,
+.dashboard-chart-filter select{width:100%;}
+.dashboard-chart-filter[hidden]{display:none !important;}
+/*
+  Dibutuhkan karena filter 30 hari
+  dapat menghasilkan banyak batang.
+*/
+.dashboard-weekly-chart{overflow-x:auto; overflow-y:hidden;
+}
+/*
+  Jangan terlalu menyempitkan batang
+  ketika periode mempunyai banyak tanggal.
+*/
+.dashboard-weekly-chart
+.dashboard-day-group{flex:1 0 62px;}
+@media(max-width:650px){
+  .dashboard-chart-filters{align-items:stretch;}
+  .dashboard-chart-filter,
+  .dashboard-chart-filter:first-child,
+  .dashboard-chart-year{width:100%;min-width:0;max-width:none;}
+}
+
 /* ---------- login ---------- */
 .login-screen{
   min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px;
