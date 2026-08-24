@@ -154,7 +154,7 @@
               <div class="dashboard-slider-track" id="dashboardSliderTrack">
                 <!-- SLIDE PERTAMA -->
                  <div class="dashboard-slide">
-                    <div class="dashboard-grid dashboard-grid-main">
+                    <div class="dashboard-grid dashboard-grid-main dashboard-slide-one-grid">
                       <section class="panel dashboard-chart-panel">
                         <div class="panel-head dashboard-panel-head">
                           <div>
@@ -214,26 +214,89 @@
                       </section>
                   </div>
                  </div>
-                 <!-- SLIDE KEDUA -->
+                 <!-- SLIDE KEDUA — KPI OPERATOR PRESS -->
                  <div class="dashboard-slide">
-                  <div class="dashboard-grid dashboard-grid-main">
-                    <section class="panel">
-                      <div class="panel-head dashboard-panel-head">
+                  <div class="dashboard-grid dashboard-grid-main dashboard-kpi-press-grid">
+                    <section class="panel dashboard-press-kpi-panel">
+                      <div class="panel-head dashboard-panel-head dashboard-press-kpi-head">
                         <div>
-                          <p class="eyebrow">Dashboard</p>
-                          <h2>Konten Slide 2</h2>
+                          <p class="eyebrow">KPI Press Harian</p>
+                          <h2>Kinerja Operator Press</h2>
                         </div>
+                        <label class="field dashboard-kpi-date-filter">
+                          <!-- <span>Tanggal</span> -->
+                          <input type="date" id="dashboardPressKpiDate">
+                        </label>
                       </div>
-                      <p>Isi panel berikutnya di sini.</p>
+
+                      <div class="table-wrap">
+                        <table class="data-table dashboard-press-kpi-table">
+                          <thead>
+                            <tr>
+                              <th>Operator</th>
+                              <th>Total Hasil Press</th>
+                              <th>Hasil / Jam</th>
+                              <th>KPI Hasil</th>
+                              <th>Botol Rusak</th>
+                              <th>KPI Reject</th>
+                            </tr>
+                          </thead>
+                          <tbody id="dashboardPressKpiBody">
+                            <tr><td colspan="6" class="empty-row">Belum ada data Press pada tanggal ini.</td></tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <div class="table-footer dashboard-press-kpi-footer">
+                        <p id="dashboardPressKpiSummary" class="table-summary"></p>
+                        <div id="dashboardPressKpiPagination" class="pagination dashboard-press-kpi-pagination" aria-label="Navigasi Halaman KPI Press Harian"></div>
+                      </div>
                     </section>
-                    <section class="panel">
+                    <section class="panel dashboard-press-kpi-info">
                       <div class="panel-head dashboard-panel-head">
                         <div>
-                          <p class="eyebrow">Informasi</p>
-                          <h2>Panel Berikutnya</h2>
+                          <p class="eyebrow">Acuan KPI</p>
+                          <h2>Target &amp; Ringkasan</h2>
                         </div>
                       </div>
-                      <p>Isi panel berikutnya di sini.</p>
+
+                      <div class="dashboard-kpi-info-grid">
+                        <div class="dashboard-kpi-info-card">
+                          <span>Target Harian / Operator</span>
+                          <strong>3.500</strong>
+                          <small>pcs per hari</small>
+                        </div>
+                        <div class="dashboard-kpi-info-card">
+                          <span>Jam Kerja</span>
+                          <strong>7</strong>
+                          <small>jam per hari</small>
+                        </div>
+                        <div class="dashboard-kpi-info-card">
+                          <span>Operator Press Aktif</span>
+                          <strong id="dashboardPressKpiOperators">0</strong>
+                          <small>operator</small>
+                        </div>
+                        <div class="dashboard-kpi-info-card">
+                          <span>Total Press</span>
+                          <strong id="dashboardPressKpiTotal">0</strong>
+                          <small>pcs</small>
+                        </div>
+                        <div class="dashboard-kpi-info-card">
+                          <span>Total Botol Rusak</span>
+                          <strong id="dashboardPressKpiBroken">0</strong>
+                          <small>pcs</small>
+                        </div>
+                        <div class="dashboard-kpi-info-card">
+                          <span>Reject Keseluruhan</span>
+                          <strong id="dashboardPressKpiRejectTotal">0%</strong>
+                          <small>rusak ÷ hasil Press</small>
+                        </div>
+                      </div>
+
+                      <div class="dashboard-kpi-formulas">
+                        <p><strong>Hasil/Jam</strong> = Total Press ÷ 7</p>
+                        <p><strong>KPI Hasil</strong> = Total Press ÷ 3.500 × 100%</p>
+                        <p><strong>KPI Reject</strong> = Botol Rusak ÷ Total Press × 100%</p>
+                      </div>
                     </section>
                   </div>
                 </div>

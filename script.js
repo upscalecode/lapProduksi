@@ -37,6 +37,7 @@
     PAGE_SIZE: 20,
     PRESS_BALANCE_PAGE_SIZE: 5,
     DASHBOARD_PRIORITY_PAGE_SIZE: 6,
+    DASHBOARD_PRESS_KPI_PAGE_SIZE: 7,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL: "https://script.google.com/macros/s/AKfycbyzM7BTrMfpc6OvQBzxBcxHRUCQHpNm_F4ZheB3TUiLics1M8GXMRSDXgg1pBQoDGnaPA/exec"
@@ -61,7 +62,16 @@
     pages: { filling: 1, press: 1, laporan: 1 },
     savedPages: { filling: 1, press: 1 },
     pressBalance: { search: "", page: 1 },
-    dashboard: {chartMode: "7days", chartMonth:"", chartYear:"", chartStart:"", chartEnd:"", priorityPage: 1 },
+    dashboard: {
+      chartMode: "7days", 
+      chartMonth:"", 
+      chartYear:"", 
+      chartStart:"", 
+      chartEnd:"", 
+      priorityPage: 1, 
+      pressKpiDate: "",
+      pressKpiPage: 1
+    },
     lastLaporan: null
   };
 
@@ -2882,6 +2892,327 @@
       </div>`).join("");
   }
 
+  function dashboardPercent(value, maxFractionDigits = 2) {
+    const number = Number(value) || 0;
+    return `${number.toLocaleString("id-ID", {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: maxFractionDigits
+    })}%`;
+  }
+
+  function renderDashboardPressKpi(ensstries) {
+    const tbody = el("dashboardPressKpiBody");
+    const summary = el("dashboardPressKpiSummary");
+    const pagination = el("dashboardPressKpiPagination");
+
+    if (!tbody) return;
+
+    const targetPerDay = 3500;
+    const workHours = 7;
+    const selectedDate = state.dashboard.pressKpiDate || todayStr();
+    const grouped = new Map();
+    /* =====================================
+      GROUP DATA PER OPERATOR
+      ===================================== */
+    entries
+      .filter(
+        entry =>
+          entry.tab === "press" &&
+          entry.tanggal === selectedDate
+      )
+      .forEach(entry => {
+
+        const operator =
+          String(entry.operator || "").trim() || "—";
+
+        if (!grouped.has(operator)) {
+          grouped.set(operator, {
+            operator,
+            totalPress: 0,
+            broken: 0
+          });
+        }
+
+        const row = grouped.get(operator);
+
+        row.totalPress +=
+          Number(entry.totalQty) || 0;
+
+        row.broken +=
+          Number(entry.qtyBotolPecah) || 0;
+      });
+
+
+    /* =====================================
+      SEMUA DATA OPERATOR
+      ===================================== */
+    const allRows =
+      Array.from(grouped.values())
+        .map(row => ({
+          ...row,
+
+          perHour:
+            row.totalPress / workHours,
+
+          kpiResult:
+            row.totalPress /
+            targetPerDay *
+            100,
+
+          kpiReject:
+            row.totalPress > 0
+              ? row.broken /
+                row.totalPress *
+                100
+              : 0
+        }))
+        .sort(
+          (a, b) =>
+            b.totalPress -
+              a.totalPress ||
+            a.operator.localeCompare(
+              b.operator,
+              "id"
+            )
+        );
+
+
+    /* =====================================
+      PAGINATION
+      ===================================== */
+    const pageSize =
+      CONFIG.DASHBOARD_PRESS_KPI_PAGE_SIZE;
+
+    const totalPages =
+      Math.max(
+        1,
+        Math.ceil(
+          allRows.length / pageSize
+        )
+      );
+
+
+    state.dashboard.pressKpiPage =
+      Math.min(
+        Math.max(
+          1,
+          state.dashboard.pressKpiPage || 1
+        ),
+        totalPages
+      );
+
+
+    const page =
+      state.dashboard.pressKpiPage;
+
+    const start =
+      (page - 1) * pageSize;
+
+    const visibleRows =
+      allRows.slice(
+        start,
+        start + pageSize
+      );
+
+
+    /* =====================================
+      RENDER TABEL
+      ===================================== */
+    tbody.innerHTML =
+      visibleRows.length
+        ? visibleRows.map(row => `
+
+          <tr>
+
+            <td>
+              <strong>
+                ${esc(row.operator)}
+              </strong>
+            </td>
+
+            <td>
+              <strong>
+                ${dashboardQty(
+                  row.totalPress
+                )}
+              </strong>
+            </td>
+
+            <td>
+              ${row.perHour.toLocaleString(
+                "id-ID",
+                {
+                  maximumFractionDigits: 1
+                }
+              )}
+            </td>
+
+            <td>
+              <span
+                class="dashboard-kpi-percent result"
+              >
+                ${dashboardPercent(
+                  row.kpiResult
+                )}
+              </span>
+            </td>
+
+            <td
+              class="${
+                row.broken > 0
+                  ? "pecah-tag"
+                  : ""
+              }"
+            >
+              ${dashboardQty(
+                row.broken
+              )}
+            </td>
+
+            <td>
+              <span
+                class="dashboard-kpi-percent reject"
+              >
+                ${dashboardPercent(
+                  row.kpiReject
+                )}
+              </span>
+            </td>
+
+          </tr>
+
+        `).join("")
+
+        : `
+          <tr>
+            <td
+              colspan="6"
+              class="empty-row"
+            >
+              Belum ada data Press
+              pada tanggal ini.
+            </td>
+          </tr>
+        `;
+
+
+    /* =====================================
+      TOTAL KESELURUHAN
+
+      Jangan menggunakan visibleRows.
+      Total harus seluruh operator.
+      ===================================== */
+
+    const totalPress =
+      allRows.reduce(
+        (sum, row) =>
+          sum + row.totalPress,
+        0
+      );
+
+
+    const totalBroken =
+      allRows.reduce(
+        (sum, row) =>
+          sum + row.broken,
+        0
+      );
+
+
+    const rejectTotal =
+      totalPress > 0
+        ? totalBroken /
+          totalPress *
+          100
+        : 0;
+
+
+    dashboardSetText(
+      "dashboardPressKpiOperators",
+      dashboardQty(allRows.length)
+    );
+
+    dashboardSetText(
+      "dashboardPressKpiTotal",
+      dashboardQty(totalPress)
+    );
+
+    dashboardSetText(
+      "dashboardPressKpiBroken",
+      dashboardQty(totalBroken)
+    );
+
+    dashboardSetText(
+      "dashboardPressKpiRejectTotal",
+      dashboardPercent(
+        rejectTotal
+      )
+    );
+
+
+    /* =====================================
+      SUMMARY
+      ===================================== */
+
+    if (summary) {
+
+      if (allRows.length) {
+
+        const from =
+          start + 1;
+
+        const to =
+          Math.min(
+            start + pageSize,
+            allRows.length
+          );
+
+
+        summary.textContent =
+          `${from}–${to} dari ${allRows.length} operator` +
+          ` · Total Press ${dashboardQty(totalPress)} pcs` +
+          ` · Total rusak ${dashboardQty(totalBroken)} pcs`;
+
+      } else {
+
+        summary.textContent =
+          `Tidak ada pengerjaan Press pada ${selectedDate}.`;
+
+      }
+    }
+
+
+    /* =====================================
+      RENDER PAGINATION
+      ===================================== */
+
+    if (pagination) {
+
+      /*
+        1 halaman = sembunyikan
+        >1 halaman = tampilkan
+      */
+      pagination.hidden =
+        totalPages <= 1;
+
+
+      renderPagination(
+        pagination,
+        page,
+        totalPages,
+        nextPage => {
+
+          state.dashboard.pressKpiPage =
+            nextPage;
+
+          renderDashboardPressKpi(
+            entries
+          );
+        }
+      );
+    }
+  }
+
   function renderDashboardOperators(entries) {
     const tbody = el("dashboardOperatorBody");
     if (!tbody) return;
@@ -2957,6 +3288,7 @@
     renderDashboardPriority(balanceRows);
     renderDashboardRemaining(balanceRows);
     renderDashboardOperators(entries);
+    renderDashboardPressKpi(entries);
   }
 
   function initDashboard() {
@@ -2966,6 +3298,10 @@
     const today = dashboardDateParts(todayStr()) || new Date();
     const currentMonth = dashboardMonthKey(today);
     const currentYear = String(today.getFullYear());
+
+    if (!state.dashboard.pressKpiDate) {
+      state.dashboard.pressKpiDate = todayStr();
+    }
 
     if (!state.dashboard.chartMonth) {
       state.dashboard.chartMonth = currentMonth;
@@ -2978,6 +3314,17 @@
     const yearInput = el("dashboardChartYear");
     const startInput = el("dashboardChartStart");
     const endInput = el("dashboardChartEnd");
+    const pressKpiDateInput = el("dashboardPressKpiDate");
+
+    if (pressKpiDateInput) {
+      pressKpiDateInput.value = state.dashboard.pressKpiDate;
+      pressKpiDateInput.addEventListener("change", () => {
+        state.dashboard.pressKpiDate = pressKpiDateInput.value || todayStr();
+        state.dashboard.pressKpiPage = 1;
+        renderDashboardPressKpi(dashboardEntries());
+      });
+    }
+
     if (modeInput) {
       modeInput.value = state.dashboard.chartMode;
     }
