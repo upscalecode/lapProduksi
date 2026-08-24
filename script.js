@@ -2900,7 +2900,7 @@
     })}%`;
   }
 
-  function renderDashboardPressKpi(ensstries) {
+  function renderDashboardPressKpi(entries) {
     const tbody = el("dashboardPressKpiBody");
     const summary = el("dashboardPressKpiSummary");
     const pagination = el("dashboardPressKpiPagination");
