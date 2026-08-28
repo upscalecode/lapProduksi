@@ -2154,8 +2154,8 @@ input,select,textarea,button{max-width:100%;}
 .capkaki{
   text-align: center;
   margin-top: 0;
+  margin-bottom: 20px;
   font-size: 10px;
-  padding: 0;
   font-family: 'Lucida Sans', 'Lucida Sans Regular', 'Lucida Grande', 'Lucida Sans Unicode', Geneva, Verdana, sans-serif;
   color: #333A73;
 }
