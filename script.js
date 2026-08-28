@@ -4478,43 +4478,207 @@
     } catch (_) {}
 
     function initDashboardSlider() {
-    const track = document.getElementById("dashboardSliderTrack");
-    const prevBtn = document.getElementById("dashboardSliderPrev");
-    const nextBtn = document.getElementById("dashboardSliderNext");
+      const slider = document.querySelector(".dashboard-slider");
+      const viewport = slider?.querySelector(".dashboard-slider-viewport");
+      const track = document.getElementById("dashboardSliderTrack");
+      const prevBtn = document.getElementById("dashboardSliderPrev");
+      const nextBtn = document.getElementById("dashboardSliderNext");
 
-    if (!track || !prevBtn || !nextBtn) return;
+      if (!slider || !viewport || !track || !prevBtn || !nextBtn) return;
 
-    const slides = Array.from(
-      track.querySelectorAll(".dashboard-slide")
-    );
+      // Desktop tetap memakai dua slide asli:
+      // 1) Chart + Alert, 2) KPI Press + Acuan KPI.
+      // Pada HP setiap panel dipisahkan menjadi satu slide. Slide mobile yang
+      // tidak aktif benar-benar disembunyikan agar TIDAK ikut menentukan tinggi
+      // container. Ini menghindari ruang kosong dari panel lain yang lebih tinggi.
+      const desktopSlides = Array.from(track.children).filter(node =>
+        node.classList && node.classList.contains("dashboard-slide")
+      );
+      const desktopGroups = desktopSlides.map(slide =>
+        slide.querySelector(".dashboard-grid-main")
+      );
+      const panelRecords = [];
+      desktopGroups.forEach((group, groupIndex) => {
+        if (!group) return;
+        Array.from(group.children).forEach((panel, panelIndex) => {
+          panelRecords.push({ panel, group, groupIndex, panelIndex });
+        });
+      });
 
-    let currentSlide = 0;
+      const mobileQuery = window.matchMedia("(max-width: 650px)");
+      let mobileSlides = [];
+      let mobileMode = false;
+      let currentSlide = 0;
 
-    function updateSlider() {
-      track.style.transform =
-        `translateX(-${currentSlide * 100}%)`;
+      function activeSlides() {
+        return mobileMode ? mobileSlides : desktopSlides;
+      }
 
-      prevBtn.disabled = currentSlide === 0;
-      nextBtn.disabled =
-        currentSlide === slides.length - 1;
-    }
+      function syncArrowState() {
+        const slides = activeSlides();
+        prevBtn.disabled = currentSlide <= 0;
+        nextBtn.disabled = currentSlide >= slides.length - 1;
+        slider.dataset.mobileSlides = mobileMode ? "true" : "false";
+        slider.dataset.slideIndex = String(currentSlide);
+        slider.dataset.slideCount = String(slides.length);
+      }
 
-    prevBtn.addEventListener("click", () => {
-      if (currentSlide > 0) {
+      function showMobileSlide() {
+        mobileSlides.forEach((slide, index) => {
+          const active = index === currentSlide;
+          slide.hidden = !active;
+          slide.classList.toggle("is-active", active);
+          slide.setAttribute("aria-hidden", active ? "false" : "true");
+        });
+
+        // Di mode HP hanya satu panel yang tampil. Slide lain benar-benar
+        // disembunyikan sehingga tinggi slider selalu mengikuti panel aktif.
+        track.style.transform = "none";
+        track.style.transition = "none";
+        viewport.style.height = "auto";
+      }
+
+      function syncDesktopViewportHeight() {
+        if (mobileMode) return;
+        const activeSlide = desktopSlides[currentSlide];
+        if (!activeSlide) return;
+
+        // Track horizontal mempunyai tinggi sebesar slide PALING TINGGI dari
+        // semua halaman slider. Jika viewport dibiarkan auto, slide yang lebih
+        // pendek akan menyisakan ruang kosong di bawahnya. Kunci viewport ke
+        // tinggi slide yang sedang aktif supaya section berikutnya langsung
+        // menempel setelah pasangan panel aktif.
+        const height = Math.ceil(activeSlide.getBoundingClientRect().height);
+        if (height > 0) viewport.style.height = `${height}px`;
+      }
+
+      function showDesktopSlide(options = {}) {
+        desktopSlides.forEach(slide => {
+          slide.hidden = false;
+          slide.removeAttribute("aria-hidden");
+        });
+        track.style.transition = options.instant ? "none" : "";
+        track.style.transform = `translateX(-${currentSlide * 100}%)`;
+
+        // Ukur setelah browser selesai menghitung grid. Dalam satu slide desktop
+        // tetap ada 2 panel dan CSS menyamakan tinggi keduanya ke panel tertinggi.
+        requestAnimationFrame(() => {
+          syncDesktopViewportHeight();
+          requestAnimationFrame(syncDesktopViewportHeight);
+        });
+
+        if (options.instant) {
+          requestAnimationFrame(() => {
+            track.style.transition = "";
+          });
+        }
+      }
+
+      function updateSlider(options = {}) {
+        const slides = activeSlides();
+        if (!slides.length) return;
+        currentSlide = Math.max(0, Math.min(currentSlide, slides.length - 1));
+
+        if (mobileMode) showMobileSlide();
+        else showDesktopSlide(options);
+
+        syncArrowState();
+      }
+
+      function buildMobileSlides() {
+        if (mobileSlides.length) return;
+
+        desktopSlides.forEach(slide => {
+          slide.hidden = true;
+          slide.setAttribute("aria-hidden", "true");
+        });
+
+        panelRecords.forEach(({ panel }, index) => {
+          const slide = document.createElement("div");
+          slide.className = "dashboard-slide dashboard-mobile-slide";
+          slide.dataset.mobileSlideIndex = String(index);
+
+          const grid = document.createElement("div");
+          grid.className = "dashboard-grid dashboard-grid-main dashboard-mobile-one-grid";
+          grid.appendChild(panel);
+          slide.appendChild(grid);
+          slide.hidden = true;
+          track.appendChild(slide);
+          mobileSlides.push(slide);
+        });
+      }
+
+      function restoreDesktopSlides() {
+        panelRecords
+          .slice()
+          .sort((a, b) => a.groupIndex - b.groupIndex || a.panelIndex - b.panelIndex)
+          .forEach(({ panel, group }) => group?.appendChild(panel));
+
+        mobileSlides.forEach(slide => slide.remove());
+        mobileSlides = [];
+        desktopSlides.forEach(slide => {
+          slide.hidden = false;
+          slide.removeAttribute("aria-hidden");
+        });
+      }
+
+      function applyResponsiveMode() {
+        const shouldUseMobileSlides = mobileQuery.matches;
+
+        if (shouldUseMobileSlides && !mobileMode) {
+          const previousDesktopSlide = currentSlide;
+          buildMobileSlides();
+          mobileMode = true;
+          currentSlide = Math.min(previousDesktopSlide * 2, mobileSlides.length - 1);
+          updateSlider({ instant: true });
+          return;
+        }
+
+        if (!shouldUseMobileSlides && mobileMode) {
+          const previousMobileSlide = currentSlide;
+          restoreDesktopSlides();
+          mobileMode = false;
+          currentSlide = Math.min(Math.floor(previousMobileSlide / 2), desktopSlides.length - 1);
+          updateSlider({ instant: true });
+          return;
+        }
+
+        // Resize di mode yang sama cukup memastikan display/transform konsisten.
+        updateSlider({ instant: true });
+      }
+
+      prevBtn.addEventListener("click", () => {
+        if (currentSlide <= 0) return;
         currentSlide--;
         updateSlider();
-      }
-    });
+      });
 
-    nextBtn.addEventListener("click", () => {
-      if (currentSlide < slides.length - 1) {
+      nextBtn.addEventListener("click", () => {
+        const slides = activeSlides();
+        if (currentSlide >= slides.length - 1) return;
         currentSlide++;
         updateSlider();
-      }
-    });
+      });
 
-    updateSlider();
-  }
+      // Jika isi chart, alert, tabel KPI, pagination, atau filter mengubah
+      // tinggi slide aktif setelah render, viewport desktop ikut diperbarui.
+      let sliderResizeObserver = null;
+      if (typeof ResizeObserver === "function") {
+        sliderResizeObserver = new ResizeObserver(() => {
+          if (!mobileMode) requestAnimationFrame(syncDesktopViewportHeight);
+        });
+        desktopSlides.forEach(slide => sliderResizeObserver.observe(slide));
+      }
+
+      window.addEventListener("resize", applyResponsiveMode);
+      if (typeof mobileQuery.addEventListener === "function") {
+        mobileQuery.addEventListener("change", applyResponsiveMode);
+      } else if (typeof mobileQuery.addListener === "function") {
+        mobileQuery.addListener(applyResponsiveMode);
+      }
+
+      applyResponsiveMode();
+    }
 
   document.addEventListener("DOMContentLoaded", () => {
   initDashboardSlider();
