@@ -51,6 +51,7 @@
       <button class="tab-btn active" data-view="dashboard">DASHBOARD</button>
       <button class="tab-btn" data-view="filling">FILLING</button>
       <button class="tab-btn" data-view="press">PRESS</button>
+      <button class="tab-btn" data-view="apd">APD</button>
       <button class="tab-btn" data-view="laporan">LAPORAN</button>
       <button class="tab-btn" data-view="master" id="masterTabBtn" hidden>SETTING</button>
     </nav>
@@ -223,10 +224,54 @@
                           <p class="eyebrow">KPI Press Harian</p>
                           <h2>Kinerja Operator Press</h2>
                         </div>
-                        <label class="field dashboard-kpi-date-filter">
-                          <!-- <span>Tanggal</span> -->
-                          <input type="date" id="dashboardPressKpiDate">
-                        </label>
+                        <div class="dashboard-press-kpi-filters">
+                          <label class="field dashboard-kpi-filter dashboard-kpi-operator-filter">
+                            <span>Operator</span>
+                            <div class="dashboard-kpi-operator-search-row">
+                              <input
+                                type="text"
+                                id="dashboardPressKpiOperator"
+                                class="master-search-input filter-master-search"
+                                data-master="operator"
+                                placeholder="Cari operator..."
+                                autocomplete="off"
+                              >
+                              <button type="button" class="dashboard-kpi-operator-clear" id="dashboardPressKpiOperatorClear" hidden title="Clear search operator" aria-label="Clear search operator">
+                                <i class="fa-solid fa-xmark"></i>
+                                <span>Clear</span>
+                              </button>
+                            </div>
+                          </label>
+                          <label class="field dashboard-kpi-filter">
+                            <span>Periode</span>
+                            <select id="dashboardPressKpiMode">
+                              <option value="date">Tanggal</option>
+                              <option value="month">Bulan</option>
+                              <option value="year">Tahun</option>
+                              <option value="range">Rentang Tanggal</option>
+                            </select>
+                          </label>
+                          <label class="field dashboard-kpi-filter" id="dashboardPressKpiDateWrap">
+                            <span>Tanggal</span>
+                            <input type="date" id="dashboardPressKpiDate">
+                          </label>
+                          <label class="field dashboard-kpi-filter" id="dashboardPressKpiMonthWrap" hidden>
+                            <span>Bulan</span>
+                            <input type="month" id="dashboardPressKpiMonth">
+                          </label>
+                          <label class="field dashboard-kpi-filter dashboard-kpi-year-filter" id="dashboardPressKpiYearWrap" hidden>
+                            <span>Tahun</span>
+                            <input type="number" id="dashboardPressKpiYear" min="2000" max="2100" step="1">
+                          </label>
+                          <label class="field dashboard-kpi-filter" id="dashboardPressKpiStartWrap" hidden>
+                            <span>Dari</span>
+                            <input type="date" id="dashboardPressKpiStart">
+                          </label>
+                          <label class="field dashboard-kpi-filter" id="dashboardPressKpiEndWrap" hidden>
+                            <span>Sampai</span>
+                            <input type="date" id="dashboardPressKpiEnd">
+                          </label>
+                        </div>
                       </div>
 
                       <div class="table-wrap">
@@ -239,10 +284,11 @@
                               <th>KPI Hasil</th>
                               <th>Botol Rusak</th>
                               <th>KPI Reject</th>
+                              <th>KPI APD</th>
                             </tr>
                           </thead>
                           <tbody id="dashboardPressKpiBody">
-                            <tr><td colspan="6" class="empty-row">Belum ada data Press pada tanggal ini.</td></tr>
+                            <tr><td colspan="7" class="empty-row">Belum ada data Press pada tanggal ini.</td></tr>
                           </tbody>
                         </table>
                       </div>
@@ -296,6 +342,7 @@
                         <p><strong>Hasil/Jam</strong> = Total Press ÷ 7</p>
                         <p><strong>KPI Hasil</strong> = Total Press ÷ 3.500 × 100%</p>
                         <p><strong>KPI Reject</strong> = Botol Rusak ÷ Total Press × 100%</p>
+                        <p><strong>KPI APD</strong> = Nilai APD operator pada tanggal terpilih; untuk bulan, tahun, dan rentang tanggal menggunakan rata-rata nilai APD operator pada periode tersebut.</p>
                       </div>
                     </section>
                   </div>
@@ -464,6 +511,187 @@
 
       <section class="view" id="view-press" data-line="press" hidden></section>
 
+
+      <section class="view" id="view-apd" hidden>
+        <div class="apd-stack">
+          <section class="panel apd-unified-panel">
+            <div class="apd-form-heading">
+              <div>
+                <p class="eyebrow">Penilaian Kepatuhan</p>
+                <h2>Input Penilaian APD</h2>
+                <p class="apd-unified-hint">Data yang sudah ditambahkan tetap berada pada lembar yang sama. Baris input kosong selalu tersedia di bagian paling bawah.</p>
+              </div>
+
+              <div class="apd-heading-actions">
+                <label class="apd-system-date">
+                  <span>Tanggal Sistem hari ini</span>
+                  <input type="text" id="apdTanggal" class="mono" readonly>
+                </label>
+                <button type="button" class="btn btn-secondary" id="apdSaveBtn" disabled>
+                  <i class="fa-solid fa-cloud-arrow-up"></i> Simpan
+                </button>
+              </div>
+            </div>
+
+            <span class="stamp apd-edit-stamp" id="apdStamp">Preview APD</span>
+
+            <div class="apd-entry-scroll apd-unified-scroll">
+              <div class="apd-unified-grid apd-unified-head" aria-hidden="true">
+                <div class="apd-head-cell">
+                  <strong>Nama Operator</strong>
+                  <small>Pilih dari data master</small>
+                </div>
+                <div class="apd-head-cell">
+                  <strong>Masker tidak sesuai</strong>
+                  <small>Bobot 25% · 5% / poin</small>
+                </div>
+                <div class="apd-head-cell">
+                  <strong>Lengan ditarik ke atas</strong>
+                  <small>Bobot 20% · 4% / poin</small>
+                </div>
+                <div class="apd-head-cell">
+                  <strong>Sepatu diinjak</strong>
+                  <small>Bobot 10% · 2% / poin</small>
+                </div>
+                <div class="apd-head-cell">
+                  <strong>Rambut kelihatan</strong>
+                  <small>Bobot 15% · 3% / poin</small>
+                </div>
+                <div class="apd-head-cell">
+                  <strong>APD tidak diresleting penuh</strong>
+                  <small>Bobot 10% · 2% / poin</small>
+                </div>
+                <div class="apd-head-cell">
+                  <strong>Memakai aksesoris</strong>
+                  <small>Bobot 20% · 4% / poin</small>
+                </div>
+                <div class="apd-head-cell">
+                  <strong>Total Poin</strong>
+                  <small>Maksimum 30 poin</small>
+                </div>
+                <div class="apd-head-cell">
+                  <strong>Total Prosentase</strong>
+                  <small>Total bobot 100%</small>
+                </div>
+                <div class="apd-head-cell">
+                  <strong>Alasan / Keterangan</strong>
+                  <small>Maksimal 300 kata</small>
+                </div>
+                <div class="apd-head-cell apd-head-action">
+                  <strong>Aksi</strong>
+                  <small>Tambah / edit</small>
+                </div>
+              </div>
+
+              <!-- Baris yang sudah ditambahkan dirender di sini. -->
+              <div id="apdPreviewBody" class="apd-unified-records"></div>
+
+              <!-- Baris input kosong selalu tetap ada di bawah preview. -->
+              <form id="apdForm" class="apd-unified-grid apd-unified-form" autocomplete="off">
+                <input type="hidden" id="apdEditingId" value="">
+
+                <label class="apd-unified-cell apd-operator-cell">
+                  <input
+                    type="text"
+                    id="apdOperator"
+                    class="master-search-input master-search-floating apd-operator-search"
+                    data-master="operator"
+                    placeholder="Cari operator…"
+                    autocomplete="off"
+                    required
+                  >
+                </label>
+
+                <label class="apd-unified-cell apd-score-cell">
+                  <input type="number" class="apd-score mono" data-apd-key="maskerTidakSesuai" min="0" max="5" step="1" placeholder="0–5" required>
+                </label>
+
+                <label class="apd-unified-cell apd-score-cell">
+                  <input type="number" class="apd-score mono" data-apd-key="lenganDitarik" min="0" max="5" step="1" placeholder="0–5" required>
+                </label>
+
+                <label class="apd-unified-cell apd-score-cell">
+                  <input type="number" class="apd-score mono" data-apd-key="sepatuDiinjak" min="0" max="5" step="1" placeholder="0–5" required>
+                </label>
+
+                <label class="apd-unified-cell apd-score-cell">
+                  <input type="number" class="apd-score mono" data-apd-key="rambutKelihatan" min="0" max="5" step="1" placeholder="0–5" required>
+                </label>
+
+                <label class="apd-unified-cell apd-score-cell">
+                  <input type="number" class="apd-score mono" data-apd-key="resletingTidakPenuh" min="0" max="5" step="1" placeholder="0–5" required>
+                </label>
+
+                <label class="apd-unified-cell apd-score-cell">
+                  <input type="number" class="apd-score mono" data-apd-key="memakaiAksesoris" min="0" max="5" step="1" placeholder="0–5" required>
+                </label>
+
+                <label class="apd-unified-cell apd-result-cell">
+                  <input type="text" id="apdTotalPoints" class="mono" readonly value="0 / 30" aria-label="Total Poin diperoleh">
+                </label>
+
+                <label class="apd-unified-cell apd-result-cell">
+                  <input type="text" id="apdPercentage" class="mono" readonly value="0%" aria-label="Total Prosentase">
+                </label>
+
+                <label class="apd-unified-cell apd-reason-cell-input">
+                  <textarea id="apdReason" placeholder="Isi alasan atau keterangan…"></textarea>
+                  <span id="apdReasonWordCount" class="apd-word-count">0 / 300 kata</span>
+                </label>
+
+                <div class="apd-unified-cell apd-inline-actions">
+                  <button type="submit" class="btn btn-primary" id="apdAddBtn">
+                    <i class="fa-solid fa-circle-plus"></i> Tambah
+                  </button>
+                  <button type="button" class="btn btn-ghost" id="apdCancelEdit" hidden>
+                    <i class="fa-solid fa-ban"></i> Batal
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <p class="form-error apd-unified-error" id="apdError" hidden></p>
+
+            <div class="table-footer apd-unified-footer">
+              <p id="apdPreviewSummary" class="table-summary"></p>
+              <div id="apdPagination" class="pagination" aria-label="Navigasi halaman preview APD"></div>
+            </div>
+          </section>
+
+          <section class="panel apd-saved-panel" id="apdSavedSection">
+            <div class="panel-head apd-saved-head">
+              <div>
+                <p class="eyebrow">Data Tersimpan Hari Ini</p>
+                <h2>Riwayat Penilaian APD — Hari Ini</h2>
+                <p class="hint-text apd-saved-hint">Menampilkan data yang sudah berhasil tersimpan di Sheet APD pada tanggal sistem hari ini.</p>
+              </div>
+            </div>
+
+            <div class="apd-saved-scroll">
+              <div class="apd-unified-grid apd-unified-head" aria-hidden="true">
+                <div class="apd-head-cell"><strong>Nama Operator</strong><small>Data tersimpan</small></div>
+                <div class="apd-head-cell"><strong>Masker tidak sesuai</strong><small>Bobot 25%</small></div>
+                <div class="apd-head-cell"><strong>Lengan ditarik ke atas</strong><small>Bobot 20%</small></div>
+                <div class="apd-head-cell"><strong>Sepatu diinjak</strong><small>Bobot 10%</small></div>
+                <div class="apd-head-cell"><strong>Rambut kelihatan</strong><small>Bobot 15%</small></div>
+                <div class="apd-head-cell"><strong>APD tidak diresleting penuh</strong><small>Bobot 10%</small></div>
+                <div class="apd-head-cell"><strong>Memakai aksesoris</strong><small>Bobot 20%</small></div>
+                <div class="apd-head-cell"><strong>Total Poin</strong><small>Maksimum 30 poin</small></div>
+                <div class="apd-head-cell"><strong>Total Prosentase</strong><small>Total bobot 100%</small></div>
+                <div class="apd-head-cell"><strong>Alasan / Keterangan</strong><small>Data tersimpan</small></div>
+                <div class="apd-head-cell apd-head-action"><strong>Aksi</strong><small>Edit / hapus</small></div>
+              </div>
+              <div id="apdSavedBody" class="apd-unified-records"></div>
+            </div>
+
+            <div class="table-footer apd-saved-footer">
+              <p id="apdSavedSummary" class="table-summary"></p>
+              <div id="apdSavedPagination" class="pagination" aria-label="Navigasi halaman data APD tersimpan"></div>
+            </div>
+          </section>
+        </div>
+      </section>
+
       <section class="view" id="view-laporan" hidden>
         <div class="panel">
           <div class="panel-head"><h2>Laporan Hasil Pengerjaan</h2></div>
@@ -601,6 +829,20 @@
             <span>
               <strong>Akses Press</strong><br>
               <small>Dapat membuka dan menggunakan menu Press.</small>
+            </span>
+          </label>
+
+
+
+          <!-- APD -->
+          <label>
+            <input
+              type="checkbox"
+              data-permission="accessApd"
+            >
+            <span>
+              <strong>Akses APD</strong><br>
+              <small>Dapat membuka dan menggunakan menu penilaian APD.</small>
             </span>
           </label>
 

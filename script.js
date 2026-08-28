@@ -40,7 +40,7 @@
     DASHBOARD_PRESS_KPI_PAGE_SIZE: 7,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
-    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbyzM7BTrMfpc6OvQBzxBcxHRUCQHpNm_F4ZheB3TUiLics1M8GXMRSDXgg1pBQoDGnaPA/exec"
+    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbxZI_Vf86dIzzI7D8p8HwLxRH9-6xHfnDi_u2C-io83cZCVSWIXg9Zd0zfdVx-09ZM/exec"
   };
 
   const LINE_LABEL = { filling: "Filling", press: "Press" };
@@ -53,13 +53,14 @@
     entries: [],
     adjustments: [],
     remainders: [],
-    preview: { filling: [], press: [] },
+    apdEntries: [],
+    preview: { filling: [], press: [], apd: [] },
     users: [],
     search: {
       filling: { query: "" },
       press: { query: "" }
     },
-    pages: { filling: 1, press: 1, laporan: 1 },
+    pages: { filling: 1, press: 1, apd: 1, apdSaved: 1, laporan: 1 },
     savedPages: { filling: 1, press: 1 },
     pressBalance: { search: "", page: 1 },
     dashboard: {
@@ -69,7 +70,13 @@
       chartStart:"", 
       chartEnd:"", 
       priorityPage: 1, 
+      pressKpiMode: "date",
+      pressKpiOperator: "",
       pressKpiDate: "",
+      pressKpiMonth: "",
+      pressKpiYear: "",
+      pressKpiStart: "",
+      pressKpiEnd: "",
       pressKpiPage: 1
     },
     lastLaporan: null
@@ -100,6 +107,7 @@
     accessDashboard: false,
     accessFilling: true,
     accessPress: true,
+    accessApd: true,
     accessReports: false,
     deleteUnpressed: false,
     viewAllData: false,
@@ -136,6 +144,7 @@
     if (can("accessDashboard")) return "dashboard"
     if (can("accessFilling")) return "filling";
     if (can("accessPress")) return "press";
+    if (can("accessApd")) return "apd";
     if (can("accessReports")) return "laporan";
     if (can("accessMaster")) return "master";
     return "";
@@ -146,6 +155,7 @@
       dashboard: can("accessDashboard"),
       filling: can("accessFilling"),
       press: can("accessPress"),
+      apd: can("accessApd"),
       laporan: can("accessReports"),
       master: can("accessMaster")
     };
@@ -199,7 +209,8 @@
       if (!saved || typeof saved !== "object") return;
       state.preview = {
         filling: Array.isArray(saved.filling) ? saved.filling : [],
-        press: Array.isArray(saved.press) ? saved.press : []
+        press: Array.isArray(saved.press) ? saved.press : [],
+        apd: Array.isArray(saved.apd) ? saved.apd : []
       };
     } catch (err) {
       console.warn("Preview lokal tidak dapat dibaca:", err);
@@ -460,6 +471,29 @@
     return String(value == null ? "" : value).replace(/[&<>"']/g, c => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
     }[c]));
+  }
+
+
+  function highlightSearchMatch(value, query) {
+    const text = String(value == null ? "" : value);
+    const keyword = String(query || "").trim();
+    if (!keyword) return esc(text);
+
+    const lowerText = text.toLowerCase();
+    const lowerKeyword = keyword.toLowerCase();
+    let cursor = 0;
+    let html = "";
+    let index = lowerText.indexOf(lowerKeyword, cursor);
+
+    while (index >= 0) {
+      html += esc(text.slice(cursor, index));
+      html += `<mark class="dashboard-search-highlight">${esc(text.slice(index, index + keyword.length))}</mark>`;
+      cursor = index + keyword.length;
+      index = lowerText.indexOf(lowerKeyword, cursor);
+    }
+
+    html += esc(text.slice(cursor));
+    return html;
   }
 
   function toCSV(headers, rows) {
@@ -749,6 +783,7 @@
     if (Array.isArray(data.entries)) state.entries = data.entries;
     if (Array.isArray(data.adjustments)) state.adjustments = data.adjustments;
     if (Array.isArray(data.remainders)) state.remainders = data.remainders;
+    if (Array.isArray(data.apdEntries)) state.apdEntries = data.apdEntries;
     if (Array.isArray(data.users)) state.users = data.users;
 
     refreshAllDropdowns();
@@ -757,6 +792,8 @@
     restoreFormDraft("press");
     renderPreview("filling");
     renderPreview("press");
+    renderApdPreview();
+    renderApdSavedToday();
     renderEntries("filling");
     renderEntries("press");
     renderPressBalance();
@@ -774,7 +811,7 @@
   }
 
   async function loadAppData() {
-    const data = await apiGet("appdata");
+    const data = await apiGet("appdata", { apdDate: todayStr() });
     applyBootstrap(data);
     return data;
   }
@@ -847,11 +884,39 @@
     const field = input.closest(".field") || input.parentElement;
     if (!field) return;
 
+    // APD berada di dalam container horizontal-scroll. Untuk field APD, suggestion
+    // ditempel ke <body> dengan position:fixed agar tidak terpotong oleh overflow.
+    // Form Filling/Press tetap memakai perilaku lama sehingga fitur lain tidak berubah.
+    const floating = input.classList.contains("master-search-floating");
     const list = document.createElement("div");
-    list.className = "master-suggest";
+    list.className = floating ? "master-suggest master-suggest-floating" : "master-suggest";
     list.hidden = true;
     list._ownerInput = input;
-    field.appendChild(list);
+    (floating ? document.body : field).appendChild(list);
+
+    function positionFloatingList() {
+      if (!floating || list.hidden) return;
+      const rect = input.getBoundingClientRect();
+      const gap = 4;
+      const viewportGap = 8;
+      const preferredHeight = Math.min(220, Math.max(96, window.innerHeight * 0.32));
+      const spaceBelow = window.innerHeight - rect.bottom - viewportGap;
+      const spaceAbove = rect.top - viewportGap;
+      const openUp = spaceBelow < 120 && spaceAbove > spaceBelow;
+
+      list.style.left = `${Math.round(rect.left)}px`;
+      list.style.width = `${Math.round(rect.width)}px`;
+      list.style.right = "auto";
+      list.style.maxHeight = `${Math.max(72, Math.min(preferredHeight, openUp ? spaceAbove - gap : spaceBelow - gap))}px`;
+
+      if (openUp) {
+        list.style.top = "auto";
+        list.style.bottom = `${Math.round(window.innerHeight - rect.top + gap)}px`;
+      } else {
+        list.style.top = `${Math.round(rect.bottom + gap)}px`;
+        list.style.bottom = "auto";
+      }
+    }
 
     function renderList() {
       const query = String(input.value || "").trim().toLowerCase();
@@ -862,11 +927,15 @@
       if (!values.length) {
         list.innerHTML = '<div class="master-suggest-empty">Tidak ada data master yang cocok.</div>';
       } else {
-        list.innerHTML = values.map(value =>
-          `<button type="button" data-value="${esc(value)}">${esc(value)}</button>`
-        ).join("");
+        list.innerHTML = values.map(value => {
+          const label = input.id === "dashboardPressKpiOperator"
+            ? highlightSearchMatch(value, query)
+            : esc(value);
+          return `<button type="button" data-value="${esc(value)}">${label}</button>`;
+        }).join("");
       }
       list.hidden = false;
+      positionFloatingList();
     }
 
     input.addEventListener("focus", renderList);
@@ -921,6 +990,11 @@
       input.dispatchEvent(new Event("change", { bubbles: true }));
       input.focus();
     });
+
+    if (floating) {
+      window.addEventListener("resize", positionFloatingList);
+      window.addEventListener("scroll", positionFloatingList, true);
+    }
   }
 
   function initMasterSearches(root = document) {
@@ -934,6 +1008,14 @@
 
     // Filter laporan tetap select karena tidak diminta diubah.
     fillSelect(el("lap-operator"), state.master.operator, "Semua operator");
+
+    // APD memakai autocomplete/search yang sama dengan field master lainnya.
+    // Suggestion dibaca langsung dari state.master.operator.
+
+    // Filter operator KPI Press memakai input search master tanpa mengubah filter lain.
+    if (el("dashboardPressKpiOperator")) {
+      el("dashboardPressKpiOperator").value = state.dashboard.pressKpiOperator || "";
+    }
 
     // Setelah master diperbarui, validasi ulang input form yang sudah terisi.
     qsa(".master-search-input:not(.filter-master-search)").forEach(input => {
@@ -2000,6 +2082,468 @@
 
   }
 
+
+  /* ------------------------- APD ------------------------- */
+  const APD_VARIABLES = Object.freeze([
+    { key: "maskerTidakSesuai", label: "Masker tidak sesuai", weight: 25 },
+    { key: "lenganDitarik", label: "Lengan ditarik ke atas", weight: 20 },
+    { key: "sepatuDiinjak", label: "Sepatu diinjak", weight: 10 },
+    { key: "rambutKelihatan", label: "Rambut kelihatan", weight: 15 },
+    { key: "resletingTidakPenuh", label: "Tidak diresleting secara penuh", weight: 10 },
+    { key: "memakaiAksesoris", label: "Memakai aksesoris", weight: 20 }
+  ]);
+
+  const APD_REASON_MAX_WORDS = 300;
+
+  function countApdWords(value) {
+    const text = String(value || "").trim();
+    return text ? text.split(/\s+/).filter(Boolean).length : 0;
+  }
+
+  function calculateApd(scores) {
+    let totalPoints = 0;
+    let percentage = 0;
+    APD_VARIABLES.forEach(variable => {
+      const point = Number(scores[variable.key]) || 0;
+      totalPoints += point;
+      percentage += point * (variable.weight / 5);
+    });
+    return { totalPoints, percentage: Math.round(percentage * 100) / 100 };
+  }
+
+  function apdRecordHtml(item, source, activeEditingId, activeEditingSource) {
+    const isSaved = source === "saved";
+    const isActive = item.id === activeEditingId && activeEditingSource === source;
+    return `
+      <div class="apd-unified-grid apd-preview-record ${isActive ? (isSaved ? "is-saved-editing" : "is-editing") : ""}" data-id="${esc(item.id)}">
+        <div class="apd-record-cell apd-record-operator">
+          <strong>${esc(item.operator)}</strong>
+          <small class="apd-record-date">${esc(item.tanggal)}</small>
+        </div>
+        <div class="apd-record-cell apd-record-score">${Number(item.scores?.maskerTidakSesuai) || 0}</div>
+        <div class="apd-record-cell apd-record-score">${Number(item.scores?.lenganDitarik) || 0}</div>
+        <div class="apd-record-cell apd-record-score">${Number(item.scores?.sepatuDiinjak) || 0}</div>
+        <div class="apd-record-cell apd-record-score">${Number(item.scores?.rambutKelihatan) || 0}</div>
+        <div class="apd-record-cell apd-record-score">${Number(item.scores?.resletingTidakPenuh) || 0}</div>
+        <div class="apd-record-cell apd-record-score">${Number(item.scores?.memakaiAksesoris) || 0}</div>
+        <div class="apd-record-cell apd-record-result"><strong>${Number(item.totalPoints) || 0} / 30</strong></div>
+        <div class="apd-record-cell"><span class="apd-percent-badge">${dashboardPercent(item.percentage)}</span></div>
+        <div class="apd-record-cell apd-record-reason">${esc(item.alasan || "—")}</div>
+        <div class="apd-record-cell apd-record-actions">
+          <button type="button" class="btn btn-ghost ${isSaved ? "apd-saved-edit" : "apd-edit"}" data-id="${esc(item.id)}">Edit</button>
+          <button type="button" class="btn btn-danger ${isSaved ? "apd-saved-delete" : "apd-delete"}" data-id="${esc(item.id)}">Hapus</button>
+        </div>
+      </div>`;
+  }
+
+  function renderApdPreview() {
+    const container = el("apdPreviewBody");
+    const summary = el("apdPreviewSummary");
+    const pagination = el("apdPagination");
+    const saveBtn = el("apdSaveBtn");
+    const editingNode = el("apdEditingId");
+    const activeEditingId = editingNode?.value || "";
+    const activeEditingSource = editingNode?.dataset.source || "";
+    if (!container) return;
+
+    const allRows = (state.preview.apd || []).slice().sort((a, b) =>
+      String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
+    );
+    const totalPages = Math.max(1, Math.ceil(allRows.length / CONFIG.PAGE_SIZE));
+    state.pages.apd = Math.min(Math.max(1, state.pages.apd || 1), totalPages);
+    const page = state.pages.apd;
+    const start = (page - 1) * CONFIG.PAGE_SIZE;
+    const rows = allRows.slice(start, start + CONFIG.PAGE_SIZE);
+
+    container.innerHTML = rows.map(item => apdRecordHtml(item, "preview", activeEditingId, activeEditingSource)).join("");
+
+    const from = allRows.length ? start + 1 : 0;
+    const to = Math.min(start + CONFIG.PAGE_SIZE, allRows.length);
+    const avg = allRows.length
+      ? allRows.reduce((sum, item) => sum + (Number(item.percentage) || 0), 0) / allRows.length
+      : 0;
+    if (summary) {
+      summary.textContent = allRows.length
+        ? `${from}–${to} dari ${allRows.length} operator · Rata-rata APD ${dashboardPercent(avg)} · Baris kosong siap untuk operator berikutnya`
+        : "Belum ada operator ditambahkan · Isi baris kosong di atas lalu klik Tambah.";
+    }
+    if (saveBtn) {
+      saveBtn.disabled = allRows.length === 0;
+      saveBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> ${allRows.length ? `Simpan (${allRows.length})` : "Simpan"}`;
+    }
+
+    renderPagination(pagination, page, totalPages, nextPage => {
+      state.pages.apd = nextPage;
+      renderApdPreview();
+    });
+  }
+
+  function renderApdSavedToday() {
+    const container = el("apdSavedBody");
+    const summary = el("apdSavedSummary");
+    const pagination = el("apdSavedPagination");
+    const editingNode = el("apdEditingId");
+    const activeEditingId = editingNode?.value || "";
+    const activeEditingSource = editingNode?.dataset.source || "";
+    if (!container) return;
+
+    const today = todayStr();
+    const allRows = (state.apdEntries || [])
+      .filter(item => item && item.tanggal === today)
+      .slice()
+      .sort((a, b) =>
+        String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")) ||
+        (Number(b.rowNumber) || 0) - (Number(a.rowNumber) || 0)
+      );
+
+    const totalPages = Math.max(1, Math.ceil(allRows.length / CONFIG.PAGE_SIZE));
+    state.pages.apdSaved = Math.min(Math.max(1, state.pages.apdSaved || 1), totalPages);
+    const page = state.pages.apdSaved;
+    const start = (page - 1) * CONFIG.PAGE_SIZE;
+    const rows = allRows.slice(start, start + CONFIG.PAGE_SIZE);
+
+    container.innerHTML = rows.length
+      ? rows.map(item => apdRecordHtml(item, "saved", activeEditingId, activeEditingSource)).join("")
+      : '<div class="apd-saved-empty">Belum ada data APD yang tersimpan pada hari ini.</div>';
+
+    const from = allRows.length ? start + 1 : 0;
+    const to = Math.min(start + CONFIG.PAGE_SIZE, allRows.length);
+    const avg = allRows.length
+      ? allRows.reduce((sum, item) => sum + (Number(item.percentage) || 0), 0) / allRows.length
+      : 0;
+    if (summary) {
+      summary.textContent = allRows.length
+        ? `${from}–${to} dari ${allRows.length} data tersimpan hari ini · Rata-rata APD ${dashboardPercent(avg)}`
+        : `Belum ada data tersimpan untuk ${today}.`;
+    }
+
+    renderPagination(pagination, page, totalPages, nextPage => {
+      state.pages.apdSaved = nextPage;
+      renderApdSavedToday();
+    });
+  }
+
+  function initApd() {
+    const section = el("view-apd");
+    const form = el("apdForm");
+    if (!section || !form) return;
+
+    const tanggal = el("apdTanggal");
+    const operator = el("apdOperator");
+    const totalPoints = el("apdTotalPoints");
+    const percentage = el("apdPercentage");
+    const reason = el("apdReason");
+    const reasonWordCount = el("apdReasonWordCount");
+    const editingId = el("apdEditingId");
+    const errorEl = el("apdError");
+    const addBtn = el("apdAddBtn");
+    const cancelBtn = el("apdCancelEdit");
+    const stamp = el("apdStamp");
+    const saveBtn = el("apdSaveBtn");
+    const previewBody = el("apdPreviewBody");
+    const savedBody = el("apdSavedBody");
+    const scoreInputs = qsa(".apd-score", form);
+
+    if (tanggal) tanggal.value = todayStr();
+
+    function scoresFromForm() {
+      const scores = {};
+      scoreInputs.forEach(input => { scores[input.dataset.apdKey] = Number(input.value); });
+      return scores;
+    }
+
+    function refreshCalculation() {
+      const scores = scoresFromForm();
+      const result = calculateApd(scores);
+      if (totalPoints) totalPoints.value = `${result.totalPoints} / 30`;
+      if (percentage) percentage.value = dashboardPercent(result.percentage);
+      return result;
+    }
+
+    function refreshReasonCounter() {
+      if (!reason) return 0;
+      const words = countApdWords(reason.value);
+      if (reasonWordCount) {
+        reasonWordCount.textContent = `${words} / ${APD_REASON_MAX_WORDS} kata`;
+        reasonWordCount.classList.toggle("limit", words > APD_REASON_MAX_WORDS);
+      }
+      reason.setCustomValidity(words > APD_REASON_MAX_WORDS
+        ? `Alasan maksimal ${APD_REASON_MAX_WORDS} kata.`
+        : "");
+      return words;
+    }
+
+    function resetForm() {
+      form.reset();
+      if (tanggal) tanggal.value = todayStr();
+      if (editingId) {
+        editingId.value = "";
+        delete editingId.dataset.source;
+      }
+      if (totalPoints) totalPoints.value = "0 / 30";
+      if (percentage) percentage.value = "0%";
+      if (addBtn) {
+        addBtn.innerHTML = '<i class="fa-solid fa-circle-plus"></i> Tambah';
+        addBtn.disabled = false;
+      }
+      if (cancelBtn) cancelBtn.hidden = true;
+      if (stamp) stamp.textContent = "Preview APD";
+      if (errorEl) errorEl.hidden = true;
+      if (operator) {
+        operator.setCustomValidity("");
+        operator.classList.remove("is-invalid");
+      }
+      refreshCalculation();
+      refreshReasonCounter();
+    }
+
+    function loadItemIntoForm(item, source) {
+      if (!item) return;
+      if (editingId) {
+        editingId.value = item.id || "";
+        editingId.dataset.source = source;
+      }
+      if (tanggal) tanggal.value = item.tanggal || todayStr();
+      if (operator) operator.value = item.operator || "";
+      scoreInputs.forEach(input => { input.value = item.scores?.[input.dataset.apdKey] ?? ""; });
+      if (reason) reason.value = item.alasan || "";
+      refreshCalculation();
+      refreshReasonCounter();
+      if (addBtn) addBtn.textContent = "Simpan Perubahan";
+      if (cancelBtn) cancelBtn.hidden = false;
+      if (stamp) stamp.textContent = source === "saved" ? "EDIT DATA TERSIMPAN" : "EDIT PREVIEW";
+      renderApdPreview();
+      renderApdSavedToday();
+      form.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    scoreInputs.forEach(input => input.addEventListener("input", refreshCalculation));
+    reason?.addEventListener("input", refreshReasonCounter);
+    cancelBtn?.addEventListener("click", () => {
+      resetForm();
+      renderApdPreview();
+      renderApdSavedToday();
+    });
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      if (errorEl) errorEl.hidden = true;
+
+      if (!can("accessApd")) {
+        if (errorEl) { errorEl.textContent = "Anda tidak memiliki akses APD."; errorEl.hidden = false; }
+        return;
+      }
+
+      if (!validateMasterInput(operator)) {
+        if (errorEl) { errorEl.textContent = "Nama operator harus dipilih dari data master."; errorEl.hidden = false; }
+        operator?.reportValidity();
+        return;
+      }
+
+      const invalidScore = scoreInputs.find(input => {
+        const text = String(input.value || "").trim();
+        const value = Number(text);
+        return text === "" || !Number.isInteger(value) || value < 0 || value > 5;
+      });
+      if (invalidScore) {
+        if (errorEl) { errorEl.textContent = "Semua variable APD wajib diisi dengan poin bulat 0 sampai 5."; errorEl.hidden = false; }
+        invalidScore.focus();
+        return;
+      }
+
+      const reasonWords = refreshReasonCounter();
+      if (reasonWords > APD_REASON_MAX_WORDS) {
+        if (errorEl) {
+          errorEl.textContent = `Alasan / keterangan maksimal ${APD_REASON_MAX_WORDS} kata. Saat ini ${reasonWords} kata.`;
+          errorEl.hidden = false;
+        }
+        reason?.focus();
+        return;
+      }
+
+      const canonicalOperator = canonicalMasterValue("operator", operator.value);
+      const scores = scoresFromForm();
+      const result = calculateApd(scores);
+      const id = editingId?.value || "";
+      const source = editingId?.dataset.source || "";
+      const formDate = tanggal?.value || todayStr();
+
+      const duplicatePreview = (state.preview.apd || []).find(item =>
+        !(source === "preview" && item.id === id) &&
+        item.tanggal === formDate &&
+        String(item.operator || "").toLowerCase() === canonicalOperator.toLowerCase()
+      );
+      if (duplicatePreview) {
+        if (errorEl) {
+          errorEl.textContent = "Operator ini sudah ada di preview APD pada tanggal yang sama. Gunakan tombol Edit pada baris preview tersebut.";
+          errorEl.hidden = false;
+        }
+        return;
+      }
+
+      const duplicateSaved = (state.apdEntries || []).find(item =>
+        !(source === "saved" && item.id === id) &&
+        item.tanggal === formDate &&
+        String(item.operator || "").toLowerCase() === canonicalOperator.toLowerCase()
+      );
+      if (duplicateSaved) {
+        if (errorEl) {
+          errorEl.textContent = "Operator ini sudah memiliki data APD yang tersimpan pada tanggal yang sama. Gunakan tombol Edit pada section Data Tersimpan Hari Ini.";
+          errorEl.hidden = false;
+        }
+        return;
+      }
+
+      const payload = {
+        tanggal: formDate,
+        operator: canonicalOperator,
+        scores: { ...scores },
+        alasan: String(reason?.value || "").trim()
+      };
+
+      // Edit data yang SUDAH tersimpan selalu menggunakan endpoint update.
+      // Baris lama dioverwrite berdasarkan ID yang sama sehingga tidak append/duplikat.
+      if (id && source === "saved") {
+        if (addBtn) addBtn.disabled = true;
+        try {
+          const response = await enqueueWrite(() => apiPost("apd.update", { id, data: payload }));
+          if (Array.isArray(response.apdEntries)) state.apdEntries = response.apdEntries;
+          state.pages.apdSaved = 1;
+          resetForm();
+          renderApdPreview();
+          renderApdSavedToday();
+          toast("Data APD tersimpan berhasil diperbarui tanpa membuat duplikat.");
+        } catch (err) {
+          if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+          if (addBtn) addBtn.disabled = false;
+        }
+        return;
+      }
+
+      const item = {
+        id: id || makeClientRequestId(),
+        tanggal: payload.tanggal,
+        operator: payload.operator,
+        scores: payload.scores,
+        totalPoints: result.totalPoints,
+        percentage: result.percentage,
+        alasan: payload.alasan,
+        createdAt: id
+          ? ((state.preview.apd || []).find(row => row.id === id)?.createdAt || nowIso())
+          : nowIso()
+      };
+
+      if (id && source === "preview") {
+        const index = state.preview.apd.findIndex(row => row.id === id);
+        if (index >= 0) state.preview.apd[index] = item;
+        toast("Data APD di preview berhasil diperbarui.");
+      } else {
+        state.preview.apd.push(item);
+        toast("Data APD ditambahkan ke preview. Belum disimpan ke Spreadsheet.");
+      }
+
+      state.pages.apd = 1;
+      persistPreview();
+      resetForm();
+      renderApdPreview();
+      renderApdSavedToday();
+      setTimeout(() => operator?.focus(), 0);
+    });
+
+    previewBody?.addEventListener("click", event => {
+      const editBtn = event.target.closest(".apd-edit");
+      const deleteBtn = event.target.closest(".apd-delete");
+
+      if (editBtn) {
+        const item = (state.preview.apd || []).find(row => row.id === editBtn.dataset.id);
+        if (!item) return;
+        loadItemIntoForm(item, "preview");
+        return;
+      }
+
+      if (deleteBtn) {
+        state.preview.apd = (state.preview.apd || []).filter(row => row.id !== deleteBtn.dataset.id);
+        state.pages.apd = 1;
+        persistPreview();
+        if (editingId?.value === deleteBtn.dataset.id && editingId.dataset.source === "preview") resetForm();
+        renderApdPreview();
+        renderApdSavedToday();
+        toast("Data APD dihapus dari preview.");
+      }
+    });
+
+    savedBody?.addEventListener("click", async event => {
+      const editBtn = event.target.closest(".apd-saved-edit");
+      const deleteBtn = event.target.closest(".apd-saved-delete");
+
+      if (editBtn) {
+        const item = (state.apdEntries || []).find(row => row.id === editBtn.dataset.id);
+        if (!item) return toast("Data APD tersimpan tidak ditemukan. Muat ulang halaman.", true);
+        loadItemIntoForm(item, "saved");
+        return;
+      }
+
+      if (deleteBtn) {
+        if (!can("accessApd")) return toast("Anda tidak memiliki akses APD.", true);
+        const item = (state.apdEntries || []).find(row => row.id === deleteBtn.dataset.id);
+        if (!item) return toast("Data APD tersimpan tidak ditemukan. Muat ulang halaman.", true);
+        if (!confirm(`Hapus data APD ${item.operator} tanggal ${item.tanggal}?`)) return;
+
+        deleteBtn.disabled = true;
+        try {
+          const response = await enqueueWrite(() => apiPost("apd.delete", { id: item.id }));
+          if (Array.isArray(response.apdEntries)) state.apdEntries = response.apdEntries;
+          else state.apdEntries = (state.apdEntries || []).filter(row => row.id !== item.id);
+          state.pages.apdSaved = 1;
+          if (editingId?.value === item.id && editingId.dataset.source === "saved") resetForm();
+          renderApdPreview();
+          renderApdSavedToday();
+          toast("Data APD tersimpan berhasil dihapus.");
+        } catch (err) {
+          deleteBtn.disabled = false;
+          toast(`Gagal menghapus data APD: ${err.message}`, true);
+        }
+      }
+    });
+
+    saveBtn?.addEventListener("click", async () => {
+      const rows = [...(state.preview.apd || [])];
+      if (!rows.length) return toast("Belum ada data APD di preview.", true);
+      if (!can("accessApd")) return toast("Anda tidak memiliki akses APD.", true);
+
+      saveBtn.disabled = true;
+      saveBtn.textContent = `Menyimpan ${rows.length} data...`;
+      try {
+        const payload = rows.map(item => ({
+          tanggal: item.tanggal,
+          operator: item.operator,
+          scores: item.scores,
+          alasan: item.alasan || "",
+          clientRequestId: item.id
+        }));
+        const response = await enqueueWrite(() => apiPost("apd.batchCreate", { data: payload }));
+        const savedIds = new Set(Array.isArray(response.savedIds) ? response.savedIds : rows.map(item => item.id));
+        state.preview.apd = (state.preview.apd || []).filter(item => !savedIds.has(item.id));
+        if (Array.isArray(response.apdEntries)) state.apdEntries = response.apdEntries;
+        state.pages.apd = 1;
+        state.pages.apdSaved = 1;
+        persistPreview();
+        renderApdPreview();
+        renderApdSavedToday();
+        toast(`${Number(response.savedCount) || rows.length} data APD berhasil disimpan ke sheet APD.`);
+      } catch (err) {
+        renderApdPreview();
+        renderApdSavedToday();
+        toast(`Gagal menyimpan APD: ${err.message}`, true);
+      }
+    });
+
+    refreshCalculation();
+    refreshReasonCounter();
+    renderApdPreview();
+    renderApdSavedToday();
+  }
+
   /* ------------------------- DASHBOARD ------------------------- */
   function dashboardEntries() {
     const saved = (state.entries || []).filter(entry => entry && entry._syncState !== "error");
@@ -2900,316 +3444,145 @@
     })}%`;
   }
 
+  function dashboardPressKpiPeriod() {
+    const today = dashboardDateParts(todayStr()) || new Date();
+    const mode = state.dashboard.pressKpiMode || "date";
+
+    if (mode === "month") {
+      const value = state.dashboard.pressKpiMonth || dashboardMonthKey(today);
+      const [year, month] = value.split("-").map(Number);
+      const start = new Date(year, month - 1, 1);
+      const end = new Date(year, month, 0);
+      return { mode, start, end, label: start.toLocaleDateString("id-ID", { month: "long", year: "numeric" }) };
+    }
+
+    if (mode === "year") {
+      const year = Number(state.dashboard.pressKpiYear) || today.getFullYear();
+      return { mode, start: new Date(year, 0, 1), end: new Date(year, 11, 31), label: `Tahun ${year}` };
+    }
+
+    if (mode === "range") {
+      let start = dashboardDateParts(state.dashboard.pressKpiStart) || dashboardAddDays(today, -6);
+      let end = dashboardDateParts(state.dashboard.pressKpiEnd) || today;
+      if (start > end) [start, end] = [end, start];
+      return {
+        mode,
+        start,
+        end,
+        label: `${start.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })} – ${end.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })}`
+      };
+    }
+
+    const dateText = state.dashboard.pressKpiDate || todayStr();
+    const date = dashboardDateParts(dateText) || today;
+    return { mode: "date", start: date, end: date, label: dateText };
+  }
+
+  function dashboardDateInPeriod(dateText, period) {
+    const date = dashboardDateParts(dateText);
+    return Boolean(date && date >= period.start && date <= period.end);
+  }
+
   function renderDashboardPressKpi(entries) {
     const tbody = el("dashboardPressKpiBody");
     const summary = el("dashboardPressKpiSummary");
     const pagination = el("dashboardPressKpiPagination");
-
     if (!tbody) return;
 
     const targetPerDay = 3500;
     const workHours = 7;
-    const selectedDate = state.dashboard.pressKpiDate || todayStr();
+    const period = dashboardPressKpiPeriod();
+    const operatorFilter = String(state.dashboard.pressKpiOperator || "").trim().toLowerCase();
     const grouped = new Map();
-    /* =====================================
-      GROUP DATA PER OPERATOR
-      ===================================== */
+
     entries
-      .filter(
-        entry =>
-          entry.tab === "press" &&
-          entry.tanggal === selectedDate
-      )
+      .filter(entry => entry.tab === "press" && dashboardDateInPeriod(entry.tanggal, period))
+      .filter(entry => !operatorFilter || String(entry.operator || "").trim().toLowerCase().includes(operatorFilter))
       .forEach(entry => {
-
-        const operator =
-          String(entry.operator || "").trim() || "—";
-
+        const operator = String(entry.operator || "").trim() || "—";
         if (!grouped.has(operator)) {
-          grouped.set(operator, {
-            operator,
-            totalPress: 0,
-            broken: 0
-          });
+          grouped.set(operator, { operator, totalPress: 0, broken: 0, activeDates: new Set() });
         }
-
         const row = grouped.get(operator);
-
-        row.totalPress +=
-          Number(entry.totalQty) || 0;
-
-        row.broken +=
-          Number(entry.qtyBotolPecah) || 0;
+        row.totalPress += Number(entry.totalQty) || 0;
+        row.broken += Number(entry.qtyBotolPecah) || 0;
+        if (entry.tanggal) row.activeDates.add(entry.tanggal);
       });
 
+    const apdByOperator = new Map();
+    (state.apdEntries || [])
+      .filter(item => item && dashboardDateInPeriod(item.tanggal, period))
+      .filter(item => !operatorFilter || String(item.operator || "").trim().toLowerCase().includes(operatorFilter))
+      .forEach(item => {
+        const key = String(item.operator || "").trim().toLowerCase();
+        if (!key) return;
+        if (!apdByOperator.has(key)) apdByOperator.set(key, []);
+        apdByOperator.get(key).push(Number(item.percentage) || 0);
+      });
 
-    /* =====================================
-      SEMUA DATA OPERATOR
-      ===================================== */
-    const allRows =
-      Array.from(grouped.values())
-        .map(row => ({
+    const allRows = Array.from(grouped.values())
+      .map(row => {
+        const activeDays = Math.max(1, row.activeDates.size);
+        const apdValues = apdByOperator.get(row.operator.toLowerCase()) || [];
+        const kpiApd = apdValues.length
+          ? apdValues.reduce((sum, value) => sum + value, 0) / apdValues.length
+          : null;
+        return {
           ...row,
+          activeDays,
+          perHour: row.totalPress / (workHours * activeDays),
+          kpiResult: row.totalPress / (targetPerDay * activeDays) * 100,
+          kpiReject: row.totalPress > 0 ? row.broken / row.totalPress * 100 : 0,
+          kpiApd,
+          apdCount: apdValues.length
+        };
+      })
+      .sort((a, b) => b.totalPress - a.totalPress || a.operator.localeCompare(b.operator, "id"));
 
-          perHour:
-            row.totalPress / workHours,
+    const pageSize = CONFIG.DASHBOARD_PRESS_KPI_PAGE_SIZE;
+    const totalPages = Math.max(1, Math.ceil(allRows.length / pageSize));
+    state.dashboard.pressKpiPage = Math.min(Math.max(1, state.dashboard.pressKpiPage || 1), totalPages);
+    const page = state.dashboard.pressKpiPage;
+    const start = (page - 1) * pageSize;
+    const visibleRows = allRows.slice(start, start + pageSize);
 
-          kpiResult:
-            row.totalPress /
-            targetPerDay *
-            100,
+    tbody.innerHTML = visibleRows.length ? visibleRows.map(row => `
+      <tr>
+        <td><strong>${highlightSearchMatch(row.operator, state.dashboard.pressKpiOperator)}</strong></td>
+        <td><strong>${dashboardQty(row.totalPress)}</strong></td>
+        <td>${row.perHour.toLocaleString("id-ID", { maximumFractionDigits: 1 })}</td>
+        <td><span class="dashboard-kpi-percent result">${dashboardPercent(row.kpiResult)}</span></td>
+        <td class="${row.broken > 0 ? "pecah-tag" : ""}">${dashboardQty(row.broken)}</td>
+        <td><span class="dashboard-kpi-percent reject">${dashboardPercent(row.kpiReject)}</span></td>
+        <td><span class="dashboard-kpi-percent apd">${row.kpiApd === null ? "—" : dashboardPercent(row.kpiApd)}</span></td>
+      </tr>`).join("")
+      : `<tr><td colspan="7" class="empty-row">Belum ada data Press pada periode/filter ini.</td></tr>`;
 
-          kpiReject:
-            row.totalPress > 0
-              ? row.broken /
-                row.totalPress *
-                100
-              : 0
-        }))
-        .sort(
-          (a, b) =>
-            b.totalPress -
-              a.totalPress ||
-            a.operator.localeCompare(
-              b.operator,
-              "id"
-            )
-        );
+    const totalPress = allRows.reduce((sum, row) => sum + row.totalPress, 0);
+    const totalBroken = allRows.reduce((sum, row) => sum + row.broken, 0);
+    const rejectTotal = totalPress > 0 ? totalBroken / totalPress * 100 : 0;
 
-
-    /* =====================================
-      PAGINATION
-      ===================================== */
-    const pageSize =
-      CONFIG.DASHBOARD_PRESS_KPI_PAGE_SIZE;
-
-    const totalPages =
-      Math.max(
-        1,
-        Math.ceil(
-          allRows.length / pageSize
-        )
-      );
-
-
-    state.dashboard.pressKpiPage =
-      Math.min(
-        Math.max(
-          1,
-          state.dashboard.pressKpiPage || 1
-        ),
-        totalPages
-      );
-
-
-    const page =
-      state.dashboard.pressKpiPage;
-
-    const start =
-      (page - 1) * pageSize;
-
-    const visibleRows =
-      allRows.slice(
-        start,
-        start + pageSize
-      );
-
-
-    /* =====================================
-      RENDER TABEL
-      ===================================== */
-    tbody.innerHTML =
-      visibleRows.length
-        ? visibleRows.map(row => `
-
-          <tr>
-
-            <td>
-              <strong>
-                ${esc(row.operator)}
-              </strong>
-            </td>
-
-            <td>
-              <strong>
-                ${dashboardQty(
-                  row.totalPress
-                )}
-              </strong>
-            </td>
-
-            <td>
-              ${row.perHour.toLocaleString(
-                "id-ID",
-                {
-                  maximumFractionDigits: 1
-                }
-              )}
-            </td>
-
-            <td>
-              <span
-                class="dashboard-kpi-percent result"
-              >
-                ${dashboardPercent(
-                  row.kpiResult
-                )}
-              </span>
-            </td>
-
-            <td
-              class="${
-                row.broken > 0
-                  ? "pecah-tag"
-                  : ""
-              }"
-            >
-              ${dashboardQty(
-                row.broken
-              )}
-            </td>
-
-            <td>
-              <span
-                class="dashboard-kpi-percent reject"
-              >
-                ${dashboardPercent(
-                  row.kpiReject
-                )}
-              </span>
-            </td>
-
-          </tr>
-
-        `).join("")
-
-        : `
-          <tr>
-            <td
-              colspan="6"
-              class="empty-row"
-            >
-              Belum ada data Press
-              pada tanggal ini.
-            </td>
-          </tr>
-        `;
-
-
-    /* =====================================
-      TOTAL KESELURUHAN
-
-      Jangan menggunakan visibleRows.
-      Total harus seluruh operator.
-      ===================================== */
-
-    const totalPress =
-      allRows.reduce(
-        (sum, row) =>
-          sum + row.totalPress,
-        0
-      );
-
-
-    const totalBroken =
-      allRows.reduce(
-        (sum, row) =>
-          sum + row.broken,
-        0
-      );
-
-
-    const rejectTotal =
-      totalPress > 0
-        ? totalBroken /
-          totalPress *
-          100
-        : 0;
-
-
-    dashboardSetText(
-      "dashboardPressKpiOperators",
-      dashboardQty(allRows.length)
-    );
-
-    dashboardSetText(
-      "dashboardPressKpiTotal",
-      dashboardQty(totalPress)
-    );
-
-    dashboardSetText(
-      "dashboardPressKpiBroken",
-      dashboardQty(totalBroken)
-    );
-
-    dashboardSetText(
-      "dashboardPressKpiRejectTotal",
-      dashboardPercent(
-        rejectTotal
-      )
-    );
-
-
-    /* =====================================
-      SUMMARY
-      ===================================== */
+    dashboardSetText("dashboardPressKpiOperators", dashboardQty(allRows.length));
+    dashboardSetText("dashboardPressKpiTotal", dashboardQty(totalPress));
+    dashboardSetText("dashboardPressKpiBroken", dashboardQty(totalBroken));
+    dashboardSetText("dashboardPressKpiRejectTotal", dashboardPercent(rejectTotal));
 
     if (summary) {
-
       if (allRows.length) {
-
-        const from =
-          start + 1;
-
-        const to =
-          Math.min(
-            start + pageSize,
-            allRows.length
-          );
-
-
-        summary.textContent =
-          `${from}–${to} dari ${allRows.length} operator` +
-          ` · Total Press ${dashboardQty(totalPress)} pcs` +
-          ` · Total rusak ${dashboardQty(totalBroken)} pcs`;
-
+        const from = start + 1;
+        const to = Math.min(start + pageSize, allRows.length);
+        summary.textContent = `${from}–${to} dari ${allRows.length} operator · ${period.label} · Total Press ${dashboardQty(totalPress)} pcs · Total rusak ${dashboardQty(totalBroken)} pcs`;
       } else {
-
-        summary.textContent =
-          `Tidak ada pengerjaan Press pada ${selectedDate}.`;
-
+        summary.textContent = `Tidak ada pengerjaan Press pada ${period.label}${state.dashboard.pressKpiOperator ? ` untuk ${state.dashboard.pressKpiOperator}` : ""}.`;
       }
     }
 
-
-    /* =====================================
-      RENDER PAGINATION
-      ===================================== */
-
     if (pagination) {
-
-      /*
-        1 halaman = sembunyikan
-        >1 halaman = tampilkan
-      */
-      pagination.hidden =
-        totalPages <= 1;
-
-
-      renderPagination(
-        pagination,
-        page,
-        totalPages,
-        nextPage => {
-
-          state.dashboard.pressKpiPage =
-            nextPage;
-
-          renderDashboardPressKpi(
-            entries
-          );
-        }
-      );
+      pagination.hidden = totalPages <= 1;
+      renderPagination(pagination, page, totalPages, nextPage => {
+        state.dashboard.pressKpiPage = nextPage;
+        renderDashboardPressKpi(entries);
+      });
     }
   }
 
@@ -3314,16 +3687,66 @@
     const yearInput = el("dashboardChartYear");
     const startInput = el("dashboardChartStart");
     const endInput = el("dashboardChartEnd");
+    const pressKpiModeInput = el("dashboardPressKpiMode");
+    const pressKpiOperatorInput = el("dashboardPressKpiOperator");
+    const pressKpiOperatorClear = el("dashboardPressKpiOperatorClear");
     const pressKpiDateInput = el("dashboardPressKpiDate");
+    const pressKpiMonthInput = el("dashboardPressKpiMonth");
+    const pressKpiYearInput = el("dashboardPressKpiYear");
+    const pressKpiStartInput = el("dashboardPressKpiStart");
+    const pressKpiEndInput = el("dashboardPressKpiEnd");
 
-    if (pressKpiDateInput) {
-      pressKpiDateInput.value = state.dashboard.pressKpiDate;
-      pressKpiDateInput.addEventListener("change", () => {
-        state.dashboard.pressKpiDate = pressKpiDateInput.value || todayStr();
-        state.dashboard.pressKpiPage = 1;
-        renderDashboardPressKpi(dashboardEntries());
-      });
+    if (!state.dashboard.pressKpiMonth) state.dashboard.pressKpiMonth = currentMonth;
+    if (!state.dashboard.pressKpiYear) state.dashboard.pressKpiYear = currentYear;
+
+    function updatePressKpiFilterUI() {
+      const mode = state.dashboard.pressKpiMode || "date";
+      if (el("dashboardPressKpiDateWrap")) el("dashboardPressKpiDateWrap").hidden = mode !== "date";
+      if (el("dashboardPressKpiMonthWrap")) el("dashboardPressKpiMonthWrap").hidden = mode !== "month";
+      if (el("dashboardPressKpiYearWrap")) el("dashboardPressKpiYearWrap").hidden = mode !== "year";
+      if (el("dashboardPressKpiStartWrap")) el("dashboardPressKpiStartWrap").hidden = mode !== "range";
+      if (el("dashboardPressKpiEndWrap")) el("dashboardPressKpiEndWrap").hidden = mode !== "range";
     }
+
+    if (pressKpiModeInput) pressKpiModeInput.value = state.dashboard.pressKpiMode || "date";
+    if (pressKpiOperatorInput) pressKpiOperatorInput.value = state.dashboard.pressKpiOperator || "";
+    if (pressKpiDateInput) pressKpiDateInput.value = state.dashboard.pressKpiDate;
+    if (pressKpiMonthInput) pressKpiMonthInput.value = state.dashboard.pressKpiMonth;
+    if (pressKpiYearInput) pressKpiYearInput.value = state.dashboard.pressKpiYear;
+    if (pressKpiStartInput) pressKpiStartInput.value = state.dashboard.pressKpiStart || "";
+    if (pressKpiEndInput) pressKpiEndInput.value = state.dashboard.pressKpiEnd || "";
+    updatePressKpiFilterUI();
+
+    const rerenderPressKpi = () => {
+      state.dashboard.pressKpiPage = 1;
+      renderDashboardPressKpi(dashboardEntries());
+    };
+    const updatePressKpiOperatorClear = () => {
+      if (pressKpiOperatorClear) {
+        pressKpiOperatorClear.hidden = !String(pressKpiOperatorInput?.value || "").trim();
+      }
+    };
+    pressKpiModeInput?.addEventListener("change", () => { state.dashboard.pressKpiMode = pressKpiModeInput.value; updatePressKpiFilterUI(); rerenderPressKpi(); });
+    const syncPressKpiOperatorFilter = () => {
+      state.dashboard.pressKpiOperator = String(pressKpiOperatorInput?.value || "").trim();
+      updatePressKpiOperatorClear();
+      rerenderPressKpi();
+    };
+    pressKpiOperatorInput?.addEventListener("input", syncPressKpiOperatorFilter);
+    pressKpiOperatorInput?.addEventListener("change", syncPressKpiOperatorFilter);
+    pressKpiOperatorClear?.addEventListener("click", () => {
+      if (pressKpiOperatorInput) pressKpiOperatorInput.value = "";
+      state.dashboard.pressKpiOperator = "";
+      updatePressKpiOperatorClear();
+      rerenderPressKpi();
+      pressKpiOperatorInput?.focus();
+    });
+    updatePressKpiOperatorClear();
+    pressKpiDateInput?.addEventListener("change", () => { state.dashboard.pressKpiDate = pressKpiDateInput.value || todayStr(); rerenderPressKpi(); });
+    pressKpiMonthInput?.addEventListener("change", () => { state.dashboard.pressKpiMonth = pressKpiMonthInput.value || currentMonth; rerenderPressKpi(); });
+    pressKpiYearInput?.addEventListener("change", () => { state.dashboard.pressKpiYear = pressKpiYearInput.value || currentYear; rerenderPressKpi(); });
+    pressKpiStartInput?.addEventListener("change", () => { state.dashboard.pressKpiStart = pressKpiStartInput.value; rerenderPressKpi(); });
+    pressKpiEndInput?.addEventListener("change", () => { state.dashboard.pressKpiEnd = pressKpiEndInput.value; rerenderPressKpi(); });
 
     if (modeInput) {
       modeInput.value = state.dashboard.chartMode;
@@ -3433,6 +3856,7 @@
         dashboard : "accessDashboard",
         filling: "accessFilling",
         press: "accessPress",
+        apd: "accessApd",
         laporan: "accessReports",
         master: "accessMaster"
       };
@@ -4018,6 +4442,7 @@
     buildPressView();
     wireLineView("filling");
     wireLineView("press");
+    initApd();
     initTabs();
     initDashboard();
     initLaporan();
@@ -4041,6 +4466,8 @@
         renderPreview("press");
         renderEntries("filling");
         renderEntries("press");
+        renderApdPreview();
+        renderApdSavedToday();
         renderPressBalance();
         renderUserHeader();
         applyAccessControl();

@@ -23,7 +23,8 @@ const APP = {
     SESSIONS: 'Sessions',
     ENTRIES: 'Pengerjaan',
     PRESS_ADJUSTMENTS: 'Penutupan Press',
-    PRESS_REMAINDERS: 'Sisa Press'
+    PRESS_REMAINDERS: 'Sisa Press',
+    APD: 'APD'
   },
   ENTRY_HEADERS: [
     'id', 'reportId', 'tab', 'tanggal', 'operator', 'produk', 'botol',
@@ -34,7 +35,14 @@ const APP = {
   USER_HEADERS: ['username', 'passwordHash', 'name', 'role', 'active', 'createdAt', 'permissionsJson'],
   SESSION_HEADERS: ['token', 'username', 'expiresAt', 'createdAt'],
   PRESS_ADJUSTMENT_HEADERS: ['id', 'tanggal', 'produk', 'botol', 'qtyDitutup', 'alasan', 'closedBy', 'closedByName', 'createdAt'],
-  PRESS_REMAINDER_HEADERS: ['id', 'tanggalAsal', 'produk', 'botol', 'qtyFilling', 'qtyPressTerpakai', 'qtyDitutup', 'sisaQty', 'status', 'updatedAt']
+  PRESS_REMAINDER_HEADERS: ['id', 'tanggalAsal', 'produk', 'botol', 'qtyFilling', 'qtyPressTerpakai', 'qtyDitutup', 'sisaQty', 'status', 'updatedAt'],
+  APD_HEADERS: [
+    'Tanggal', 'Nama Operator',
+    'Masker tidak sesuai', 'Lengan ditarik ke atas', 'Sepatu diinjak',
+    'Rambut kelihatan', 'APD tidak diresleting penuh', 'Memakai aksesoris',
+    'Total Poin', 'Nilai Prosentase APD', 'Alasan',
+    'apdId', 'createdBy', 'createdAt', 'updatedAt'
+  ]
 };
 
 function setupSpreadsheet() {
@@ -49,6 +57,7 @@ function setupSpreadsheet() {
   ensureSheet_(ss, APP.SHEETS.ENTRIES, APP.ENTRY_HEADERS);
   ensureSheet_(ss, APP.SHEETS.PRESS_ADJUSTMENTS, APP.PRESS_ADJUSTMENT_HEADERS);
   ensureSheet_(ss, APP.SHEETS.PRESS_REMAINDERS, APP.PRESS_REMAINDER_HEADERS);
+  ensureApdSheet_(ss);
 
   if (master.getLastRow() < 2) {
     master.getRange(2, 1, 3, 3).setValues([
@@ -82,7 +91,7 @@ function setupSpreadsheet() {
   // Bangun saldo sisa dari data Pengerjaan lama agar langsung kompatibel.
   rebuildPressRemainders_();
 
-  return 'Setup selesai. Sheet Sisa Press aktif dan saldo Filling → Press sudah dibangun ulang.';
+  return 'Setup selesai. Sheet Sisa Press dan APD aktif, serta saldo Filling → Press sudah dibangun ulang.';
 }
 
 function doGet(e) {
@@ -116,11 +125,13 @@ function doGet(e) {
         ? featureEntries
         : featureEntries.filter(function (entry) { return entry.createdBy === session.user.username; });
       const pressAdjustments = can_(session.user, 'accessPress') ? getPressAdjustments_() : [];
+      const apdDate = String(param_(e, 'apdDate') || '').trim();
       return json_({
         ok: true,
         entries: visibleEntries,
         adjustments: pressAdjustments,
         remainders: can_(session.user, 'accessPress') ? getPressRemainders_(allEntries, pressAdjustments) : [],
+        apdEntries: can_(session.user, 'accessApd') ? getApdEntries_() : [],
         users: session.user.role === 'superuser' ? getUsers_() : []
       });
     }
@@ -190,6 +201,35 @@ function doPost(e) {
           const adjustment = closePressRemainder_(session.user, parseJsonParam_(e, 'data'));
           rebuildPressRemainders_();
           return json_({ ok: true, adjustment: adjustment, remainders: getPressRemainders_() });
+        });
+
+
+      case 'apd.batchCreate':
+        requirePermission_(session.user, 'accessApd', 'Anda tidak memiliki akses APD.');
+        return withWriteLock_(function () {
+          const result = createApdEntriesBatch_(session.user, parseJsonParam_(e, 'data'));
+          return json_({
+            ok: true,
+            savedCount: result.savedCount,
+            newCount: result.newCount,
+            duplicateIds: result.duplicateIds,
+            savedIds: result.savedIds,
+            apdEntries: result.apdEntries
+          });
+        });
+
+      case 'apd.update':
+        requirePermission_(session.user, 'accessApd', 'Anda tidak memiliki akses APD.');
+        return withWriteLock_(function () {
+          const updated = updateApdEntry_(session.user, param_(e, 'id'), parseJsonParam_(e, 'data'));
+          return json_({ ok: true, entry: updated.entry, apdEntries: updated.apdEntries });
+        });
+
+      case 'apd.delete':
+        requirePermission_(session.user, 'accessApd', 'Anda tidak memiliki akses APD.');
+        return withWriteLock_(function () {
+          const deleted = deleteApdEntry_(session.user, param_(e, 'id'));
+          return json_({ ok: true, deletedId: deleted.deletedId, apdEntries: deleted.apdEntries });
         });
 
       case 'master.add':
@@ -411,6 +451,307 @@ function deleteSession_(token) {
   // logout versi baru tidak perlu scan/delete row sehingga lebih cepat.
 }
 
+
+
+/* ------------------------- APD ------------------------- */
+const APD_VARIABLES_ = [
+  { key: 'maskerTidakSesuai', label: 'Masker tidak sesuai', weight: 25 },
+  { key: 'lenganDitarik', label: 'Lengan ditarik ke atas', weight: 20 },
+  { key: 'sepatuDiinjak', label: 'Sepatu diinjak', weight: 10 },
+  { key: 'rambutKelihatan', label: 'Rambut kelihatan', weight: 15 },
+  { key: 'resletingTidakPenuh', label: 'Tidak diresleting secara penuh', weight: 10 },
+  { key: 'memakaiAksesoris', label: 'Memakai aksesoris', weight: 20 }
+];
+
+function normalizeApdPoint_(value, label, index) {
+  const point = Number(value);
+  if (!isFinite(point) || Math.floor(point) !== point || point < 0 || point > 5) {
+    throw new Error('Data APD ke-' + (index + 1) + ': poin "' + label + '" harus bilangan bulat 0 sampai 5.');
+  }
+  return point;
+}
+
+function buildApdRecord_(raw, index) {
+  const data = raw && typeof raw === 'object' ? raw : {};
+  const tanggal = String(data.tanggal || '').trim();
+  const operator = String(data.operator || '').trim();
+  const alasan = String(data.alasan || '').trim();
+  const alasanWordCount = alasan ? alasan.split(/\s+/).filter(Boolean).length : 0;
+  const scores = data.scores && typeof data.scores === 'object' ? data.scores : {};
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) {
+    throw new Error('Data APD ke-' + (index + 1) + ': tanggal tidak valid.');
+  }
+  if (!operator) {
+    throw new Error('Data APD ke-' + (index + 1) + ': nama operator wajib diisi.');
+  }
+  if (alasanWordCount > 300) {
+    throw new Error('Data APD ke-' + (index + 1) + ': alasan / keterangan maksimal 300 kata.');
+  }
+
+  let totalPoints = 0;
+  let percentage = 0;
+  APD_VARIABLES_.forEach(function (variable) {
+    const point = normalizeApdPoint_(scores[variable.key], variable.label, index);
+    totalPoints += point;
+    percentage += point * (variable.weight / 5);
+  });
+
+  const requestId = String(data.clientRequestId || '').trim();
+  const validRequestId = /^[A-Za-z0-9-]{16,100}$/.test(requestId) ? requestId : '';
+
+  return {
+    tanggal: tanggal,
+    operator: operator,
+    scores: {
+      maskerTidakSesuai: Number(scores.maskerTidakSesuai),
+      lenganDitarik: Number(scores.lenganDitarik),
+      sepatuDiinjak: Number(scores.sepatuDiinjak),
+      rambutKelihatan: Number(scores.rambutKelihatan),
+      resletingTidakPenuh: Number(scores.resletingTidakPenuh),
+      memakaiAksesoris: Number(scores.memakaiAksesoris)
+    },
+    percentage: Math.round(percentage * 100) / 100,
+    totalPoints: totalPoints,
+    alasan: alasan,
+    clientRequestId: validRequestId
+  };
+}
+
+function apdEntryKey_(tanggal, operator) {
+  return String(tanggal || '').trim() + '||' + String(operator || '').trim().toLowerCase();
+}
+
+function apdRowToObject_(row, rowNumber) {
+  const values = row || [];
+  return {
+    id: String(values[11] || '').trim(),
+    rowNumber: rowNumber,
+    tanggal: formatDateCell_(values[0]),
+    operator: String(values[1] || '').trim(),
+    scores: {
+      maskerTidakSesuai: number_(values[2]),
+      lenganDitarik: number_(values[3]),
+      sepatuDiinjak: number_(values[4]),
+      rambutKelihatan: number_(values[5]),
+      resletingTidakPenuh: number_(values[6]),
+      memakaiAksesoris: number_(values[7])
+    },
+    totalPoints: number_(values[8]),
+    percentage: number_(values[9]),
+    alasan: String(values[10] || ''),
+    createdBy: String(values[12] || ''),
+    createdAt: isoCell_(values[13]),
+    updatedAt: isoCell_(values[14])
+  };
+}
+
+
+function getApdEntries_() {
+  const sh = ensureApdSheet_(spreadsheet_());
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return [];
+  const rows = sh.getRange(2, 1, lastRow - 1, APP.APD_HEADERS.length).getValues();
+  return rows.map(function (row, index) {
+    return apdRowToObject_(row, index + 2);
+  }).sort(function (a, b) {
+    return String(b.tanggal || '').localeCompare(String(a.tanggal || '')) ||
+      String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')) ||
+      b.rowNumber - a.rowNumber;
+  });
+}
+
+function getApdEntriesByDate_(dateText) {
+  const targetDate = /^\d{4}-\d{2}-\d{2}$/.test(String(dateText || '').trim())
+    ? String(dateText).trim()
+    : Utilities.formatDate(new Date(), Session.getScriptTimeZone() || 'Asia/Jakarta', 'yyyy-MM-dd');
+  const sh = ensureApdSheet_(spreadsheet_());
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return [];
+  const rows = sh.getRange(2, 1, lastRow - 1, APP.APD_HEADERS.length).getValues();
+  return rows.map(function (row, index) {
+    return apdRowToObject_(row, index + 2);
+  }).filter(function (item) {
+    return item.tanggal === targetDate;
+  }).sort(function (a, b) {
+    return String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')) ||
+      b.rowNumber - a.rowNumber;
+  });
+}
+
+function findApdRowById_(sh, id) {
+  const target = String(id || '').trim();
+  if (!target) throw new Error('ID data APD tidak valid.');
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) throw new Error('Data APD tidak ditemukan.');
+  const ids = sh.getRange(2, 12, lastRow - 1, 1).getDisplayValues();
+  for (let i = 0; i < ids.length; i++) {
+    if (String(ids[i][0] || '').trim() === target) return i + 2;
+  }
+  throw new Error('Data APD tidak ditemukan atau sudah berubah. Muat ulang data lalu coba lagi.');
+}
+
+function ensureNoApdDuplicate_(sh, tanggal, operator, excludeId) {
+  const targetKey = apdEntryKey_(tanggal, operator);
+  const exclude = String(excludeId || '').trim();
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return;
+  const values = sh.getRange(2, 1, lastRow - 1, APP.APD_HEADERS.length).getValues();
+  for (let i = 0; i < values.length; i++) {
+    const rowId = String(values[i][11] || '').trim();
+    if (exclude && rowId === exclude) continue;
+    const rowKey = apdEntryKey_(formatDateCell_(values[i][0]), values[i][1]);
+    if (rowKey === targetKey) {
+      throw new Error('Operator "' + operator + '" sudah memiliki data APD pada tanggal ' + tanggal + '. Gunakan tombol Edit pada data yang sudah tersimpan.');
+    }
+  }
+}
+
+function createApdEntriesBatch_(user, dataList) {
+  if (!Array.isArray(dataList) || !dataList.length) {
+    throw new Error('Data preview APD yang akan disimpan kosong.');
+  }
+  if (dataList.length > 200) {
+    throw new Error('Maksimal 200 data APD per sekali simpan.');
+  }
+
+  const records = dataList.map(function (raw, index) {
+    return buildApdRecord_(raw, index);
+  });
+
+  const master = getMaster_();
+  records.forEach(function (record) {
+    record.operator = canonicalMasterValue_(master.operator, record.operator, 'Operator');
+  });
+
+  const seenIds = {};
+  const seenKeys = {};
+  records.forEach(function (record, index) {
+    const id = record.clientRequestId;
+    if (!id) throw new Error('Data APD ke-' + (index + 1) + ': ID preview tidak valid.');
+    if (seenIds[id]) throw new Error('Data APD ke-' + (index + 1) + ': ID preview duplikat.');
+    seenIds[id] = true;
+
+    const key = apdEntryKey_(record.tanggal, record.operator);
+    if (seenKeys[key]) {
+      throw new Error('Operator "' + record.operator + '" muncul lebih dari sekali pada tanggal yang sama di preview APD.');
+    }
+    seenKeys[key] = true;
+  });
+
+  const sh = ensureApdSheet_(spreadsheet_());
+  const lastRow = sh.getLastRow();
+  const existingRows = lastRow >= 2
+    ? sh.getRange(2, 1, lastRow - 1, APP.APD_HEADERS.length).getValues()
+    : [];
+  const existingIds = {};
+  const existingKeys = {};
+  existingRows.forEach(function (row) {
+    const rowId = String(row[11] || '').trim();
+    if (rowId) existingIds[rowId] = true;
+    const key = apdEntryKey_(formatDateCell_(row[0]), row[1]);
+    if (key !== '||') existingKeys[key] = rowId || true;
+  });
+
+  const rowsToWrite = [];
+  const savedIds = [];
+  const duplicateIds = [];
+  const now = new Date().toISOString();
+
+  records.forEach(function (record) {
+    const id = record.clientRequestId;
+    if (existingIds[id]) {
+      savedIds.push(id);
+      duplicateIds.push(id);
+      return;
+    }
+
+    const key = apdEntryKey_(record.tanggal, record.operator);
+    if (existingKeys[key]) {
+      throw new Error('Operator "' + record.operator + '" sudah memiliki data APD pada tanggal ' + record.tanggal + '. Gunakan tombol Edit pada data yang sudah tersimpan.');
+    }
+
+    rowsToWrite.push([
+      record.tanggal,
+      record.operator,
+      record.scores.maskerTidakSesuai,
+      record.scores.lenganDitarik,
+      record.scores.sepatuDiinjak,
+      record.scores.rambutKelihatan,
+      record.scores.resletingTidakPenuh,
+      record.scores.memakaiAksesoris,
+      record.totalPoints,
+      record.percentage,
+      record.alasan,
+      id,
+      user.username,
+      now,
+      now
+    ]);
+    savedIds.push(id);
+    existingIds[id] = true;
+    existingKeys[key] = id;
+  });
+
+  if (rowsToWrite.length) {
+    const startRow = Math.max(sh.getLastRow() + 1, 2);
+    sh.getRange(startRow, 1, rowsToWrite.length, APP.APD_HEADERS.length).setValues(rowsToWrite);
+  }
+
+  const responseDate = records[0] ? records[0].tanggal : '';
+  return {
+    savedCount: records.length,
+    newCount: rowsToWrite.length,
+    duplicateIds: duplicateIds,
+    savedIds: savedIds,
+    apdEntries: getApdEntries_()
+  };
+}
+
+function updateApdEntry_(user, id, rawData) {
+  const sh = ensureApdSheet_(spreadsheet_());
+  const rowNumber = findApdRowById_(sh, id);
+  const record = buildApdRecord_(rawData, 0);
+  record.operator = canonicalMasterValue_(getMaster_().operator, record.operator, 'Operator');
+  ensureNoApdDuplicate_(sh, record.tanggal, record.operator, id);
+
+  const oldMeta = sh.getRange(rowNumber, 12, 1, 4).getValues()[0];
+  const now = new Date().toISOString();
+  sh.getRange(rowNumber, 1, 1, APP.APD_HEADERS.length).setValues([[
+    record.tanggal,
+    record.operator,
+    record.scores.maskerTidakSesuai,
+    record.scores.lenganDitarik,
+    record.scores.sepatuDiinjak,
+    record.scores.rambutKelihatan,
+    record.scores.resletingTidakPenuh,
+    record.scores.memakaiAksesoris,
+    record.totalPoints,
+    record.percentage,
+    record.alasan,
+    String(id),
+    String(oldMeta[1] || user.username),
+    oldMeta[2] || now,
+    now
+  ]]);
+
+  const updatedRow = sh.getRange(rowNumber, 1, 1, APP.APD_HEADERS.length).getValues()[0];
+  return {
+    entry: apdRowToObject_(updatedRow, rowNumber),
+    apdEntries: getApdEntries_()
+  };
+}
+
+function deleteApdEntry_(user, id) {
+  const sh = ensureApdSheet_(spreadsheet_());
+  const rowNumber = findApdRowById_(sh, id);
+  const tanggal = formatDateCell_(sh.getRange(rowNumber, 1).getValue());
+  sh.deleteRow(rowNumber);
+  return {
+    deletedId: String(id),
+    apdEntries: getApdEntries_()
+  };
+}
 
 /**
  * Simpan banyak data preview dalam satu request / satu lock.
@@ -1451,8 +1792,10 @@ function findUser_(username) {
 function defaultPermissions_(role) {
   if (role === 'superuser') {
     return {
+      accessDashboard: true,
       accessFilling: true,
       accessPress: true,
+      accessApd: true,
       accessReports: true,
       deleteUnpressed: true,
       viewAllData: true,
@@ -1464,8 +1807,10 @@ function defaultPermissions_(role) {
     };
   }
   return {
+    accessDashboard: false,
     accessFilling: true,
     accessPress: true,
+    accessApd: true,
     accessReports: false,
     deleteUnpressed: false,
     viewAllData: false,
@@ -1547,6 +1892,59 @@ function spreadsheet_() {
 function sheet_(name) {
   const sh = spreadsheet_().getSheetByName(name);
   if (!sh) throw new Error('Sheet "' + name + '" belum ada. Jalankan setupSpreadsheet() sekali.');
+  return sh;
+}
+
+function ensureApdSheet_(ss) {
+  let sh = ss.getSheetByName(APP.SHEETS.APD);
+  if (!sh) sh = ss.insertSheet(APP.SHEETS.APD);
+
+  // Migrasi aman dari struktur lama:
+  // A Tanggal | B Nama Operator | C Nilai Prosentase APD | D Alasan
+  // menjadi struktur baru dengan 7 kolom variable/total di antara B dan persentase.
+  // Dengan insertColumnsAfter(2, 7), data lama C-D otomatis bergeser ke J-K.
+  const lastHeaderCol = Math.max(4, Math.min(sh.getLastColumn(), 11));
+  const currentHeaders = sh.getRange(1, 1, 1, lastHeaderCol).getDisplayValues()[0]
+    .map(function (value) { return String(value || '').trim(); });
+  const oldSchema =
+    currentHeaders[0] === 'Tanggal' &&
+    currentHeaders[1] === 'Nama Operator' &&
+    currentHeaders[2] === 'Nilai Prosentase APD' &&
+    currentHeaders[3] === 'Alasan' &&
+    !currentHeaders.slice(4).some(Boolean);
+
+  if (oldSchema) {
+    sh.insertColumnsAfter(2, 7);
+  }
+
+  if (sh.getMaxColumns() < APP.APD_HEADERS.length) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), APP.APD_HEADERS.length - sh.getMaxColumns());
+  }
+  sh.getRange(1, 1, 1, APP.APD_HEADERS.length).setValues([APP.APD_HEADERS]);
+  styleHeader_(sh, APP.APD_HEADERS.length);
+  sh.setFrozenRows(1);
+
+  // Kolom L:O adalah metadata teknis agar data APD memiliki ID stabil.
+  // Kolom ini disembunyikan sehingga tampilan Sheet APD lama (A:K) tidak berubah.
+  try { sh.hideColumns(12, 4); } catch (_) {}
+
+  // Migrasi data APD lama: beri ID stabil tanpa mengubah isi A:K.
+  const lastRow = sh.getLastRow();
+  if (lastRow >= 2) {
+    const visibleRows = sh.getRange(2, 1, lastRow - 1, 11).getValues();
+    const metadata = sh.getRange(2, 12, lastRow - 1, 4).getValues();
+    let metadataChanged = false;
+    for (let i = 0; i < metadata.length; i++) {
+      const hasVisibleData = visibleRows[i].some(function (value) { return String(value || '').trim() !== ''; });
+      if (!hasVisibleData) continue;
+      if (!String(metadata[i][0] || '').trim()) {
+        metadata[i][0] = 'legacy-' + Utilities.getUuid();
+        metadataChanged = true;
+      }
+    }
+    if (metadataChanged) sh.getRange(2, 12, metadata.length, 4).setValues(metadata);
+  }
+
   return sh;
 }
 
