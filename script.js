@@ -40,7 +40,7 @@
     DASHBOARD_PRESS_KPI_PAGE_SIZE: 7,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
-    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbxZI_Vf86dIzzI7D8p8HwLxRH9-6xHfnDi_u2C-io83cZCVSWIXg9Zd0zfdVx-09ZM/exec"
+    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbzeNRDCs0tJQ_OkOS_YcXaEfsMDqfSWWIvxXg4Yz4dCUWqKELg3KfEHN0iymAGFLQVBzg/exec"
   };
 
   const LINE_LABEL = { filling: "Filling", press: "Press" };
@@ -60,7 +60,7 @@
       filling: { query: "" },
       press: { query: "" }
     },
-    pages: { filling: 1, press: 1, apd: 1, apdSaved: 1, laporan: 1 },
+    pages: { filling: 1, press: 1, apd: 1, apdSaved: 1, laporan: 1, kpiLaporan: 1 },
     savedPages: { filling: 1, press: 1 },
     pressBalance: { search: "", page: 1 },
     dashboard: {
@@ -79,7 +79,8 @@
       pressKpiEnd: "",
       pressKpiPage: 1
     },
-    lastLaporan: null
+    lastLaporan: null,
+    lastKpiLaporan: null
   };
 
   // Antrean tulis: UI tetap instan, request Spreadsheet dikirim satu per satu
@@ -802,6 +803,9 @@
     renderUserHeader();
     applyAccessControl();
     renderDashboard();
+    if (typeof window.refreshLaporanAutoPreview === "function") {
+      window.refreshLaporanAutoPreview();
+    }
   }
 
   async function loadBootstrap() {
@@ -928,7 +932,7 @@
         list.innerHTML = '<div class="master-suggest-empty">Tidak ada data master yang cocok.</div>';
       } else {
         list.innerHTML = values.map(value => {
-          const label = input.id === "dashboardPressKpiOperator"
+          const label = (input.id === "dashboardPressKpiOperator" || input.id === "lap-operator")
             ? highlightSearchMatch(value, query)
             : esc(value);
           return `<button type="button" data-value="${esc(value)}">${label}</button>`;
@@ -1006,8 +1010,8 @@
     // langsung dari state.master sehingga tidak perlu membuat <option>.
     initMasterSearches();
 
-    // Filter laporan tetap select karena tidak diminta diubah.
-    fillSelect(el("lap-operator"), state.master.operator, "Semua operator");
+    // Filter Nama Karyawan pada Laporan Produksi memakai autocomplete/search
+    // dari master operator yang sama. Suggestion dibaca langsung dari state.master.
 
     // APD memakai autocomplete/search yang sama dengan field master lainnya.
     // Suggestion dibaca langsung dari state.master.operator.
@@ -3226,7 +3230,7 @@
       alerts.push({
         type: "attention",
         label: "PERHATIAN",
-        text: `Botol pecah hari ini: ${dashboardQty(brokenToday)} pcs`
+        text: `Botol pecah Press hari ini: ${dashboardQty(brokenToday)} pcs`
       });
     }
 
@@ -3627,8 +3631,10 @@
     const pressToday = entries
       .filter(entry => entry.tab === "press" && entry.tanggal === today)
       .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
+    // Botol rusak Filling hanya dicatat sebagai data Spreadsheet.
+    // KPI/alert kerusakan hanya memakai Botol Rusak dari proses Press.
     const brokenToday = entries
-      .filter(entry => entry.tanggal === today)
+      .filter(entry => entry.tab === "press" && entry.tanggal === today)
       .reduce((sum, entry) => sum + (Number(entry.qtyBotolPecah) || 0), 0);
     const waiting = balanceRows.reduce((sum, row) => sum + (Number(row.remaining) || 0), 0);
     const oldestDays = balanceRows.length
@@ -3901,6 +3907,9 @@
         <td>${Number(e.qtyKardus) || 0}</td>
         <td><strong>${Number(e.totalQty) || 0}</strong></td>
         <td>${Number(e.qtyBotolPecah) || 0}</td>
+        <td><span class="dashboard-kpi-percent result">${kpiReportDisplay(e._kpiResult)}</span></td>
+        <td><span class="dashboard-kpi-percent reject">${kpiReportDisplay(e._kpiBroken)}</span></td>
+        <td><span class="dashboard-kpi-percent apd">${kpiReportDisplay(e._kpiApd)}</span></td>
       </tr>`).join("");
 
     const from = rows.length ? start + 1 : 0;
@@ -3939,6 +3948,9 @@
         <td class="num">${(Number(e.qtyKardus) || 0).toLocaleString("id-ID")}</td>
         <td class="num">${(Number(e.totalQty) || 0).toLocaleString("id-ID")}</td>
         <td class="num">${(Number(e.qtyBotolPecah) || 0).toLocaleString("id-ID")}</td>
+        <td class="num">${esc(kpiReportDisplay(e._kpiResult))}</td>
+        <td class="num">${esc(kpiReportDisplay(e._kpiBroken))}</td>
+        <td class="num">${esc(kpiReportDisplay(e._kpiApd))}</td>
       </tr>`).join("");
 
     return `<!DOCTYPE html>
@@ -3973,15 +3985,18 @@
     .mono { font-family: Consolas, "Courier New", monospace; font-size: 7.2px; }
     .num { text-align: right; white-space: nowrap; }
     .wrap { overflow-wrap: anywhere; word-break: break-word; }
-    th:nth-child(1), td:nth-child(1) { width: 14%; }
-    th:nth-child(2), td:nth-child(2) { width: 7%; }
-    th:nth-child(3), td:nth-child(3) { width: 9%; }
-    th:nth-child(4), td:nth-child(4) { width: 13%; }
-    th:nth-child(5), td:nth-child(5) { width: 20%; }
-    th:nth-child(6), td:nth-child(6) { width: 15%; }
-    th:nth-child(7), td:nth-child(7) { width: 7%; }
-    th:nth-child(8), td:nth-child(8) { width: 8%; }
-    th:nth-child(9), td:nth-child(9) { width: 7%; }
+    th:nth-child(1), td:nth-child(1) { width: 10%; }
+    th:nth-child(2), td:nth-child(2) { width: 5%; }
+    th:nth-child(3), td:nth-child(3) { width: 7%; }
+    th:nth-child(4), td:nth-child(4) { width: 11%; }
+    th:nth-child(5), td:nth-child(5) { width: 17%; }
+    th:nth-child(6), td:nth-child(6) { width: 11%; }
+    th:nth-child(7), td:nth-child(7) { width: 5%; }
+    th:nth-child(8), td:nth-child(8) { width: 6%; }
+    th:nth-child(9), td:nth-child(9) { width: 5%; }
+    th:nth-child(10), td:nth-child(10) { width: 7%; }
+    th:nth-child(11), td:nth-child(11) { width: 8%; }
+    th:nth-child(12), td:nth-child(12) { width: 8%; }
     .footer-note { margin-top: 6px; color: #6b7280; font-size: 7px; text-align: right; }
     @media print {
       html, body { width: 100%; }
@@ -4016,7 +4031,7 @@
     <table>
       <thead>
         <tr>
-          <th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th>
+          <th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th><th>KPI Hasil</th><th>KPI Botol Rusak</th><th>KPI APD</th>
         </tr>
       </thead>
       <tbody>${bodyRows}</tbody>
@@ -4072,58 +4087,562 @@
     }
   }
 
+
+  const KPI_RESULT_TARGET_PER_DAY = 3500;
+
+  function averageKpiValues(values) {
+    const valid = (values || []).filter(value => value !== null && value !== undefined && Number.isFinite(Number(value))).map(Number);
+    return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
+  }
+
+  function kpiReportDisplay(value) {
+    return value === null || value === undefined || !Number.isFinite(Number(value))
+      ? "—"
+      : dashboardPercent(Number(value));
+  }
+
+  function kpiReportPeriodFromInputs() {
+    const mode = el("lap-period-mode")?.value || "";
+    const ALL_START = new Date(1900, 0, 1);
+    const ALL_END = new Date(2999, 11, 31);
+
+    // Seluruh filter periode bersifat opsional. Jika periode atau nilainya
+    // belum dipilih, laporan tidak dibatasi oleh tanggal.
+    const allPeriod = () => ({
+      mode: "all",
+      start: ALL_START,
+      end: ALL_END,
+      label: "Semua tanggal",
+      averagingLabel: "Rata-rata KPI harian seluruh data"
+    });
+
+    if (!mode) return allPeriod();
+
+    if (mode === "month") {
+      const value = String(el("lap-month")?.value || "").trim();
+      if (!/^\d{4}-\d{2}$/.test(value)) return allPeriod();
+      const [year, month] = value.split("-").map(Number);
+      const start = new Date(year, month - 1, 1);
+      const end = new Date(year, month, 0);
+      return {
+        mode,
+        start,
+        end,
+        label: start.toLocaleDateString("id-ID", { month: "long", year: "numeric" }),
+        averagingLabel: "Rata-rata KPI harian"
+      };
+    }
+
+    if (mode === "year") {
+      const rawYear = String(el("lap-year")?.value || "").trim();
+      const year = Number(rawYear);
+      if (!rawYear || !Number.isInteger(year) || year < 1900 || year > 2999) return allPeriod();
+      return {
+        mode,
+        start: new Date(year, 0, 1),
+        end: new Date(year, 11, 31),
+        label: `Tahun ${year}`,
+        averagingLabel: "Rata-rata KPI bulanan"
+      };
+    }
+
+    if (mode === "range") {
+      const rawStart = String(el("lap-start")?.value || "").trim();
+      const rawEnd = String(el("lap-end")?.value || "").trim();
+      if (!rawStart && !rawEnd) return allPeriod();
+
+      let start = dashboardDateParts(rawStart) || ALL_START;
+      let end = dashboardDateParts(rawEnd) || ALL_END;
+      if (start > end) [start, end] = [end, start];
+
+      let label = "Semua tanggal";
+      if (rawStart && rawEnd) label = `${dashboardDateKey(start)} s/d ${dashboardDateKey(end)}`;
+      else if (rawStart) label = `Mulai ${dashboardDateKey(start)}`;
+      else if (rawEnd) label = `Sampai ${dashboardDateKey(end)}`;
+
+      return {
+        mode,
+        start,
+        end,
+        label,
+        averagingLabel: "Rata-rata KPI harian"
+      };
+    }
+
+    if (mode === "date") {
+      const dateText = String(el("lap-date")?.value || "").trim();
+      const date = dashboardDateParts(dateText);
+      if (!date) return allPeriod();
+      return {
+        mode: "date",
+        start: date,
+        end: date,
+        label: dashboardDateKey(date),
+        averagingLabel: "KPI tanggal terpilih"
+      };
+    }
+
+    return allPeriod();
+  }
+
+  function buildEmployeeKpiRows(period, operatorName = "") {
+    const selectedOperator = String(operatorName || "").trim().toLowerCase();
+    const operators = new Map();
+
+    function ensureOperator(name) {
+      const clean = String(name || "").trim();
+      if (!clean) return null;
+      const key = clean.toLowerCase();
+      if (selectedOperator && key !== selectedOperator) return null;
+      if (!operators.has(key)) {
+        operators.set(key, {
+          operator: clean,
+          pressByDate: new Map(),
+          apdByDate: new Map()
+        });
+      }
+      return operators.get(key);
+    }
+
+    (state.entries || [])
+      .filter(entry => !entry._syncState && entry.tab === "press" && dashboardDateInPeriod(entry.tanggal, period))
+      .forEach(entry => {
+        const row = ensureOperator(entry.operator);
+        if (!row) return;
+        const dateKey = String(entry.tanggal || "");
+        if (!row.pressByDate.has(dateKey)) row.pressByDate.set(dateKey, { total: 0, broken: 0 });
+        const day = row.pressByDate.get(dateKey);
+        day.total += Number(entry.totalQty) || 0;
+        // KPI Botol Rusak sengaja hanya mengambil kerusakan dari tab Press.
+        day.broken += Number(entry.qtyBotolPecah) || 0;
+      });
+
+    (state.apdEntries || [])
+      .filter(item => item && dashboardDateInPeriod(item.tanggal, period))
+      .forEach(item => {
+        const row = ensureOperator(item.operator);
+        if (!row) return;
+        const dateKey = String(item.tanggal || "");
+        if (!row.apdByDate.has(dateKey)) row.apdByDate.set(dateKey, []);
+        row.apdByDate.get(dateKey).push(Number(item.percentage) || 0);
+      });
+
+    return Array.from(operators.values()).map(row => {
+      const dailyPress = Array.from(row.pressByDate.entries()).map(([date, value]) => ({
+        date,
+        month: date.slice(0, 7),
+        kpiResult: value.total > 0 ? value.total / KPI_RESULT_TARGET_PER_DAY * 100 : null,
+        kpiBroken: value.total > 0 ? value.broken / value.total * 100 : null
+      }));
+
+      const dailyApd = Array.from(row.apdByDate.entries()).map(([date, values]) => ({
+        date,
+        month: date.slice(0, 7),
+        value: averageKpiValues(values)
+      }));
+
+      let kpiResult = null;
+      let kpiBroken = null;
+      let kpiApd = null;
+
+      if (period.mode === "date") {
+        const dateKey = dashboardDateKey(period.start);
+        const pressDay = dailyPress.find(item => item.date === dateKey);
+        const apdDay = dailyApd.find(item => item.date === dateKey);
+        kpiResult = pressDay ? pressDay.kpiResult : null;
+        kpiBroken = pressDay ? pressDay.kpiBroken : null;
+        kpiApd = apdDay ? apdDay.value : null;
+      } else if (period.mode === "year") {
+        const monthlyKeys = new Set([
+          ...dailyPress.map(item => item.month),
+          ...dailyApd.map(item => item.month)
+        ]);
+        const monthlyResult = [];
+        const monthlyBroken = [];
+        const monthlyApd = [];
+        monthlyKeys.forEach(monthKey => {
+          monthlyResult.push(averageKpiValues(dailyPress.filter(item => item.month === monthKey).map(item => item.kpiResult)));
+          monthlyBroken.push(averageKpiValues(dailyPress.filter(item => item.month === monthKey).map(item => item.kpiBroken)));
+          monthlyApd.push(averageKpiValues(dailyApd.filter(item => item.month === monthKey).map(item => item.value)));
+        });
+        kpiResult = averageKpiValues(monthlyResult);
+        kpiBroken = averageKpiValues(monthlyBroken);
+        kpiApd = averageKpiValues(monthlyApd);
+      } else {
+        // Bulanan, Rentang Tanggal, dan Semua Periode: rata-rata KPI harian.
+        kpiResult = averageKpiValues(dailyPress.map(item => item.kpiResult));
+        kpiBroken = averageKpiValues(dailyPress.map(item => item.kpiBroken));
+        kpiApd = averageKpiValues(dailyApd.map(item => item.value));
+      }
+
+      return {
+        operator: row.operator,
+        kpiResult,
+        kpiBroken,
+        kpiApd
+      };
+    }).filter(row => row.kpiResult !== null || row.kpiBroken !== null || row.kpiApd !== null)
+      .sort((a, b) => a.operator.localeCompare(b.operator, "id"));
+  }
+
+  function renderKpiLaporanRows() {
+    if (!state.lastKpiLaporan) return;
+    const rows = state.lastKpiLaporan.rows || [];
+    const tbody = el("lap-kpi-tbody");
+    if (!tbody) return;
+
+    const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PAGE_SIZE));
+    state.pages.kpiLaporan = Math.min(Math.max(1, state.pages.kpiLaporan || 1), totalPages);
+    const page = state.pages.kpiLaporan;
+    const start = (page - 1) * CONFIG.PAGE_SIZE;
+    const visible = rows.slice(start, start + CONFIG.PAGE_SIZE);
+
+    tbody.innerHTML = visible.length ? visible.map(row => `
+      <tr>
+        <td><strong>${esc(row.operator)}</strong></td>
+        <td><span class="dashboard-kpi-percent result">${kpiReportDisplay(row.kpiResult)}</span></td>
+        <td><span class="dashboard-kpi-percent reject">${kpiReportDisplay(row.kpiBroken)}</span></td>
+        <td><span class="dashboard-kpi-percent apd">${kpiReportDisplay(row.kpiApd)}</span></td>
+      </tr>`).join("")
+      : '<tr><td colspan="4" class="empty-row">Tidak ada data KPI pada periode ini.</td></tr>';
+
+    const from = rows.length ? start + 1 : 0;
+    const to = Math.min(start + CONFIG.PAGE_SIZE, rows.length);
+    const summary = el("lap-kpi-page-summary");
+    if (summary) {
+      summary.textContent = `${from}–${to} dari ${rows.length} karyawan · ${state.lastKpiLaporan.period.label} · ${state.lastKpiLaporan.period.averagingLabel}`;
+    }
+
+    renderPagination(el("lap-kpi-pagination"), page, totalPages, nextPage => {
+      state.pages.kpiLaporan = nextPage;
+      renderKpiLaporanRows();
+    });
+  }
+
+  function buildKpiLaporanPrintHtml() {
+    if (!state.lastKpiLaporan || !state.lastKpiLaporan.rows?.length) return "";
+    const report = state.lastKpiLaporan;
+    const rows = report.rows;
+    const created = el("lap-kpi-created")?.textContent || fmtDateTime(nowIso());
+    const by = el("lap-kpi-by")?.textContent || "—";
+    const bodyRows = rows.map(row => `
+      <tr>
+        <td>${esc(row.operator)}</td>
+        <td class="num">${esc(kpiReportDisplay(row.kpiResult))}</td>
+        <td class="num">${esc(kpiReportDisplay(row.kpiBroken))}</td>
+        <td class="num">${esc(kpiReportDisplay(row.kpiApd))}</td>
+      </tr>`).join("");
+
+    return `<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${esc(report.id)}</title>
+  <style>
+    @page { size: A4 portrait; margin: 12mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #111827; font-family: Arial, Helvetica, sans-serif; font-size: 10px; }
+    .head { display:flex; justify-content:space-between; gap:20px; margin-bottom:12px; }
+    .company { font-size:8px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:#8a4a0c; }
+    h1 { margin:3px 0 4px; font-size:18px; }
+    .id { font-family:Consolas, monospace; font-weight:700; }
+    .meta { text-align:right; line-height:1.6; }
+    .note { margin:0 0 10px; padding:8px 10px; border:1px solid #d1d5db; background:#f8fafc; line-height:1.5; }
+    table { width:100%; border-collapse:collapse; }
+    th, td { border:1px solid #cfd6dd; padding:6px 7px; }
+    th { background:#eef2f5; text-transform:uppercase; font-size:8px; text-align:left; }
+    .num { text-align:center; white-space:nowrap; }
+  </style>
+</head>
+<body>
+  <section class="head">
+    <div><div class="company">PT. ABSH FRAGRANCE CREATIONS</div><h1>Laporan KPI Karyawan</h1><div class="id">${esc(report.id)}</div></div>
+    <div class="meta"><div><strong>Dibuat:</strong> ${esc(created)}</div><div><strong>Oleh:</strong> ${esc(by)}</div><div><strong>Periode:</strong> ${esc(report.period.label)}</div></div>
+  </section>
+  <p class="note">${esc(report.period.averagingLabel)}. KPI Hasil dan KPI Botol Rusak hanya memakai data Press. Botol rusak Filling tetap tercatat pada Spreadsheet, tetapi tidak masuk KPI.</p>
+  <table>
+    <thead><tr><th>Karyawan</th><th>KPI Hasil</th><th>KPI Botol Rusak</th><th>KPI APD</th></tr></thead>
+    <tbody>${bodyRows}</tbody>
+  </table>
+</body>
+</html>`;
+  }
+
+  function openKpiLaporanPrintDialog() {
+    const html = buildKpiLaporanPrintHtml();
+    if (!html) return toast("Buat Laporan KPI terlebih dahulu.", true);
+    const printWindow = window.open("", "_blank", "width=1000,height=800");
+    if (!printWindow) return toast("Popup diblokir browser. Izinkan popup untuk Export PDF KPI.", true);
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    const doPrint = () => {
+      try {
+        printWindow.focus();
+        printWindow.print();
+      } catch (err) {
+        toast(`Gagal membuka dialog cetak KPI: ${err.message}`, true);
+      }
+    };
+    if (printWindow.document.readyState === "complete") setTimeout(doPrint, 250);
+    else printWindow.addEventListener("load", () => setTimeout(doPrint, 250), { once: true });
+  }
+
+  function initKpiLaporan() {
+    const generate = el("lap-kpi-generate");
+    if (!generate) return;
+
+    const today = dashboardDateParts(todayStr()) || new Date();
+    const currentMonth = dashboardMonthKey(today);
+    const currentYear = today.getFullYear();
+    if (el("lap-kpi-date")) el("lap-kpi-date").value = todayStr();
+    if (el("lap-kpi-month")) el("lap-kpi-month").value = currentMonth;
+    if (el("lap-kpi-year")) el("lap-kpi-year").value = currentYear;
+    if (el("lap-kpi-start")) el("lap-kpi-start").value = dashboardDateKey(dashboardAddDays(today, -6));
+    if (el("lap-kpi-end")) el("lap-kpi-end").value = todayStr();
+
+    function updatePeriodInputs() {
+      const mode = el("lap-kpi-mode")?.value || "date";
+      if (el("lap-kpi-date-wrap")) el("lap-kpi-date-wrap").hidden = mode !== "date";
+      if (el("lap-kpi-month-wrap")) el("lap-kpi-month-wrap").hidden = mode !== "month";
+      if (el("lap-kpi-year-wrap")) el("lap-kpi-year-wrap").hidden = mode !== "year";
+      if (el("lap-kpi-start-wrap")) el("lap-kpi-start-wrap").hidden = mode !== "range";
+      if (el("lap-kpi-end-wrap")) el("lap-kpi-end-wrap").hidden = mode !== "range";
+    }
+
+    el("lap-kpi-mode")?.addEventListener("change", updatePeriodInputs);
+    updatePeriodInputs();
+
+    generate.addEventListener("click", () => {
+      if (!can("accessReports")) return toast("Anda tidak memiliki akses Laporan.", true);
+      const period = kpiReportPeriodFromInputs();
+      const operator = el("lap-kpi-operator")?.value || "";
+      const rows = buildEmployeeKpiRows(period, operator);
+      const result = el("lap-kpi-result");
+
+      if (!rows.length) {
+        if (result) result.hidden = true;
+        state.lastKpiLaporan = null;
+        toast("Tidak ada data KPI yang cocok dengan periode/karyawan tersebut.", true);
+        return;
+      }
+
+      const id = genLaporanId().replace(/^LAP-/, "KPI-");
+      state.lastKpiLaporan = { id, rows, period, operator };
+      state.pages.kpiLaporan = 1;
+
+      dashboardSetText("lap-kpi-id", id);
+      dashboardSetText("lap-kpi-created", fmtDateTime(nowIso()));
+      dashboardSetText("lap-kpi-by", `${state.currentUser.name} (${state.currentUser.role === "superuser" ? "Super User" : "User"})`);
+      dashboardSetText("lap-kpi-period", `${period.label} · ${period.averagingLabel}`);
+      dashboardSetText("lap-kpi-total-employees", rows.length.toLocaleString("id-ID"));
+      dashboardSetText("lap-kpi-avg-result", kpiReportDisplay(averageKpiValues(rows.map(row => row.kpiResult))));
+      dashboardSetText("lap-kpi-avg-broken", kpiReportDisplay(averageKpiValues(rows.map(row => row.kpiBroken))));
+      dashboardSetText("lap-kpi-avg-apd", kpiReportDisplay(averageKpiValues(rows.map(row => row.kpiApd))));
+
+      renderKpiLaporanRows();
+      if (result) result.hidden = false;
+    });
+
+    el("lap-kpi-export")?.addEventListener("click", () => {
+      if (!state.lastKpiLaporan) return toast("Buat Laporan KPI terlebih dahulu.", true);
+      const report = state.lastKpiLaporan;
+      const csv = toCSV(
+        ["ID Laporan KPI", "Periode", "Metode", "Karyawan", "KPI Hasil", "KPI Botol Rusak", "KPI APD"],
+        report.rows.map(row => [
+          report.id,
+          report.period.label,
+          report.period.averagingLabel,
+          row.operator,
+          row.kpiResult === null ? "" : row.kpiResult,
+          row.kpiBroken === null ? "" : row.kpiBroken,
+          row.kpiApd === null ? "" : row.kpiApd
+        ])
+      );
+      downloadText(`${report.id}.csv`, csv);
+    });
+
+    el("lap-kpi-pdf")?.addEventListener("click", openKpiLaporanPrintDialog);
+  }
+
   function initLaporan() {
     const generate = el("lap-generate");
     if (!generate) return;
 
-    generate.addEventListener("click", () => {
-      if (!can("accessReports")) return toast("Anda tidak memiliki akses Laporan.", true);
-      const line = el("lap-line").value;
-      const operator = el("lap-operator").value;
-      const start = el("lap-start").value;
-      const end = el("lap-end").value;
+    let previewTimer = null;
+
+    function updatePeriodInputs() {
+      const mode = el("lap-period-mode")?.value || "";
+      if (el("lap-date-wrap")) el("lap-date-wrap").hidden = mode !== "date";
+      if (el("lap-month-wrap")) el("lap-month-wrap").hidden = mode !== "month";
+      if (el("lap-year-wrap")) el("lap-year-wrap").hidden = mode !== "year";
+      if (el("lap-start-wrap")) el("lap-start-wrap").hidden = mode !== "range";
+      if (el("lap-end-wrap")) el("lap-end-wrap").hidden = mode !== "range";
+    }
+
+    function collectLaporanData() {
+      const line = el("lap-line")?.value || "all";
+      const operatorQuery = String(el("lap-operator")?.value || "").trim().toLowerCase();
+      const periodMode = String(el("lap-period-mode")?.value || "").trim();
+      let period = kpiReportPeriodFromInputs();
+
+      // Aturan default Auto Preview:
+      // jika Line masih "Semua Line" dan Periode belum dipilih,
+      // preview/laporan mengikuti tanggal sistem hari ini saja.
+      // Begitu pengguna memilih periode, pilihan tersebut tetap menjadi prioritas.
+      if (line === "all" && !periodMode) {
+        const systemDate = dashboardDateParts(todayStr());
+        if (systemDate) {
+          period = {
+            mode: "date",
+            start: systemDate,
+            end: systemDate,
+            label: dashboardDateKey(systemDate),
+            averagingLabel: "KPI tanggal sistem"
+          };
+        }
+      }
+
       // Laporan hanya memakai data yang sudah benar-benar dikonfirmasi Spreadsheet.
       let rows = state.entries.filter(e => !e._syncState);
-
       if (line !== "all") rows = rows.filter(e => e.tab === line);
-      if (operator) rows = rows.filter(e => e.operator === operator);
-      if (start) rows = rows.filter(e => e.tanggal >= start);
-      if (end) rows = rows.filter(e => e.tanggal <= end);
+      if (operatorQuery) rows = rows.filter(e => String(e.operator || "").toLowerCase().includes(operatorQuery));
+      rows = rows.filter(e => dashboardDateInPeriod(e.tanggal, period));
       rows.sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)));
 
+      if (!rows.length) return { rows: [], period };
+
+      // KPI ditempel sebagai kolom di sisi kanan Laporan Produksi.
+      // Hasil dan Botol Rusak mengambil data Press; KPI APD mengambil data APD.
+      const kpiByOperator = new Map(
+        buildEmployeeKpiRows(period).map(item => [String(item.operator || "").trim().toLowerCase(), item])
+      );
+
+      rows = rows.map(entry => {
+        const kpi = kpiByOperator.get(String(entry.operator || "").trim().toLowerCase()) || null;
+        return {
+          ...entry,
+          _kpiResult: kpi ? kpi.kpiResult : null,
+          _kpiBroken: kpi ? kpi.kpiBroken : null,
+          _kpiApd: kpi ? kpi.kpiApd : null
+        };
+      });
+
+      return { rows, period };
+    }
+
+    function setReportExportState(enabled) {
+      ["lap-export", "lap-pdf", "lap-print"].forEach(id => {
+        const button = el(id);
+        if (button) button.disabled = !enabled;
+      });
+    }
+
+    function showLaporan(rows, period, finalize = false) {
       const result = el("lap-result");
+      if (!result) return false;
+
       if (!rows.length) {
+        state.lastLaporan = null;
         result.hidden = true;
+        setReportExportState(false);
+        return false;
+      }
+
+      const id = finalize ? genLaporanId() : "PREVIEW";
+      state.lastLaporan = { id, rows, period, isPreview: !finalize };
+      state.pages.laporan = 1;
+
+      el("lap-id").textContent = finalize ? id : "PREVIEW OTOMATIS";
+      el("lap-created").textContent = finalize ? fmtDateTime(nowIso()) : "Belum dibuat";
+      el("lap-by").textContent = `${state.currentUser?.name || state.currentUser?.username || "—"} (${state.currentUser?.role === "superuser" ? "Super User" : "User"})`;
+      el("lap-period").textContent = period.label;
+      el("lap-total-entries").textContent = rows.length;
+      el("lap-total-kardus").textContent = rows.reduce((sum, e) => sum + (Number(e.qtyKardus) || 0), 0).toLocaleString("id-ID");
+      el("lap-total-qty").textContent = rows.reduce((sum, e) => sum + (Number(e.totalQty) || 0), 0).toLocaleString("id-ID");
+      el("lap-total-pecah").textContent = rows.reduce((sum, e) => sum + (Number(e.qtyBotolPecah) || 0), 0).toLocaleString("id-ID");
+
+      renderLaporanRows();
+      result.hidden = false;
+      result.dataset.preview = finalize ? "false" : "true";
+      setReportExportState(finalize);
+      return true;
+    }
+
+    function refreshAutoPreview() {
+      if (!can("accessReports")) return;
+      const { rows, period } = collectLaporanData();
+      showLaporan(rows, period, false);
+    }
+
+    function scheduleAutoPreview(delay = 120) {
+      clearTimeout(previewTimer);
+      previewTimer = setTimeout(refreshAutoPreview, delay);
+    }
+
+    // Dapat dipanggil kembali sesudah bootstrap / refresh data Spreadsheet selesai.
+    window.refreshLaporanAutoPreview = () => scheduleAutoPreview(0);
+
+    const periodMode = el("lap-period-mode");
+    periodMode?.addEventListener("change", () => {
+      updatePeriodInputs();
+      scheduleAutoPreview(0);
+    });
+    updatePeriodInputs();
+
+    // Semua perubahan filter langsung memperbarui preview. Nama karyawan memakai
+    // event input (debounce) dan change agar klik suggestion autocomplete juga terbaca.
+    el("lap-line")?.addEventListener("change", () => scheduleAutoPreview(0));
+    el("lap-operator")?.addEventListener("input", () => scheduleAutoPreview(180));
+    el("lap-operator")?.addEventListener("change", () => scheduleAutoPreview(0));
+    ["lap-date", "lap-month", "lap-year", "lap-start", "lap-end"].forEach(id => {
+      el(id)?.addEventListener("input", () => scheduleAutoPreview(120));
+      el(id)?.addEventListener("change", () => scheduleAutoPreview(0));
+    });
+
+    // Preview awal akan muncul otomatis jika cache/data sudah tersedia.
+    scheduleAutoPreview(0);
+
+    generate.addEventListener("click", () => {
+      if (!can("accessReports")) return toast("Anda tidak memiliki akses Laporan.", true);
+      const { rows, period } = collectLaporanData();
+      if (!rows.length) {
+        showLaporan([], period, false);
         toast("Tidak ada data yang cocok dengan filter laporan.", true);
         return;
       }
-
-      const id = genLaporanId();
-      state.lastLaporan = { id, rows };
-      state.pages.laporan = 1;
-      el("lap-id").textContent = id;
-      el("lap-created").textContent = fmtDateTime(nowIso());
-      el("lap-by").textContent = `${state.currentUser.name} (${state.currentUser.role === "superuser" ? "Super User" : "User"})`;
-      el("lap-period").textContent = (start || end) ? `${start || "…"} s/d ${end || "…"}` : "Semua tanggal";
-      el("lap-total-entries").textContent = rows.length;
-      el("lap-total-kardus").textContent = rows.reduce((s, e) => s + (Number(e.qtyKardus) || 0), 0).toLocaleString("id-ID");
-      el("lap-total-qty").textContent = rows.reduce((s, e) => s + (Number(e.totalQty) || 0), 0).toLocaleString("id-ID");
-      el("lap-total-pecah").textContent = rows.reduce((s, e) => s + (Number(e.qtyBotolPecah) || 0), 0).toLocaleString("id-ID");
-      renderLaporanRows();
-      result.hidden = false;
+      showLaporan(rows, period, true);
+      toast("Laporan berhasil dibuat dari preview saat ini.");
     });
 
     el("lap-export")?.addEventListener("click", () => {
-      if (!state.lastLaporan) return;
+      if (!state.lastLaporan || state.lastLaporan.isPreview) {
+        return toast("Klik Buat Laporan terlebih dahulu sebelum Export CSV.", true);
+      }
       const csv = toCSV(
-        ["ID Laporan", "ID Pengerjaan", "Line", "Tanggal", "Operator", "Produk", "Botol", "Qty Kardus", "Total Qty", "Qty Pecah"],
-        state.lastLaporan.rows.map(e => [state.lastLaporan.id, e.reportId, LINE_LABEL[e.tab], e.tanggal, e.operator, e.produk, e.botol, e.qtyKardus, e.totalQty, e.qtyBotolPecah])
+        ["ID Laporan", "ID Pengerjaan", "Line", "Tanggal", "Operator", "Produk", "Botol", "Qty Kardus", "Total Qty", "Qty Pecah", "KPI Hasil", "KPI Botol Rusak", "KPI APD"],
+        state.lastLaporan.rows.map(e => [
+          state.lastLaporan.id, e.reportId, LINE_LABEL[e.tab], e.tanggal, e.operator, e.produk, e.botol,
+          e.qtyKardus, e.totalQty, e.qtyBotolPecah,
+          kpiReportDisplay(e._kpiResult), kpiReportDisplay(e._kpiBroken), kpiReportDisplay(e._kpiApd)
+        ])
       );
       downloadText(`${state.lastLaporan.id}.csv`, csv);
     });
 
-    el("lap-pdf")?.addEventListener("click", () => openLaporanPrintDialog("pdf"));
-    el("lap-print")?.addEventListener("click", () => openLaporanPrintDialog("print"));
+    el("lap-pdf")?.addEventListener("click", () => {
+      if (!state.lastLaporan || state.lastLaporan.isPreview) {
+        return toast("Klik Buat Laporan terlebih dahulu sebelum Export PDF.", true);
+      }
+      openLaporanPrintDialog("pdf");
+    });
+    el("lap-print")?.addEventListener("click", () => {
+      if (!state.lastLaporan || state.lastLaporan.isPreview) {
+        return toast("Klik Buat Laporan terlebih dahulu sebelum mencetak.", true);
+      }
+      openLaporanPrintDialog("print");
+    });
   }
 
   /* ------------------------- MASTER ------------------------- */

@@ -131,7 +131,8 @@ function doGet(e) {
         entries: visibleEntries,
         adjustments: pressAdjustments,
         remainders: can_(session.user, 'accessPress') ? getPressRemainders_(allEntries, pressAdjustments) : [],
-        apdEntries: can_(session.user, 'accessApd') ? getApdEntries_() : [],
+        // KPI pada Dashboard/Laporan membutuhkan nilai APD meskipun user tidak membuka tab APD.
+        apdEntries: (can_(session.user, 'accessApd') || can_(session.user, 'accessReports') || can_(session.user, 'accessDashboard')) ? getApdEntries_() : [],
         users: session.user.role === 'superuser' ? getUsers_() : []
       });
     }

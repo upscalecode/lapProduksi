@@ -102,7 +102,7 @@
               <span class="dashboard-kpi-icon">
                 <i class="fa-solid fa-triangle-exclamation"></i>
               </span>
-              <div><span class="dashboard-kpi-label">Pecah Hari ini</span><strong id="dashBrokenToday">0</strong><span class="dashboard-kpi-unit">pcs</span></div>
+              <div><span class="dashboard-kpi-label">Pecah Press Hari Ini</span><strong id="dashBrokenToday">0</strong><span class="dashboard-kpi-unit">pcs</span></div>
             </article>
             <article class="dashboard-kpi kpi-oldest">
               <span class="dashboard-kpi-icon">
@@ -695,11 +695,45 @@
       <section class="view" id="view-laporan" hidden>
         <div class="panel">
           <div class="panel-head"><h2>Laporan Hasil Pengerjaan</h2></div>
-          <div class="search-bar">
-            <label class="field field-inline"><span>Line</span><select id="lap-line"><option value="all">Semua Line</option><option value="filling">Filling</option><option value="press">Press</option></select></label>
-            <label class="field field-inline"><span>Operator</span><select id="lap-operator"><option value="">Semua operator</option></select></label>
-            <label class="field field-inline"><span>Dari Tanggal</span><input type="date" id="lap-start"></label>
-            <label class="field field-inline"><span>Sampai Tanggal</span><input type="date" id="lap-end"></label>
+          <div class="search-bar laporan-production-filters">
+            <label class="field field-inline">
+              <span>Line</span>
+              <select id="lap-line"><option value="all">Semua Line</option><option value="filling">Filling</option><option value="press">Press</option></select>
+            </label>
+            <label class="field field-inline laporan-employee-filter">
+              <span>Nama Karyawan</span>
+              <input type="text" id="lap-operator" class="master-search-input filter-master-search" data-master="operator" placeholder="Cari nama karyawan..." autocomplete="off">
+            </label>
+            <label class="field field-inline">
+              <span>Periode</span>
+              <select id="lap-period-mode">
+                <option value="">Semua Periode</option>
+                <option value="date">Tanggal</option>
+                <option value="month">Bulanan</option>
+                <option value="year">Tahunan</option>
+                <option value="range">Rentang Tanggal</option>
+              </select>
+            </label>
+            <label class="field field-inline" id="lap-date-wrap" hidden>
+              <span>Tanggal</span>
+              <input type="date" id="lap-date">
+            </label>
+            <label class="field field-inline" id="lap-month-wrap" hidden>
+              <span>Bulan</span>
+              <input type="month" id="lap-month">
+            </label>
+            <label class="field field-inline" id="lap-year-wrap" hidden>
+              <span>Tahun</span>
+              <input type="number" id="lap-year" min="2000" max="2100" step="1">
+            </label>
+            <label class="field field-inline" id="lap-start-wrap" hidden>
+              <span>Dari Tanggal</span>
+              <input type="date" id="lap-start">
+            </label>
+            <label class="field field-inline" id="lap-end-wrap" hidden>
+              <span>Sampai Tanggal</span>
+              <input type="date" id="lap-end">
+            </label>
             <button type="button" class="btn btn-primary" id="lap-generate">
               <i class="fa-solid fa-file-lines"></i> Buat Laporan</button>
           </div>
@@ -717,7 +751,7 @@
             </div>
             <div class="table-wrap">
               <table class="data-table">
-                <thead><tr><th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th></tr></thead>
+                <thead><tr><th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th><th>KPI Hasil</th><th>KPI Botol Rusak</th><th>KPI APD</th></tr></thead>
                 <tbody id="lap-tbody"></tbody>
               </table>
             </div>
@@ -725,8 +759,10 @@
             <div class="form-actions">
               <button type="button" class="btn btn-secondary" id="lap-export"><i class="fa-solid fa-file-export"></i> Export CSV</button>
               <button type="button" class="btn btn-primary" id="lap-pdf"><i class="fa-solid fa-file"></i> PDF</button>
-              <!-- <button type="button" class="btn btn-ghost" id="lap-print">🖶 Cetak</button></div> -->
+              <!-- <button type="button" class="btn btn-ghost" id="lap-print">🖶 Cetak</button> -->
+            </div>
           </div>
+
         </div>
       </section>
 

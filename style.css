@@ -304,6 +304,8 @@ button{font-family:inherit;}
 /* ---------- search / table ---------- */
 .search-bar{display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid var(--line);}
 .field-inline{min-width:150px;}
+/* Filter laporan: elemen periode yang tidak aktif benar-benar disembunyikan. */
+.laporan-production-filters > .field[hidden]{display:none !important;}
 .table-wrap{overflow-x:auto; border:1px solid var(--line); border-radius:var(--radius-sm);}
 .data-table{width:100%; border-collapse:collapse; font-size:12.5px; min-width:720px;}
 .data-table th{
@@ -2275,4 +2277,43 @@ input,select,textarea,button{max-width:100%;}
     height:auto !important;
     min-height:0 !important;
   }
+}
+
+/* ===========================================================
+   LAPORAN KPI KARYAWAN
+   =========================================================== */
+.report-kpi-section{
+  margin-top:28px;
+  padding-top:24px;
+  border-top:2px dashed var(--line-strong);
+}
+.report-kpi-heading{margin-bottom:10px;}
+.kpi-report-note{
+  margin:0 0 14px;
+  padding:10px 12px;
+  border:1px solid var(--line);
+  border-radius:var(--radius-sm);
+  background:var(--surface-2);
+  color:var(--ink-soft);
+  font-size:12.5px;
+  line-height:1.55;
+}
+.kpi-report-table{min-width:620px;}
+.kpi-report-table th:not(:first-child),
+.kpi-report-table td:not(:first-child){text-align:center;}
+
+/* ===========================================================
+   LAPORAN PRODUKSI — filter karyawan + KPI terintegrasi
+   Hanya mengatur tambahan pada section Laporan.
+   =========================================================== */
+.laporan-production-filters .laporan-employee-filter{
+  min-width:210px;
+}
+.laporan-production-filters .laporan-employee-filter input{
+  width:100%;
+}
+#view-laporan #lap-result .data-table th:nth-last-child(-n+3),
+#view-laporan #lap-result .data-table td:nth-last-child(-n+3){
+  text-align:center;
+  white-space:nowrap;
 }
