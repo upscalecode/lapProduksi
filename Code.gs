@@ -16,6 +16,7 @@ const APP = {
   SESSION_CACHE_SECONDS: 900, // cache cepat untuk request setelah login
   USER_CACHE_SECONDS: 1800,   // cache akun 30 menit agar login tidak selalu membaca Sheet Users
   MASTER_CACHE_SECONDS: 300,  // cache dropdown 5 menit agar halaman input cepat siap
+  SETTINGS_CACHE_SECONDS: 300, // cache setting KPI agar bootstrap/appdata tetap ringan
   WRITE_LOCK_MS: 3000,       // jangan antre sampai 20 detik
   SHEETS: {
     MASTER: 'Master',
@@ -24,18 +25,20 @@ const APP = {
     ENTRIES: 'Pengerjaan',
     PRESS_ADJUSTMENTS: 'Penutupan Press',
     PRESS_REMAINDERS: 'Sisa Press',
-    APD: 'APD'
+    APD: 'APD',
+    SETTINGS: 'Settings'
   },
   ENTRY_HEADERS: [
     'id', 'reportId', 'tab', 'tanggal', 'operator', 'produk', 'botol',
     'qtyKardus', 'qtyBotolPerKardus', 'totalQty', 'botolPecahJenis',
-    'qtyBotolPecah', 'createdBy', 'createdByName', 'createdAt', 'updatedAt',
+    'qtyBotolPecah', 'qtyKardusBasah', 'createdBy', 'createdAt', 'updatedAt', 'updateCount',
     'sisaPressTanggalAsal', 'keterangan'
   ],
   USER_HEADERS: ['username', 'passwordHash', 'name', 'role', 'active', 'createdAt', 'permissionsJson'],
   SESSION_HEADERS: ['token', 'username', 'expiresAt', 'createdAt'],
   PRESS_ADJUSTMENT_HEADERS: ['id', 'tanggal', 'produk', 'botol', 'qtyDitutup', 'alasan', 'closedBy', 'closedByName', 'createdAt'],
   PRESS_REMAINDER_HEADERS: ['id', 'tanggalAsal', 'produk', 'botol', 'qtyFilling', 'qtyPressTerpakai', 'qtyDitutup', 'sisaQty', 'status', 'updatedAt'],
+  SETTINGS_HEADERS: ['key', 'value', 'updatedAt', 'updatedBy'],
   APD_HEADERS: [
     'Tanggal', 'Nama Operator',
     'Masker tidak sesuai', 'Lengan ditarik ke atas', 'Sepatu diinjak',
@@ -54,10 +57,11 @@ function setupSpreadsheet() {
   const master = ensureSheet_(ss, APP.SHEETS.MASTER, ['Nama Operator', 'Nama Produk', 'Nama Botol']);
   const users = ensureSheet_(ss, APP.SHEETS.USERS, APP.USER_HEADERS);
   ensureSheet_(ss, APP.SHEETS.SESSIONS, APP.SESSION_HEADERS);
-  ensureSheet_(ss, APP.SHEETS.ENTRIES, APP.ENTRY_HEADERS);
+  ensureEntrySheetSchema_(ss);
   ensureSheet_(ss, APP.SHEETS.PRESS_ADJUSTMENTS, APP.PRESS_ADJUSTMENT_HEADERS);
   ensureSheet_(ss, APP.SHEETS.PRESS_REMAINDERS, APP.PRESS_REMAINDER_HEADERS);
   ensureApdSheet_(ss);
+  ensureSettingsSheet_(ss);
 
   if (master.getLastRow() < 2) {
     master.getRange(2, 1, 3, 3).setValues([
@@ -91,7 +95,7 @@ function setupSpreadsheet() {
   // Bangun saldo sisa dari data Pengerjaan lama agar langsung kompatibel.
   rebuildPressRemainders_();
 
-  return 'Setup selesai. Sheet Sisa Press dan APD aktif, serta saldo Filling → Press sudah dibangun ulang.';
+  return 'Setup selesai. Pengerjaan: kolom 13 = qtyKardusBasah, kolom 16 = updatedAt, kolom 17 = updateCount; createdByName dihapus; Sheet Sisa Press, APD, dan Settings aktif; target KPI Filling & Press siap digunakan; saldo Filling → Press sudah dibangun ulang.';
 }
 
 function doGet(e) {
@@ -107,7 +111,8 @@ function doGet(e) {
       return json_({
         ok: true,
         user: publicUser_(session.user),
-        master: getMaster_()
+        master: getMaster_(),
+        settings: getSettings_()
       });
     }
 
@@ -133,7 +138,8 @@ function doGet(e) {
         remainders: can_(session.user, 'accessPress') ? getPressRemainders_(allEntries, pressAdjustments) : [],
         // KPI pada Dashboard/Laporan membutuhkan nilai APD meskipun user tidak membuka tab APD.
         apdEntries: (can_(session.user, 'accessApd') || can_(session.user, 'accessReports') || can_(session.user, 'accessDashboard')) ? getApdEntries_() : [],
-        users: session.user.role === 'superuser' ? getUsers_() : []
+        users: session.user.role === 'superuser' ? getUsers_() : [],
+        settings: getSettings_()
       });
     }
 
@@ -245,6 +251,31 @@ function doPost(e) {
         return withWriteLock_(function () {
           removeMaster_(param_(e, 'category'), param_(e, 'value'));
           return json_({ ok: true, master: getMaster_() });
+        });
+
+      case 'settings.kpiTargets.set':
+        requirePermission_(session.user, 'accessMaster', 'Anda tidak memiliki akses Setting / Master Data.');
+        return withWriteLock_(function () {
+          const settings = setKpiOutputTargets_(
+            session.user,
+            param_(e, 'fillingValue'),
+            param_(e, 'pressValue')
+          );
+          return json_({ ok: true, settings: settings });
+        });
+
+      case 'settings.kpiFilling.set':
+        requirePermission_(session.user, 'accessMaster', 'Anda tidak memiliki akses Setting / Master Data.');
+        return withWriteLock_(function () {
+          const settings = setKpiFillingOutputTarget_(session.user, param_(e, 'value'));
+          return json_({ ok: true, settings: settings });
+        });
+
+      case 'settings.kpiPress.set':
+        requirePermission_(session.user, 'accessMaster', 'Anda tidak memiliki akses Setting / Master Data.');
+        return withWriteLock_(function () {
+          const settings = setKpiPressOutputTarget_(session.user, param_(e, 'value'));
+          return json_({ ok: true, settings: settings });
         });
 
       case 'user.add':
@@ -816,11 +847,15 @@ function createEntriesBatch_(user, dataList) {
     const qtyKardus = Number(data.qtyKardus);
     const qtyBotol = Number(data.qtyBotolPerKardus);
     const qtyPecah = Number(data.qtyBotolPecah || 0);
-    if (!isFinite(qtyKardus) || !isFinite(qtyBotol) || !isFinite(qtyPecah)) {
+    const qtyKardusBasah = data.line === 'filling' ? Number(data.qtyKardusBasah || 0) : 0;
+    if (!isFinite(qtyKardus) || !isFinite(qtyBotol) || !isFinite(qtyPecah) || !isFinite(qtyKardusBasah)) {
       throw new Error('Data ke-' + (index + 1) + ': Qty harus berupa angka yang valid.');
     }
-    if (qtyKardus < 0 || qtyBotol < 0 || qtyPecah < 0) {
+    if (qtyKardus < 0 || qtyBotol < 0 || qtyPecah < 0 || qtyKardusBasah < 0) {
       throw new Error('Data ke-' + (index + 1) + ': Qty tidak boleh negatif.');
+    }
+    if (data.line === 'filling' && qtyKardusBasah > qtyKardus) {
+      throw new Error('Data ke-' + (index + 1) + ': Qty Kardus Basah tidak boleh lebih besar dari Qty Pengerjaan (Kardus).');
     }
     if (data.line === 'press' && qtyKardus * qtyBotol <= 0) {
       throw new Error('Data ke-' + (index + 1) + ': Total Qty Press harus lebih dari 0 botol.');
@@ -850,6 +885,11 @@ function createEntriesBatch_(user, dataList) {
 
     const createdAt = new Date(now.getTime() + index);
     const line = data.line === 'press' ? 'press' : 'filling';
+    // updateCount dari client hanya merepresentasikan edit yang sudah terjadi
+    // saat data masih berada di Preview. Nilainya dipertahankan saat CREATE.
+    const previewUpdateCount = Math.max(0, Math.floor(number_(data.updateCount)));
+    const previewUpdatedAt = normalizeIsoTimestamp_(data.updatedAt) ||
+      (previewUpdateCount > 0 ? createdAt.toISOString() : '');
     const entry = {
       id: id,
       reportId: makeReportId_(line, createdAt),
@@ -863,10 +903,11 @@ function createEntriesBatch_(user, dataList) {
       totalQty: qtyKardus * qtyBotol,
       botolPecahJenis: String(data.botol || '').trim(),
       qtyBotolPecah: qtyPecah,
+      qtyKardusBasah: qtyKardusBasah,
       createdBy: user.username,
-      createdByName: user.name,
       createdAt: createdAt.toISOString(),
-      updatedAt: createdAt.toISOString(),
+      updatedAt: previewUpdatedAt,
+      updateCount: previewUpdateCount,
       sisaPressTanggalAsal: '',
       keterangan: ''
     };
@@ -944,6 +985,10 @@ function createEntry_(user, data) {
   const qtyKardus = number_(data.qtyKardus);
   const qtyBotol = number_(data.qtyBotolPerKardus);
   const qtyPecah = number_(data.qtyBotolPecah);
+  const qtyKardusBasah = line === 'filling' ? number_(data.qtyKardusBasah) : 0;
+  const previewUpdateCount = Math.max(0, Math.floor(number_(data.updateCount)));
+  const previewUpdatedAt = normalizeIsoTimestamp_(data.updatedAt) ||
+    (previewUpdateCount > 0 ? createdAt.toISOString() : '');
 
   const entry = {
     id: id,
@@ -958,10 +1003,11 @@ function createEntry_(user, data) {
     totalQty: qtyKardus * qtyBotol,
     botolPecahJenis: String(data.botolPecahJenis || '').trim(),
     qtyBotolPecah: qtyPecah,
+    qtyKardusBasah: qtyKardusBasah,
     createdBy: user.username,
-    createdByName: user.name,
     createdAt: createdAt.toISOString(),
-    updatedAt: createdAt.toISOString(),
+    updatedAt: previewUpdatedAt,
+    updateCount: previewUpdateCount,
     sisaPressTanggalAsal: '',
     keterangan: ''
   };
@@ -991,10 +1037,23 @@ function updateEntry_(user, id, data) {
 
   const qtyKardus = number_(data.qtyKardus);
   const qtyBotol = number_(data.qtyBotolPerKardus);
+  const updatedLine = data.line === 'press' ? 'press' : 'filling';
+  const qtyKardusBasah = updatedLine === 'filling' ? number_(data.qtyKardusBasah) : 0;
+
+  // Audit perubahan data Pengerjaan:
+  // - updatedAt hanya menyimpan timestamp perubahan terakhir
+  // - updateCount menyimpan berapa kali data tersimpan pernah di-update
+  // - fallback parseEntryUpdateAudit_ menjaga kompatibilitas data versi lama
+  //   yang pernah menyimpan "timestamp | Perubahan ke-X" di updatedAt.
+  const legacyAudit = parseEntryUpdateAudit_(existing.updatedAt);
+  const previousUpdateCount = Math.max(number_(existing.updateCount), legacyAudit.count);
+  const nextUpdateCount = previousUpdateCount + 1;
+  const updatedAtValue = new Date().toISOString();
+
   const updated = {
     id: existing.id,
     reportId: existing.reportId,
-    tab: data.line === 'press' ? 'press' : 'filling',
+    tab: updatedLine,
     tanggal: String(data.tanggal),
     operator: String(data.operator).trim(),
     produk: String(data.produk).trim(),
@@ -1004,10 +1063,11 @@ function updateEntry_(user, id, data) {
     totalQty: qtyKardus * qtyBotol,
     botolPecahJenis: String(data.botolPecahJenis || '').trim(),
     qtyBotolPecah: number_(data.qtyBotolPecah),
+    qtyKardusBasah: qtyKardusBasah,
     createdBy: existing.createdBy,
-    createdByName: existing.createdByName,
     createdAt: existing.createdAt,
-    updatedAt: new Date().toISOString(),
+    updatedAt: updatedAtValue,
+    updateCount: nextUpdateCount,
     sisaPressTanggalAsal: '',
     keterangan: ''
   };
@@ -1062,8 +1122,8 @@ function entryToRow_(e) {
   return [
     e.id, e.reportId, e.tab, e.tanggal, e.operator, e.produk, e.botol,
     e.qtyKardus, e.qtyBotolPerKardus, e.totalQty, e.botolPecahJenis,
-    e.qtyBotolPecah, e.createdBy, e.createdByName, e.createdAt, e.updatedAt,
-    e.sisaPressTanggalAsal || '', e.keterangan || ''
+    e.qtyBotolPecah, number_(e.qtyKardusBasah), e.createdBy, e.createdAt, e.updatedAt,
+    Math.max(0, Math.floor(number_(e.updateCount))), e.sisaPressTanggalAsal || '', e.keterangan || ''
   ];
 }
 
@@ -1081,12 +1141,13 @@ function rowToEntry_(row) {
     totalQty: number_(row[9]),
     botolPecahJenis: String(row[10] || ''),
     qtyBotolPecah: number_(row[11]),
-    createdBy: String(row[12] || ''),
-    createdByName: String(row[13] || ''),
+    qtyKardusBasah: number_(row[12]),
+    createdBy: String(row[13] || ''),
     createdAt: isoCell_(row[14]),
-    updatedAt: isoCell_(row[15]),
-    sisaPressTanggalAsal: String(row[16] || ''),
-    keterangan: String(row[17] || '')
+    updatedAt: parseEntryUpdateAudit_(row[15]).timestamp,
+    updateCount: Math.max(number_(row[16]), parseEntryUpdateAudit_(row[15]).count),
+    sisaPressTanggalAsal: String(row[17] || ''),
+    keterangan: String(row[18] || '')
   };
 }
 
@@ -1103,11 +1164,15 @@ function validateEntry_(data) {
   const qtyKardusRaw = Number(data.qtyKardus);
   const qtyBotolRaw = Number(data.qtyBotolPerKardus);
   const qtyPecahRaw = Number(data.qtyBotolPecah || 0);
-  if (!isFinite(qtyKardusRaw) || !isFinite(qtyBotolRaw) || !isFinite(qtyPecahRaw)) {
+  const qtyKardusBasahRaw = data.line === 'filling' ? Number(data.qtyKardusBasah || 0) : 0;
+  if (!isFinite(qtyKardusRaw) || !isFinite(qtyBotolRaw) || !isFinite(qtyPecahRaw) || !isFinite(qtyKardusBasahRaw)) {
     throw new Error('Qty harus berupa angka yang valid.');
   }
-  if (qtyKardusRaw < 0 || qtyBotolRaw < 0 || qtyPecahRaw < 0) {
+  if (qtyKardusRaw < 0 || qtyBotolRaw < 0 || qtyPecahRaw < 0 || qtyKardusBasahRaw < 0) {
     throw new Error('Qty tidak boleh negatif.');
+  }
+  if (data.line === 'filling' && qtyKardusBasahRaw > qtyKardusRaw) {
+    throw new Error('Qty Kardus Basah tidak boleh lebih besar dari Qty Pengerjaan (Kardus).');
   }
   if (data.line === 'press' && qtyKardusRaw * qtyBotolRaw <= 0) {
     throw new Error('Total Qty Press harus lebih dari 0 botol.');
@@ -1115,6 +1180,8 @@ function validateEntry_(data) {
 
   // Jenis botol pecah selalu mengikuti botol yang sedang dikerjakan.
   data.botolPecahJenis = data.botol;
+  // Qty Kardus Basah hanya digunakan pada Filling.
+  data.qtyKardusBasah = data.line === 'filling' ? qtyKardusBasahRaw : 0;
 }
 
 function canonicalMasterValue_(list, value, label) {
@@ -1134,16 +1201,161 @@ function productKey_(produk) {
   return String(produk || '').trim().toLowerCase();
 }
 
-function entrySheet_() {
-  const ss = spreadsheet_();
+function ensureEntrySheetSchema_(ss) {
   let sh = ss.getSheetByName(APP.SHEETS.ENTRIES);
-  if (!sh || sh.getMaxColumns() < APP.ENTRY_HEADERS.length) {
-    sh = ensureSheet_(ss, APP.SHEETS.ENTRIES, APP.ENTRY_HEADERS);
-  } else {
-    // Pastikan header tambahan untuk versi baru terpasang tanpa menggeser data lama.
-    sh.getRange(1, 1, 1, APP.ENTRY_HEADERS.length).setValues([APP.ENTRY_HEADERS]);
+  if (!sh) {
+    sh = ss.insertSheet(APP.SHEETS.ENTRIES);
   }
+
+  function readHeaders_() {
+    const width = Math.max(
+      APP.ENTRY_HEADERS.length,
+      Math.min(sh.getLastColumn() || APP.ENTRY_HEADERS.length, 40)
+    );
+    if (sh.getMaxColumns() < width) {
+      sh.insertColumnsAfter(sh.getMaxColumns(), width - sh.getMaxColumns());
+    }
+    return sh.getRange(1, 1, 1, width).getDisplayValues()[0]
+      .map(function (value) { return String(value || '').trim(); });
+  }
+
+  // 1) Pastikan qtyKardusBasah benar-benar menjadi kolom M / ke-13.
+  //    Schema lama menaruh createdBy langsung sesudah qtyBotolPecah.
+  let headers = readHeaders_();
+  const qtyPecahIndex = headers.indexOf('qtyBotolPecah'); // zero-based
+  const qtyBasahIndex = headers.indexOf('qtyKardusBasah');
+
+  if (qtyPecahIndex !== 11) {
+    if (sh.getLastRow() > 1) {
+      throw new Error(
+        'Struktur Sheet Pengerjaan tidak sesuai. qtyBotolPecah harus berada di kolom 12, tetapi ditemukan di kolom ' +
+        (qtyPecahIndex >= 0 ? (qtyPecahIndex + 1) : 'tidak ditemukan') + '.'
+      );
+    }
+  }
+
+  if (qtyBasahIndex < 0) {
+    // Sisipkan tepat setelah qtyBotolPecah agar data metadata lama ikut bergeser aman.
+    sh.insertColumnAfter(12);
+  } else if (qtyBasahIndex !== 12) {
+    throw new Error(
+      'Struktur Sheet Pengerjaan tidak sesuai. qtyKardusBasah harus berada di kolom 13, tetapi ditemukan di kolom ' +
+      (qtyBasahIndex + 1) + '.'
+    );
+  }
+
+  // 2) Created By dan Created By Name duplikat. Pertahankan createdBy karena dipakai
+  //    untuk permission edit/hapus, isi createdBy yang kosong dari createdByName,
+  //    lalu hapus kolom createdByName secara fisik.
+  headers = readHeaders_();
+  const createdByIndex = headers.indexOf('createdBy');
+  const createdByNameIndex = headers.indexOf('createdByName');
+
+  if (createdByNameIndex >= 0) {
+    if (createdByIndex >= 0 && sh.getLastRow() > 1) {
+      const rowCount = sh.getLastRow() - 1;
+      const createdByValues = sh.getRange(2, createdByIndex + 1, rowCount, 1).getValues();
+      const createdByNameValues = sh.getRange(2, createdByNameIndex + 1, rowCount, 1).getValues();
+      let needsWrite = false;
+      for (let i = 0; i < rowCount; i++) {
+        if (!String(createdByValues[i][0] || '').trim() && String(createdByNameValues[i][0] || '').trim()) {
+          createdByValues[i][0] = createdByNameValues[i][0];
+          needsWrite = true;
+        }
+      }
+      if (needsWrite) {
+        sh.getRange(2, createdByIndex + 1, rowCount, 1).setValues(createdByValues);
+      }
+    }
+    sh.deleteColumn(createdByNameIndex + 1);
+  }
+
+  // 3) Validasi posisi final yang dipakai backend/frontend.
+  headers = readHeaders_();
+  const expectedPrefix = [
+    'id', 'reportId', 'tab', 'tanggal', 'operator', 'produk', 'botol',
+    'qtyKardus', 'qtyBotolPerKardus', 'totalQty', 'botolPecahJenis',
+    'qtyBotolPecah', 'qtyKardusBasah', 'createdBy'
+  ];
+  for (let i = 0; i < expectedPrefix.length; i++) {
+    const actual = String(headers[i] || '');
+    const expected = expectedPrefix[i];
+    if (actual && actual !== expected && sh.getLastRow() > 1) {
+      throw new Error(
+        'Struktur Sheet Pengerjaan tidak sesuai pada kolom ' + (i + 1) +
+        '. Seharusnya "' + expected + '", saat ini "' + actual + '".'
+      );
+    }
+  }
+
+  // 4) Tambahkan kolom updateCount tepat setelah updatedAt.
+  //    Migrasi aman: kolom lama sisaPressTanggalAsal dan keterangan digeser ke kanan.
+  headers = readHeaders_();
+  const updatedAtIndex = headers.indexOf('updatedAt');
+  const updateCountIndex = headers.indexOf('updateCount');
+
+  if (updatedAtIndex >= 0 && updatedAtIndex !== 15 && sh.getLastRow() > 1) {
+    throw new Error(
+      'Struktur Sheet Pengerjaan tidak sesuai. updatedAt harus berada di kolom 16, tetapi ditemukan di kolom ' +
+      (updatedAtIndex + 1) + '.'
+    );
+  }
+
+  if (updateCountIndex < 0) {
+    if (sh.getLastRow() > 1) {
+      // Sisipkan kolom Q / ke-17 agar kolom histori setelah updatedAt tidak tertimpa.
+      sh.insertColumnAfter(16);
+    }
+  } else if (updateCountIndex !== 16 && sh.getLastRow() > 1) {
+    throw new Error(
+      'Struktur Sheet Pengerjaan tidak sesuai. updateCount harus berada di kolom 17, tetapi ditemukan di kolom ' +
+      (updateCountIndex + 1) + '.'
+    );
+  }
+
+  // 5) Tetapkan header resmi. Posisi final:
+  //    13 qtyKardusBasah | 14 createdBy | 15 createdAt | 16 updatedAt |
+  //    17 updateCount | 18 sisaPressTanggalAsal | 19 keterangan.
+  if (sh.getMaxColumns() < APP.ENTRY_HEADERS.length) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), APP.ENTRY_HEADERS.length - sh.getMaxColumns());
+  }
+  sh.getRange(1, 1, 1, APP.ENTRY_HEADERS.length).setValues([APP.ENTRY_HEADERS]);
+  styleHeader_(sh, APP.ENTRY_HEADERS.length);
+  sh.setFrozenRows(1);
+
+  // 6) Migrasikan format audit lama:
+  //    "timestamp | Perubahan ke-X" -> updatedAt=timestamp, updateCount=X.
+  if (sh.getLastRow() > 1) {
+    const rowCount = sh.getLastRow() - 1;
+    const auditValues = sh.getRange(2, 16, rowCount, 2).getValues();
+    let auditChanged = false;
+
+    for (let i = 0; i < auditValues.length; i++) {
+      const audit = parseEntryUpdateAudit_(auditValues[i][0]);
+      const currentCount = Math.max(0, Math.floor(number_(auditValues[i][1])));
+      const migratedCount = Math.max(currentCount, audit.count);
+
+      if (String(auditValues[i][0] || '') !== audit.timestamp) {
+        auditValues[i][0] = audit.timestamp;
+        auditChanged = true;
+      }
+      if (currentCount !== migratedCount || auditValues[i][1] === '') {
+        auditValues[i][1] = migratedCount;
+        auditChanged = true;
+      }
+    }
+
+    if (auditChanged) {
+      sh.getRange(2, 16, rowCount, 2).setValues(auditValues);
+    }
+  }
+
+  // Sel kosong qtyKardusBasah tetap dibaca sebagai 0 oleh rowToEntry_().
   return sh;
+}
+
+function entrySheet_() {
+  return ensureEntrySheetSchema_(spreadsheet_());
 }
 
 function pressRemainderSheet_(createIfMissing) {
@@ -1386,7 +1598,7 @@ function writePressModel_(entries, model, adjustments) {
       const meta = entry.tab === 'press' ? model.pressMeta[String(entry.id)] : null;
       return [meta ? meta.tanggalAsal : '', meta ? meta.keterangan : ''];
     });
-    entrySh.getRange(2, 17, noteRows.length, 2).setValues(noteRows);
+    entrySh.getRange(2, 18, noteRows.length, 2).setValues(noteRows);
   }
 
   return decoratePressRemainders_(model.remainders, entries, adjustments || []);
@@ -1609,6 +1821,192 @@ function makeReportId_(line, date) {
   const stamp = Utilities.formatDate(date, tz, 'yyyyMMdd-HHmmss');
   const prefix = line === 'press' ? 'PRS' : 'FIL';
   return prefix + '-' + stamp + '-' + Utilities.getUuid().slice(0, 4).toUpperCase();
+}
+
+/* ------------------------- SETTINGS / KPI ------------------------- */
+const SETTINGS_CACHE_KEY_ = 'ppr_settings_cache_v2';
+const KPI_FILLING_OUTPUT_TARGET_KEY_ = 'kpiFillingOutputTargetMonthly';
+const KPI_FILLING_OUTPUT_TARGET_DEFAULT_ = 150000;
+const KPI_PRESS_OUTPUT_TARGET_KEY_ = 'kpiPressOutputTargetMonthly';
+const KPI_PRESS_OUTPUT_TARGET_DEFAULT_ = 70000;
+
+function ensureSettingsSheet_(ss) {
+  const sh = ensureSheet_(ss, APP.SHEETS.SETTINGS, APP.SETTINGS_HEADERS);
+  const lastRow = sh.getLastRow();
+  const existingKeys = {};
+
+  if (lastRow >= 2) {
+    const keys = sh.getRange(2, 1, lastRow - 1, 1).getDisplayValues();
+    keys.forEach(function (row) {
+      const key = String(row[0] || '').trim();
+      if (key) existingKeys[key] = true;
+    });
+  }
+
+  let changed = false;
+  if (!existingKeys[KPI_FILLING_OUTPUT_TARGET_KEY_]) {
+    sh.appendRow([
+      KPI_FILLING_OUTPUT_TARGET_KEY_,
+      KPI_FILLING_OUTPUT_TARGET_DEFAULT_,
+      new Date(),
+      'setup'
+    ]);
+    changed = true;
+  }
+
+  if (!existingKeys[KPI_PRESS_OUTPUT_TARGET_KEY_]) {
+    sh.appendRow([
+      KPI_PRESS_OUTPUT_TARGET_KEY_,
+      KPI_PRESS_OUTPUT_TARGET_DEFAULT_,
+      new Date(),
+      'setup'
+    ]);
+    changed = true;
+  }
+
+  if (changed) invalidateSettingsCache_();
+  return sh;
+}
+
+function normalizeKpiFillingOutputTarget_(value) {
+  const target = Math.round(Number(value));
+  if (!isFinite(target) || target <= 0) {
+    throw new Error('Target Output KPI Filling / Bulan harus lebih dari 0.');
+  }
+  return target;
+}
+
+function normalizeKpiPressOutputTarget_(value) {
+  const target = Math.round(Number(value));
+  if (!isFinite(target) || target <= 0) {
+    throw new Error('Target Output KPI Press / Bulan harus lebih dari 0.');
+  }
+  return target;
+}
+
+function getSettings_() {
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(SETTINGS_CACHE_KEY_);
+  if (cached) {
+    try {
+      const parsed = JSON.parse(cached);
+      if (parsed && parsed.kpiFillingOutputTargetMonthly && parsed.kpiPressOutputTargetMonthly) {
+        return parsed;
+      }
+    } catch (_) {}
+  }
+
+  const ss = spreadsheet_();
+  // ensureSettingsSheet_ juga berfungsi sebagai migrasi otomatis untuk Spreadsheet
+  // lama yang sebelumnya hanya memiliki target KPI Press.
+  const sh = ensureSettingsSheet_(ss);
+
+  let fillingOutputTarget = KPI_FILLING_OUTPUT_TARGET_DEFAULT_;
+  let pressOutputTarget = KPI_PRESS_OUTPUT_TARGET_DEFAULT_;
+  const lastRow = sh.getLastRow();
+  if (lastRow >= 2) {
+    const rows = sh.getRange(2, 1, lastRow - 1, APP.SETTINGS_HEADERS.length).getValues();
+    rows.forEach(function (row) {
+      const key = String(row[0] || '').trim();
+      const candidate = Number(row[1]);
+      if (!isFinite(candidate) || candidate <= 0) return;
+
+      if (key === KPI_FILLING_OUTPUT_TARGET_KEY_) {
+        fillingOutputTarget = Math.round(candidate);
+      } else if (key === KPI_PRESS_OUTPUT_TARGET_KEY_) {
+        pressOutputTarget = Math.round(candidate);
+      }
+    });
+  }
+
+  const result = {
+    kpiFillingOutputTargetMonthly: fillingOutputTarget,
+    kpiPressOutputTargetMonthly: pressOutputTarget
+  };
+  cache.put(SETTINGS_CACHE_KEY_, JSON.stringify(result), APP.SETTINGS_CACHE_SECONDS);
+  return result;
+}
+
+function invalidateSettingsCache_() {
+  CacheService.getScriptCache().remove(SETTINGS_CACHE_KEY_);
+  // Bersihkan juga cache versi lama agar migrasi setting langsung terbaca.
+  CacheService.getScriptCache().remove('ppr_settings_cache_v1');
+}
+
+function setKpiSettingValue_(user, key, target) {
+  const ss = spreadsheet_();
+  const sh = ensureSettingsSheet_(ss);
+  const now = new Date();
+  const updatedBy = user && user.username ? user.username : '';
+  const lastRow = sh.getLastRow();
+  let rowNumber = 0;
+
+  if (lastRow >= 2) {
+    const keys = sh.getRange(2, 1, lastRow - 1, 1).getDisplayValues();
+    for (let i = 0; i < keys.length; i++) {
+      if (String(keys[i][0] || '').trim() === key) {
+        rowNumber = i + 2;
+        break;
+      }
+    }
+  }
+
+  const row = [key, target, now, updatedBy];
+  if (rowNumber) sh.getRange(rowNumber, 1, 1, APP.SETTINGS_HEADERS.length).setValues([row]);
+  else sh.appendRow(row);
+
+  invalidateSettingsCache_();
+  return getSettings_();
+}
+
+function setKpiFillingOutputTarget_(user, value) {
+  const target = normalizeKpiFillingOutputTarget_(value);
+  return setKpiSettingValue_(user, KPI_FILLING_OUTPUT_TARGET_KEY_, target);
+}
+
+function setKpiPressOutputTarget_(user, value) {
+  const target = normalizeKpiPressOutputTarget_(value);
+  return setKpiSettingValue_(user, KPI_PRESS_OUTPUT_TARGET_KEY_, target);
+}
+
+function setKpiOutputTargets_(user, fillingValue, pressValue) {
+  // Validasi dua target terlebih dahulu supaya penyimpanan dilakukan sebagai
+  // satu aksi dan tidak ada kondisi salah satu target sudah berubah sementara
+  // target lainnya gagal divalidasi.
+  const fillingTarget = normalizeKpiFillingOutputTarget_(fillingValue);
+  const pressTarget = normalizeKpiPressOutputTarget_(pressValue);
+
+  const ss = spreadsheet_();
+  const sh = ensureSettingsSheet_(ss);
+  const now = new Date();
+  const updatedBy = user && user.username ? user.username : '';
+  const lastRow = sh.getLastRow();
+  const rowByKey = {};
+
+  if (lastRow >= 2) {
+    const keys = sh.getRange(2, 1, lastRow - 1, 1).getDisplayValues();
+    keys.forEach(function (row, index) {
+      const key = String(row[0] || '').trim();
+      if (key) rowByKey[key] = index + 2;
+    });
+  }
+
+  function writeTarget(key, target) {
+    const row = [key, target, now, updatedBy];
+    const rowNumber = rowByKey[key] || 0;
+    if (rowNumber) {
+      sh.getRange(rowNumber, 1, 1, APP.SETTINGS_HEADERS.length).setValues([row]);
+    } else {
+      sh.appendRow(row);
+      rowByKey[key] = sh.getLastRow();
+    }
+  }
+
+  writeTarget(KPI_FILLING_OUTPUT_TARGET_KEY_, fillingTarget);
+  writeTarget(KPI_PRESS_OUTPUT_TARGET_KEY_, pressTarget);
+
+  invalidateSettingsCache_();
+  return getSettings_();
 }
 
 const MASTER_CACHE_KEY_ = 'ppr_master_cache_v1';
@@ -2003,6 +2401,31 @@ function unique_(values) {
 function formatDateCell_(value) {
   if (value instanceof Date) return Utilities.formatDate(value, Session.getScriptTimeZone() || 'Asia/Jakarta', 'yyyy-MM-dd');
   return String(value || '');
+}
+
+function parseEntryUpdateAudit_(value) {
+  const text = value instanceof Date ? value.toISOString() : String(value || '').trim();
+  if (!text) return { timestamp: '', count: 0 };
+
+  // Format baru: 2026-09-19T02:45:12.123Z | Perubahan ke-3
+  const match = text.match(/^(.*?)\s*\|\s*Perubahan\s+ke-(\d+)\s*$/i);
+  if (match) {
+    return {
+      timestamp: String(match[1] || '').trim(),
+      count: Math.max(0, Number(match[2]) || 0)
+    };
+  }
+
+  // Kompatibilitas data lama: timestamp lama belum mempunyai counter.
+  return { timestamp: text, count: 0 };
+}
+
+function normalizeIsoTimestamp_(value) {
+  if (value instanceof Date) return value.toISOString();
+  const text = String(value || '').trim();
+  if (!text) return '';
+  const parsed = new Date(text);
+  return isNaN(parsed.getTime()) ? '' : parsed.toISOString();
 }
 
 function isoCell_(value) {

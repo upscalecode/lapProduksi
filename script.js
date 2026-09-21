@@ -22,7 +22,7 @@
 //         togglePassword.textContent = "👁";
 //     }
 // })
-   
+
 (function () {
   "use strict";
 
@@ -40,9 +40,11 @@
     DASHBOARD_PRESS_KPI_PAGE_SIZE: 7,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
-    WEB_APP_URL: "https://script.google.com/macros/s/AKfycbzeNRDCs0tJQ_OkOS_YcXaEfsMDqfSWWIvxXg4Yz4dCUWqKELg3KfEHN0iymAGFLQVBzg/exec"
+    WEB_APP_URL:
+      "https://script.google.com/macros/s/AKfycbxeT4W0jC8JnfA3h5TnHB9Xo-SFhr87soXxHVinPoHxRJO_ReZ3KTqzrUnvSheIqyGOYA/exec",
   };
 
+  const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
   const LINE_LABEL = { filling: "Filling", press: "Press" };
   const pageType = document.body.dataset.page || "app";
 
@@ -56,20 +58,31 @@
     apdEntries: [],
     preview: { filling: [], press: [], apd: [] },
     users: [],
+    settings: {
+      kpiPressOutputTargetMonthly: 70000,
+      kpiFillingOutputTargetMonthly: 150000,
+    },
     search: {
       filling: { query: "" },
-      press: { query: "" }
+      press: { query: "" },
     },
-    pages: { filling: 1, press: 1, apd: 1, apdSaved: 1, laporan: 1, kpiLaporan: 1 },
+    pages: {
+      filling: 1,
+      press: 1,
+      apd: 1,
+      apdSaved: 1,
+      laporan: 1,
+      kpiLaporan: 1,
+    },
     savedPages: { filling: 1, press: 1 },
     pressBalance: { search: "", page: 1 },
     dashboard: {
-      chartMode: "7days", 
-      chartMonth:"", 
-      chartYear:"", 
-      chartStart:"", 
-      chartEnd:"", 
-      priorityPage: 1, 
+      chartMode: "7days",
+      chartMonth: "",
+      chartYear: "",
+      chartStart: "",
+      chartEnd: "",
+      priorityPage: 1,
       pressKpiMode: "date",
       pressKpiOperator: "",
       pressKpiDate: "",
@@ -77,10 +90,10 @@
       pressKpiYear: "",
       pressKpiStart: "",
       pressKpiEnd: "",
-      pressKpiPage: 1
+      pressKpiPage: 1,
     },
     lastLaporan: null,
-    lastKpiLaporan: null
+    lastKpiLaporan: null,
   };
 
   // Antrean tulis: UI tetap instan, request Spreadsheet dikirim satu per satu
@@ -100,9 +113,15 @@
     return `client-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
   }
 
-  function el(id) { return document.getElementById(id); }
-  function qs(selector, root = document) { return root.querySelector(selector); }
-  function qsa(selector, root = document) { return Array.from(root.querySelectorAll(selector)); }
+  function el(id) {
+    return document.getElementById(id);
+  }
+  function qs(selector, root = document) {
+    return root.querySelector(selector);
+  }
+  function qsa(selector, root = document) {
+    return Array.from(root.querySelectorAll(selector));
+  }
 
   const DEFAULT_USER_PERMISSIONS = Object.freeze({
     accessDashboard: false,
@@ -116,33 +135,42 @@
     editOthers: false,
     deleteOwn: false,
     deleteOthers: false,
-    accessMaster: false
+    accessMaster: false,
   });
 
   function permissionsOf(user = state.currentUser) {
     if (!user) return { ...DEFAULT_USER_PERMISSIONS };
     if (user.role === "superuser") {
-      return Object.fromEntries(Object.keys(DEFAULT_USER_PERMISSIONS).map(key => [key, true]));
+      return Object.fromEntries(
+        Object.keys(DEFAULT_USER_PERMISSIONS).map((key) => [key, true]),
+      );
     }
     return { ...DEFAULT_USER_PERMISSIONS, ...(user.permissions || {}) };
   }
 
   function can(permission, user = state.currentUser) {
-    return Boolean(user && (user.role === "superuser" || permissionsOf(user)[permission] === true));
+    return Boolean(
+      user &&
+      (user.role === "superuser" || permissionsOf(user)[permission] === true),
+    );
   }
 
   function canEditEntry(entry) {
     if (!state.currentUser || !entry) return false;
-    return entry.createdBy === state.currentUser.username ? can("editOwn") : can("editOthers");
+    return entry.createdBy === state.currentUser.username
+      ? can("editOwn")
+      : can("editOthers");
   }
 
   function canDeleteEntry(entry) {
     if (!state.currentUser || !entry) return false;
-    return entry.createdBy === state.currentUser.username ? can("deleteOwn") : can("deleteOthers");
+    return entry.createdBy === state.currentUser.username
+      ? can("deleteOwn")
+      : can("deleteOthers");
   }
 
   function firstAllowedView() {
-    if (can("accessDashboard")) return "dashboard"
+    if (can("accessDashboard")) return "dashboard";
     if (can("accessFilling")) return "filling";
     if (can("accessPress")) return "press";
     if (can("accessApd")) return "apd";
@@ -158,34 +186,40 @@
       press: can("accessPress"),
       apd: can("accessApd"),
       laporan: can("accessReports"),
-      master: can("accessMaster")
+      master: can("accessMaster"),
     };
     Object.entries(accessMap).forEach(([view, allowed]) => {
       const btn = qs(`.tab-btn[data-view="${view}"]`);
       if (btn) btn.hidden = !allowed;
     });
     const userPanel = el("userManagementPanel");
-    if (userPanel) userPanel.hidden = !state.currentUser || state.currentUser.role !== "superuser";
+    if (userPanel)
+      userPanel.hidden =
+        !state.currentUser || state.currentUser.role !== "superuser";
 
     const active = qs(".tab-btn.active");
     if (active && !accessMap[active.dataset.view]) {
       const fallback = firstAllowedView();
-      qsa(".tab-btn").forEach(btn => {
+      qsa(".tab-btn").forEach((btn) => {
         btn.classList.toggle("active", btn.dataset.view === fallback);
       });
-      qsa(".content > .view").forEach(node => { 
-        node.hidden = !fallback ||
-        node.id !== "view-" + fallback; });
+      qsa(".content > .view").forEach((node) => {
+        node.hidden = !fallback || node.id !== "view-" + fallback;
+      });
     }
   }
 
   /* ------------------------- LOCAL DRAFT / PREVIEW CACHE ------------------------- */
   function storageOwner() {
     const user = state.currentUser;
-    if (user && user.username) return String(user.username).trim().toLowerCase();
+    if (user && user.username)
+      return String(user.username).trim().toLowerCase();
     try {
-      const cached = JSON.parse(localStorage.getItem(CONFIG.USER_KEY) || "null");
-      if (cached && cached.username) return String(cached.username).trim().toLowerCase();
+      const cached = JSON.parse(
+        localStorage.getItem(CONFIG.USER_KEY) || "null",
+      );
+      if (cached && cached.username)
+        return String(cached.username).trim().toLowerCase();
     } catch (_) {}
     return "anonymous";
   }
@@ -196,7 +230,10 @@
 
   function persistPreview() {
     try {
-      localStorage.setItem(userStorageKey(CONFIG.PREVIEW_KEY), JSON.stringify(state.preview));
+      localStorage.setItem(
+        userStorageKey(CONFIG.PREVIEW_KEY),
+        JSON.stringify(state.preview),
+      );
     } catch (err) {
       console.warn("Gagal menyimpan preview lokal:", err);
     }
@@ -211,7 +248,7 @@
       state.preview = {
         filling: Array.isArray(saved.filling) ? saved.filling : [],
         press: Array.isArray(saved.press) ? saved.press : [],
-        apd: Array.isArray(saved.apd) ? saved.apd : []
+        apd: Array.isArray(saved.apd) ? saved.apd : [],
       };
     } catch (err) {
       console.warn("Preview lokal tidak dapat dibaca:", err);
@@ -239,10 +276,14 @@
         qtyKardus: qs(".f-qty-kardus", form)?.value || "",
         qtyBotolPerKardus: qs(".f-qty-botol", form)?.value || "",
         qtyBotolPecah: qs(".f-qty-pecah", form)?.value || "0",
+        qtyKardusBasah: qs(".f-qty-kardus-basah", form)?.value || "0",
         editingId: qs(".f-editing-id", form)?.value || "",
-        savedAt: nowIso()
+        savedAt: nowIso(),
       };
-      localStorage.setItem(userStorageKey(CONFIG.FORM_DRAFT_KEY), JSON.stringify(drafts));
+      localStorage.setItem(
+        userStorageKey(CONFIG.FORM_DRAFT_KEY),
+        JSON.stringify(drafts),
+      );
     } catch (err) {
       console.warn("Gagal menyimpan draft form:", err);
     }
@@ -252,7 +293,10 @@
     try {
       const drafts = getFormDrafts();
       delete drafts[line];
-      localStorage.setItem(userStorageKey(CONFIG.FORM_DRAFT_KEY), JSON.stringify(drafts));
+      localStorage.setItem(
+        userStorageKey(CONFIG.FORM_DRAFT_KEY),
+        JSON.stringify(drafts),
+      );
     } catch (_) {}
   }
 
@@ -269,6 +313,7 @@
     const qtyKardus = qs(".f-qty-kardus", form);
     const qtyBotol = qs(".f-qty-botol", form);
     const qtyPecah = qs(".f-qty-pecah", form);
+    const qtyKardusBasah = qs(".f-qty-kardus-basah", form);
     const botolPecah = qs(".f-botol-pecah", form);
     const total = qs(".f-total", form);
     const editing = qs(".f-editing-id", form);
@@ -276,18 +321,26 @@
     const cancelBtn = qs(".f-cancel-btn", form);
     const stamp = qs(".stamp", form);
 
-    if (operator && isMasterValue("operator", draft.operator)) operator.value = canonicalMasterValue("operator", draft.operator);
-    if (produk && isMasterValue("produk", draft.produk)) produk.value = canonicalMasterValue("produk", draft.produk);
-    if (botol && isMasterValue("botol", draft.botol)) botol.value = canonicalMasterValue("botol", draft.botol);
+    if (operator && isMasterValue("operator", draft.operator))
+      operator.value = canonicalMasterValue("operator", draft.operator);
+    if (produk && isMasterValue("produk", draft.produk))
+      produk.value = canonicalMasterValue("produk", draft.produk);
+    if (botol && isMasterValue("botol", draft.botol))
+      botol.value = canonicalMasterValue("botol", draft.botol);
     if (qtyKardus) qtyKardus.value = draft.qtyKardus ?? "";
     if (qtyBotol) qtyBotol.value = draft.qtyBotolPerKardus ?? "";
     if (qtyPecah) qtyPecah.value = draft.qtyBotolPecah ?? "0";
+    if (qtyKardusBasah) qtyKardusBasah.value = draft.qtyKardusBasah ?? "0";
     if (botolPecah) botolPecah.value = (botol && botol.value) || "-";
-    if (total) total.value = ((Number(qtyKardus?.value) || 0) * (Number(qtyBotol?.value) || 0)).toLocaleString("id-ID");
+    if (total)
+      total.value = (
+        (Number(qtyKardus?.value) || 0) * (Number(qtyBotol?.value) || 0)
+      ).toLocaleString("id-ID");
 
     // Jika sebelumnya sedang edit preview, pulihkan mode edit hanya bila item masih ada.
     const editId = draft.editingId || "";
-    const editExists = editId && (state.preview[line] || []).some(item => item.id === editId);
+    const editExists =
+      editId && (state.preview[line] || []).some((item) => item.id === editId);
     if (editing) editing.value = editExists ? editId : "";
     if (editExists) {
       if (submitBtn) submitBtn.textContent = "Simpan Perubahan";
@@ -297,21 +350,29 @@
   }
 
   function normalizeWebAppUrl(value) {
-    return String(value || "").trim().replace(/\/$/, "");
+    return String(value || "")
+      .trim()
+      .replace(/\/$/, "");
   }
 
   function isValidWebAppUrl(url) {
-    return /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec(?:\?.*)?$/i.test(url);
+    return /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec(?:\?.*)?$/i.test(
+      url,
+    );
   }
 
   function getWebhookUrl() {
-    return normalizeWebAppUrl(localStorage.getItem(CONFIG.URL_KEY) || CONFIG.WEB_APP_URL || "");
+    return normalizeWebAppUrl(
+      localStorage.getItem(CONFIG.URL_KEY) || CONFIG.WEB_APP_URL || "",
+    );
   }
 
   function setWebhookUrl(url) {
     const clean = normalizeWebAppUrl(url);
     if (!isValidWebAppUrl(clean)) {
-      throw new Error("URL tidak valid. Gunakan URL Web App Apps Script yang berakhir /exec.");
+      throw new Error(
+        "URL tidak valid. Gunakan URL Web App Apps Script yang berakhir /exec.",
+      );
     }
     localStorage.setItem(CONFIG.URL_KEY, clean);
     setConnection("idle", "URL Apps Script tersimpan");
@@ -325,7 +386,9 @@
   function requireWebhookUrl() {
     const url = getWebhookUrl();
     if (!url || !isValidWebAppUrl(url)) {
-      throw new Error("URL Apps Script belum benar. Tempel URL deployment Web App /exec pada CONFIG.WEB_APP_URL.");
+      throw new Error(
+        "URL Apps Script belum benar. Tempel URL deployment Web App /exec pada CONFIG.WEB_APP_URL.",
+      );
     }
     return url;
   }
@@ -350,30 +413,45 @@
     if (!trimmed) {
       throw new Error("Apps Script tidak mengembalikan data.");
     }
-    if (/^<!doctype html/i.test(trimmed) || /^<html/i.test(trimmed) || /accounts\.google\.com/i.test(trimmed)) {
-      throw new Error("Apps Script mengembalikan halaman Google, bukan JSON. Deploy sebagai Web App: Execute as = Me dan akses = Anyone.");
+    if (
+      /^<!doctype html/i.test(trimmed) ||
+      /^<html/i.test(trimmed) ||
+      /accounts\.google\.com/i.test(trimmed)
+    ) {
+      throw new Error(
+        "Apps Script mengembalikan halaman Google, bukan JSON. Deploy sebagai Web App: Execute as = Me dan akses = Anyone.",
+      );
     }
 
     let data;
     try {
       data = JSON.parse(trimmed);
     } catch (_) {
-      throw new Error("Respons Apps Script bukan JSON valid. Pastikan Code.gs dan deployment sudah diperbarui.");
+      throw new Error(
+        "Respons Apps Script bukan JSON valid. Pastikan Code.gs dan deployment sudah diperbarui.",
+      );
     }
 
     if (!data || data.ok !== true) {
-      throw new Error((data && data.message) || "Permintaan ke Apps Script gagal.");
+      throw new Error(
+        (data && data.message) || "Permintaan ke Apps Script gagal.",
+      );
     }
     return data;
   }
 
   function normalizeApiError(err) {
     if (err && err.name === "AbortError") {
-      return new Error("Koneksi ke Apps Script terlalu lama. Periksa internet dan deployment Web App.");
+      return new Error(
+        "Koneksi ke Apps Script terlalu lama. Periksa internet dan deployment Web App.",
+      );
     }
-    const msg = err && err.message ? err.message : String(err || "Terjadi kesalahan.");
+    const msg =
+      err && err.message ? err.message : String(err || "Terjadi kesalahan.");
     if (/Failed to fetch|NetworkError|Load failed|CORS/i.test(msg)) {
-      return new Error("Tidak dapat menghubungi Apps Script. Gunakan URL /exec terbaru, deploy dengan akses Anyone, dan jangan memakai request JSON/custom header.");
+      return new Error(
+        "Tidak dapat menghubungi Apps Script. Gunakan URL /exec terbaru, deploy dengan akses Anyone, dan jangan memakai request JSON/custom header.",
+      );
     }
     return err instanceof Error ? err : new Error(msg);
   }
@@ -404,7 +482,7 @@
         mode: "cors",
         cache: "no-store",
         redirect: "follow",
-        credentials: "omit"
+        credentials: "omit",
       });
       const data = await parseApiResponse(response);
       setConnection("online", "Aktif");
@@ -425,10 +503,16 @@
     if (withToken && state.token) body.set("token", state.token);
     Object.entries(payload).forEach(([key, value]) => {
       if (value === undefined || value === null) return;
-      body.set(key, typeof value === "object" ? JSON.stringify(value) : String(value));
+      body.set(
+        key,
+        typeof value === "object" ? JSON.stringify(value) : String(value),
+      );
     });
 
-    setConnection("loading", action === "login" ? "Memeriksa login…" : "Menyimpan cepat…");
+    setConnection(
+      "loading",
+      action === "login" ? "Memeriksa login…" : "Menyimpan cepat…",
+    );
     try {
       const response = await fetchWithTimeout(base, {
         method: "POST",
@@ -436,7 +520,7 @@
         body,
         cache: "no-store",
         redirect: "follow",
-        credentials: "omit"
+        credentials: "omit",
       });
       const data = await parseApiResponse(response);
       setConnection("online", "Aktif");
@@ -451,29 +535,42 @@
     setWebhookUrl,
     getWebhookUrl,
     clearWebhookUrl,
-    testConnection: () => apiGet("ping", {}, false)
+    testConnection: () => apiGet("ping", {}, false),
   };
 
   function todayStr() {
     const d = new Date();
-    const p = n => String(n).padStart(2, "0");
+    const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
 
-  function nowIso() { return new Date().toISOString(); }
+  function nowIso() {
+    return new Date().toISOString();
+  }
 
   function fmtDateTime(iso) {
     return new Date(iso).toLocaleString("id-ID", {
-      day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit"
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
     });
   }
 
   function esc(value) {
-    return String(value == null ? "" : value).replace(/[&<>"']/g, c => ({
-      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-    }[c]));
+    return String(value == null ? "" : value).replace(
+      /[&<>"']/g,
+      (c) =>
+        ({
+          "&": "&amp;",
+          "<": "&lt;",
+          ">": "&gt;",
+          '"': "&quot;",
+          "'": "&#39;",
+        })[c],
+    );
   }
-
 
   function highlightSearchMatch(value, query) {
     const text = String(value == null ? "" : value);
@@ -498,11 +595,14 @@
   }
 
   function toCSV(headers, rows) {
-    const quote = value => {
+    const quote = (value) => {
       const text = String(value == null ? "" : value);
       return /[",\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
     };
-    return [headers.map(quote).join(","), ...rows.map(row => row.map(quote).join(","))].join("\n");
+    return [
+      headers.map(quote).join(","),
+      ...rows.map((row) => row.map(quote).join(",")),
+    ].join("\n");
   }
 
   function downloadText(filename, text) {
@@ -519,7 +619,7 @@
 
   function genLaporanId() {
     const d = new Date();
-    const p = n => String(n).padStart(2, "0");
+    const p = (n) => String(n).padStart(2, "0");
     return `LAP-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
 
@@ -534,7 +634,9 @@
     toastEl.textContent = message;
     toastEl.className = isError ? "err show" : "show";
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { toastEl.className = ""; }, 3500);
+    toastTimer = setTimeout(() => {
+      toastEl.className = "";
+    }, 3500);
   }
 
   function pageNumbers(current, total) {
@@ -557,18 +659,21 @@
     }
 
     const prev = `<button type="button" class="page-btn" data-page="${current - 1}" ${current <= 1 ? "disabled" : ""}>‹</button>`;
-    const numbers = pageNumbers(current, total).map(item => {
-      if (item === "…") return '<span class="page-ellipsis">…</span>';
-      return `<button type="button" class="page-btn ${item === current ? "active" : ""}" data-page="${item}">${item}</button>`;
-    }).join("");
+    const numbers = pageNumbers(current, total)
+      .map((item) => {
+        if (item === "…") return '<span class="page-ellipsis">…</span>';
+        return `<button type="button" class="page-btn ${item === current ? "active" : ""}" data-page="${item}">${item}</button>`;
+      })
+      .join("");
     const next = `<button type="button" class="page-btn" data-page="${current + 1}" ${current >= total ? "disabled" : ""}>›</button>`;
     container.innerHTML = prev + numbers + next;
 
-    container.onclick = event => {
+    container.onclick = (event) => {
       const btn = event.target.closest("button[data-page]");
       if (!btn || btn.disabled) return;
       const target = Number(btn.dataset.page);
-      if (target >= 1 && target <= total && target !== current) onChange(target);
+      if (target >= 1 && target <= total && target !== current)
+        onChange(target);
     };
   }
 
@@ -587,7 +692,7 @@
     setConnection("idle", "Siap untuk login");
 
     // Event login dipasang langsung saat DOM/script siap.
-    form.addEventListener("submit", async event => {
+    form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const errorEl = el("loginError");
       const submit = el("loginSubmit");
@@ -596,10 +701,14 @@
       submit.textContent = "Masuk…";
 
       try {
-        const data = await apiPost("login", {
-          username: el("loginUsername").value.trim(),
-          password: el("loginPassword").value
-        }, false);
+        const data = await apiPost(
+          "login",
+          {
+            username: el("loginUsername").value.trim(),
+            password: el("loginPassword").value,
+          },
+          false,
+        );
 
         state.token = data.token;
         state.currentUser = data.user || null;
@@ -630,12 +739,24 @@
     if (!filling || !oldPress) return;
 
     const clone = filling.cloneNode(true);
-    qsa("[id]", clone).forEach(node => node.removeAttribute("id"));
+    qsa("[id]", clone).forEach((node) => node.removeAttribute("id"));
     clone.id = "view-press";
     clone.dataset.line = "press";
     clone.hidden = true;
-    qsa("[data-line]", clone).forEach(node => { node.dataset.line = "press"; });
-    qsa("h2", clone).forEach(h => { h.textContent = h.textContent.replace(/Filling/g, "Press"); });
+    qsa("[data-line]", clone).forEach((node) => {
+      node.dataset.line = "press";
+    });
+    qsa("h2", clone).forEach((h) => {
+      h.textContent = h.textContent.replace(/Filling/g, "Press");
+    });
+
+    // Qty Kardus Basah hanya berlaku untuk Filling. Karena view Press dibuat
+    // dari clone Filling, hapus field dan kolom khusus Filling dari clone Press.
+    qsa(".filling-only-field, .filling-only-col", clone).forEach((node) =>
+      node.remove(),
+    );
+    const pressEmptyPreview = qs(".f-tbody .empty-row", clone);
+    if (pressEmptyPreview) pressEmptyPreview.colSpan = 12;
 
     const stack = qs(".line-stack", clone);
     const form = qs(".form-panel", clone);
@@ -685,26 +806,32 @@
       const hint = document.createElement("p");
       hint.className = "press-available-hint";
       hint.dataset.state = "empty";
-      hint.textContent = "Pilih Nama Produk untuk melihat Qty Filling yang tersedia untuk Press.";
+      hint.textContent =
+        "Pilih Nama Produk untuk melihat Qty Filling yang tersedia untuk Press.";
       const error = qs(".f-error", form);
       if (error) error.insertAdjacentElement("beforebegin", hint);
       else form.appendChild(hint);
     }
 
-    clone.addEventListener("click", async event => {
+    clone.addEventListener("click", async (event) => {
       const deleteBtn = event.target.closest(".press-balance-delete");
       if (deleteBtn) {
-        if(!can("deleteUnpressed")){
+        if (!can("deleteUnpressed")) {
           return toast("Tidak ada akses", true);
         }
         const produkValue = deleteBtn.dataset.produk || "";
         const botolValue = deleteBtn.dataset.botol || "";
-        const row = getPressBalanceRows().find(item =>
-          balanceKey(item.produk, item.botol) === balanceKey(produkValue, botolValue)
+        const row = getPressBalanceRows().find(
+          (item) =>
+            balanceKey(item.produk, item.botol) ===
+            balanceKey(produkValue, botolValue),
         );
         if (!row) return toast("Data sisa Press tidak ditemukan.", true);
         if (row.hasPreview) {
-          return toast("Simpan data Preview Filling terlebih dahulu sebelum menghapus sisa Press.", true);
+          return toast(
+            "Simpan data Preview Filling terlebih dahulu sebelum menghapus sisa Press.",
+            true,
+          );
         }
 
         const alasan = await askClosePressReason(row);
@@ -714,14 +841,19 @@
         const oldText = deleteBtn.textContent;
         deleteBtn.textContent = "Menghapus…";
         try {
-          const response = await enqueueWrite(() => apiPost("press.adjustment.close", {
-            data: { produk: row.produk, botol: row.botol, alasan }
-          }));
+          const response = await enqueueWrite(() =>
+            apiPost("press.adjustment.close", {
+              data: { produk: row.produk, botol: row.botol, alasan },
+            }),
+          );
           if (response.adjustment) upsertAdjustment(response.adjustment);
-          if (Array.isArray(response.remainders)) state.remainders = response.remainders;
+          if (Array.isArray(response.remainders))
+            state.remainders = response.remainders;
           state.pressBalance.page = 1;
           renderPressBalance();
-          toast(`Sisa ${row.produk} / ${row.botol} berhasil dihapus dengan alasan tercatat.`);
+          toast(
+            `Sisa ${row.produk} / ${row.botol} berhasil dihapus dengan alasan tercatat.`,
+          );
         } catch (err) {
           deleteBtn.disabled = false;
           deleteBtn.textContent = oldText;
@@ -742,7 +874,11 @@
         produk.value = useBtn.dataset.produk || "";
         produk.dispatchEvent(new Event("change", { bubbles: true }));
       }
-      if (botol && useBtn.dataset.botol && isMasterValue("botol", useBtn.dataset.botol)) {
+      if (
+        botol &&
+        useBtn.dataset.botol &&
+        isMasterValue("botol", useBtn.dataset.botol)
+      ) {
         botol.value = useBtn.dataset.botol;
         botol.dispatchEvent(new Event("change", { bubbles: true }));
       }
@@ -779,13 +915,27 @@
     if (data.user) state.currentUser = data.user;
     if (data.master) {
       state.master = data.master;
-      try { localStorage.setItem(CONFIG.MASTER_KEY, JSON.stringify(data.master)); } catch (_) {}
+      try {
+        localStorage.setItem(CONFIG.MASTER_KEY, JSON.stringify(data.master));
+      } catch (_) {}
     }
     if (Array.isArray(data.entries)) state.entries = data.entries;
     if (Array.isArray(data.adjustments)) state.adjustments = data.adjustments;
     if (Array.isArray(data.remainders)) state.remainders = data.remainders;
     if (Array.isArray(data.apdEntries)) state.apdEntries = data.apdEntries;
     if (Array.isArray(data.users)) state.users = data.users;
+    if (data.settings && typeof data.settings === "object") {
+      const pressTarget = Math.round(
+        Number(data.settings.kpiPressOutputTargetMonthly) || 0,
+      );
+      const fillingTarget = Math.round(
+        Number(data.settings.kpiFillingOutputTargetMonthly) || 0,
+      );
+      if (pressTarget > 0)
+        state.settings.kpiPressOutputTargetMonthly = pressTarget;
+      if (fillingTarget > 0)
+        state.settings.kpiFillingOutputTargetMonthly = fillingTarget;
+    }
 
     refreshAllDropdowns();
     loadPersistedPreview();
@@ -800,11 +950,16 @@
     renderPressBalance();
     renderMasterChips();
     renderUsers();
+    renderKpiPressSetting();
+    renderKpiFillingSetting();
     renderUserHeader();
     applyAccessControl();
     renderDashboard();
     if (typeof window.refreshLaporanAutoPreview === "function") {
       window.refreshLaporanAutoPreview();
+    }
+    if (typeof window.refreshKpiLaporanAutoPreview === "function") {
+      window.refreshKpiLaporanAutoPreview();
     }
   }
 
@@ -823,22 +978,35 @@
   function fillSelect(select, list, placeholder) {
     if (!select) return;
     const current = select.value;
-    const unique = [...new Set((list || []).map(v => String(v).trim()).filter(Boolean))];
-    select.innerHTML = `<option value="">${esc(placeholder)}</option>` + unique.map(value => `<option value="${esc(value)}">${esc(value)}</option>`).join("");
+    const unique = [
+      ...new Set((list || []).map((v) => String(v).trim()).filter(Boolean)),
+    ];
+    select.innerHTML =
+      `<option value="">${esc(placeholder)}</option>` +
+      unique
+        .map((value) => `<option value="${esc(value)}">${esc(value)}</option>`)
+        .join("");
     if (unique.includes(current)) select.value = current;
   }
 
-
   function masterValues(category) {
-    return [...new Set((state.master[category] || [])
-      .map(value => String(value || "").trim())
-      .filter(Boolean))];
+    return [
+      ...new Set(
+        (state.master[category] || [])
+          .map((value) => String(value || "").trim())
+          .filter(Boolean),
+      ),
+    ];
   }
 
   function canonicalMasterValue(category, value) {
-    const target = String(value || "").trim().toLowerCase();
+    const target = String(value || "")
+      .trim()
+      .toLowerCase();
     if (!target) return "";
-    return masterValues(category).find(item => item.toLowerCase() === target) || "";
+    return (
+      masterValues(category).find((item) => item.toLowerCase() === target) || ""
+    );
   }
 
   function isMasterValue(category, value) {
@@ -876,7 +1044,7 @@
   }
 
   function closeMasterSuggestions(exceptInput = null) {
-    qsa(".master-suggest").forEach(list => {
+    qsa(".master-suggest").forEach((list) => {
       if (!exceptInput || list._ownerInput !== exceptInput) list.hidden = true;
     });
   }
@@ -893,7 +1061,9 @@
     // Form Filling/Press tetap memakai perilaku lama sehingga fitur lain tidak berubah.
     const floating = input.classList.contains("master-search-floating");
     const list = document.createElement("div");
-    list.className = floating ? "master-suggest master-suggest-floating" : "master-suggest";
+    list.className = floating
+      ? "master-suggest master-suggest-floating"
+      : "master-suggest";
     list.hidden = true;
     list._ownerInput = input;
     (floating ? document.body : field).appendChild(list);
@@ -903,7 +1073,10 @@
       const rect = input.getBoundingClientRect();
       const gap = 4;
       const viewportGap = 8;
-      const preferredHeight = Math.min(220, Math.max(96, window.innerHeight * 0.32));
+      const preferredHeight = Math.min(
+        220,
+        Math.max(96, window.innerHeight * 0.32),
+      );
       const spaceBelow = window.innerHeight - rect.bottom - viewportGap;
       const spaceAbove = rect.top - viewportGap;
       const openUp = spaceBelow < 120 && spaceAbove > spaceBelow;
@@ -923,23 +1096,58 @@
     }
 
     function renderList() {
-      const query = String(input.value || "").trim().toLowerCase();
-      const values = masterValues(input.dataset.master)
-        .filter(value => !query || value.toLowerCase().includes(query))
+      const query = String(input.value || "")
+        .trim()
+        .toLowerCase();
+
+      let sourceValues = masterValues(input.dataset.master);
+      // Khusus filter Laporan KPI, suggestion hanya menampilkan karyawan
+      // yang benar-benar memiliki pengerjaan pada line dan bulan KPI terpilih.
+      if (input.id === "lap-kpi-operator") {
+        const period = kpiPressMonthPeriod(
+          el("lap-kpi-month")?.value || todayStr().slice(0, 7),
+        );
+        if (period) {
+          sourceValues = kpiOperatorsForPeriod(
+            period,
+            el("lap-kpi-type")?.value || "filling",
+          );
+        }
+      }
+
+      const values = sourceValues
+        .filter((value) => !query || value.toLowerCase().includes(query))
         .slice(0, 50);
 
       if (!values.length) {
-        list.innerHTML = '<div class="master-suggest-empty">Tidak ada data master yang cocok.</div>';
+        list.innerHTML =
+          '<div class="master-suggest-empty">Tidak ada data master yang cocok.</div>';
       } else {
-        list.innerHTML = values.map(value => {
-          const label = (input.id === "dashboardPressKpiOperator" || input.id === "lap-operator")
-            ? highlightSearchMatch(value, query)
-            : esc(value);
-          return `<button type="button" data-value="${esc(value)}">${label}</button>`;
-        }).join("");
+        list.innerHTML = values
+          .map((value) => {
+            const label = [
+              "dashboardPressKpiOperator",
+              "lap-operator",
+              "lap-kpi-operator",
+            ].includes(input.id)
+              ? highlightSearchMatch(value, query)
+              : esc(value);
+            return `<button type="button" data-value="${esc(value)}">${label}</button>`;
+          })
+          .join("");
       }
       list.hidden = false;
       positionFloatingList();
+    }
+
+    function selectMasterValue(button) {
+      if (!button) return;
+      input.value = button.dataset.value;
+      input.setCustomValidity("");
+      input.classList.remove("is-invalid");
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      input.focus();
+      list.hidden = true;
     }
 
     input.addEventListener("focus", renderList);
@@ -950,10 +1158,16 @@
       }
       renderList();
     });
-    input.addEventListener("keydown", event => {
+    input.addEventListener("keydown", (event) => {
       if (event.key === "Escape") {
         list.hidden = true;
         input.blur();
+      } else if (event.key === "Enter" && !list.hidden) {
+        const first = list.querySelector("button");
+        if (first) {
+          event.preventDefault();
+          selectMasterValue(first);
+        }
       } else if (event.key === "ArrowDown" && !list.hidden) {
         event.preventDefault();
         const first = list.querySelector("button");
@@ -962,12 +1176,17 @@
     });
     input.addEventListener("blur", () => {
       setTimeout(() => {
+        if (
+          document.activeElement === input ||
+          list.contains(document.activeElement)
+        )
+          return;
         list.hidden = true;
         validateMasterInput(input);
       }, 120);
     });
 
-    list.addEventListener("keydown", event => {
+    list.addEventListener("keydown", (event) => {
       const buttons = qsa("button", list);
       const index = buttons.indexOf(document.activeElement);
       if (event.key === "ArrowDown") {
@@ -977,22 +1196,24 @@
         event.preventDefault();
         if (index <= 0) input.focus();
         else buttons[index - 1]?.focus();
+      } else if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        selectMasterValue(buttons[index]);
       } else if (event.key === "Escape") {
         list.hidden = true;
         input.focus();
       }
     });
 
-    list.addEventListener("mousedown", event => {
+    list.addEventListener("mousedown", (event) => {
       const btn = event.target.closest("button[data-value]");
       if (!btn) return;
       event.preventDefault();
-      input.value = btn.dataset.value;
-      input.setCustomValidity("");
-      input.classList.remove("is-invalid");
-      list.hidden = true;
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-      input.focus();
+      selectMasterValue(btn);
+    });
+
+    list.addEventListener("click", (event) => {
+      selectMasterValue(event.target.closest("button[data-value]"));
     });
 
     if (floating) {
@@ -1016,13 +1237,14 @@
     // APD memakai autocomplete/search yang sama dengan field master lainnya.
     // Suggestion dibaca langsung dari state.master.operator.
 
-    // Filter operator KPI Press memakai input search master tanpa mengubah filter lain.
+    // Filter operator Laporan KPI memakai input search master tanpa mengubah filter lain.
     if (el("dashboardPressKpiOperator")) {
-      el("dashboardPressKpiOperator").value = state.dashboard.pressKpiOperator || "";
+      el("dashboardPressKpiOperator").value =
+        state.dashboard.pressKpiOperator || "";
     }
 
     // Setelah master diperbarui, validasi ulang input form yang sudah terisi.
-    qsa(".master-search-input:not(.filter-master-search)").forEach(input => {
+    qsa(".master-search-input:not(.filter-master-search)").forEach((input) => {
       if (input.value) validateMasterInput(input);
     });
   }
@@ -1031,22 +1253,39 @@
     const user = state.currentUser;
     if (!user) return;
     const avatar = el("userAvatar");
-    if (avatar) avatar.textContent = (user.name || user.username || "U").trim().charAt(0).toUpperCase();
+    if (avatar)
+      avatar.textContent = (user.name || user.username || "U")
+        .trim()
+        .charAt(0)
+        .toUpperCase();
     if (el("userName")) el("userName").textContent = user.name || user.username;
-    if (el("userRole")) el("userRole").textContent = user.role === "superuser" ? "Super User" : "User Biasa";
-    if (el("masterTabBtn")) el("masterTabBtn").hidden = !can("accessMaster", user);
+    if (el("userRole"))
+      el("userRole").textContent =
+        user.role === "superuser" ? "Super User" : "User Biasa";
+    if (el("masterTabBtn"))
+      el("masterTabBtn").hidden = !can("accessMaster", user);
     if (el("deviceDateDisplay")) {
-      el("deviceDateDisplay").textContent = new Date().toLocaleDateString("id-ID", {
-        weekday: "long", day: "2-digit", month: "long", year: "numeric"
-      });
+      el("deviceDateDisplay").textContent = new Date().toLocaleDateString(
+        "id-ID",
+        {
+          weekday: "long",
+          day: "2-digit",
+          month: "long",
+          year: "numeric",
+        },
+      );
     }
   }
 
   function matchesPreviewSearch(entry, query) {
-    const keyword = String(query || "").trim().toLowerCase();
+    const keyword = String(query || "")
+      .trim()
+      .toLowerCase();
     if (!keyword) return true;
-    return [entry.operator, entry.produk].some(value =>
-      String(value || "").toLowerCase().includes(keyword)
+    return [entry.operator, entry.produk].some((value) =>
+      String(value || "")
+        .toLowerCase()
+        .includes(keyword),
     );
   }
 
@@ -1059,23 +1298,32 @@
     // state.entries sehingga fitur Laporan, Dashboard, dan balance Press tetap
     // menggunakan histori sesuai logic yang sudah ada.
     return state.entries
-      .filter(e => e.tab === line && e.tanggal === today)
-      .filter(e => matchesPreviewSearch(e, filter.query))
-      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+      .filter((e) => e.tab === line && e.tanggal === today)
+      .filter((e) => matchesPreviewSearch(e, filter.query))
+      .sort((a, b) =>
+        String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+      );
   }
 
   function filteredPreviewEntries(line) {
     const filter = state.search[line] || { query: "" };
-    const rows = state.preview && state.preview[line] ? state.preview[line] : [];
+    const rows =
+      state.preview && state.preview[line] ? state.preview[line] : [];
     return rows
-      .filter(e => matchesPreviewSearch(e, filter.query))
-      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+      .filter((e) => matchesPreviewSearch(e, filter.query))
+      .sort((a, b) =>
+        String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
+      );
   }
 
   // Press hanya boleh disimpan setelah seluruh Preview Filling sudah
   // benar-benar disimpan ke Spreadsheet. Preview Press tetap boleh dibuat/edit.
   function hasUnsavedFillingPreview() {
-    return can("accessFilling") && Array.isArray(state.preview.filling) && state.preview.filling.length > 0;
+    return (
+      can("accessFilling") &&
+      Array.isArray(state.preview.filling) &&
+      state.preview.filling.length > 0
+    );
   }
 
   function updateSaveButtonState(line) {
@@ -1092,7 +1340,8 @@
     saveBtn.textContent = rows.length ? `Simpan (${rows.length})` : "Simpan";
 
     if (waitingForFilling) {
-      saveBtn.title = "Simpan data Filling terlebih dahulu sebelum menyimpan Press.";
+      saveBtn.title =
+        "Simpan data Filling terlebih dahulu sebelum menyimpan Press.";
       saveBtn.dataset.waitingFilling = "1";
     } else {
       saveBtn.removeAttribute("title");
@@ -1102,19 +1351,24 @@
 
   function upsertEntry(entry) {
     if (!entry || !entry.id) return;
-    const index = state.entries.findIndex(x => x.id === entry.id);
+    const index = state.entries.findIndex((x) => x.id === entry.id);
     if (index >= 0) state.entries[index] = entry;
     else state.entries.push(entry);
   }
 
-
   function balanceKey(produk, botol) {
-    return `${String(produk || "").trim().toLowerCase()}||${String(botol || "").trim().toLowerCase()}`;
+    return `${String(produk || "")
+      .trim()
+      .toLowerCase()}||${String(botol || "")
+      .trim()
+      .toLowerCase()}`;
   }
 
   function upsertAdjustment(adjustment) {
     if (!adjustment || !adjustment.id) return;
-    const index = state.adjustments.findIndex(item => item.id === adjustment.id);
+    const index = state.adjustments.findIndex(
+      (item) => item.id === adjustment.id,
+    );
     if (index >= 0) state.adjustments[index] = adjustment;
     else state.adjustments.push(adjustment);
   }
@@ -1159,7 +1413,7 @@
 
   function askClosePressReason(row) {
     ensureClosePressModalStyle();
-    return new Promise(resolve => {
+    return new Promise((resolve) => {
       const overlay = document.createElement("div");
       overlay.className = "press-close-overlay";
       overlay.innerHTML = `
@@ -1184,10 +1438,19 @@
       document.body.appendChild(overlay);
       const textarea = qs(".press-close-reason", overlay);
       const error = qs(".press-close-error", overlay);
-      const finish = value => { overlay.remove(); resolve(value); };
-      qs(".press-close-cancel", overlay).addEventListener("click", () => finish(""));
-      overlay.addEventListener("click", event => { if (event.target === overlay) finish(""); });
-      overlay.addEventListener("keydown", event => { if (event.key === "Escape") finish(""); });
+      const finish = (value) => {
+        overlay.remove();
+        resolve(value);
+      };
+      qs(".press-close-cancel", overlay).addEventListener("click", () =>
+        finish(""),
+      );
+      overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) finish("");
+      });
+      overlay.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") finish("");
+      });
       qs(".press-close-confirm", overlay).addEventListener("click", () => {
         const reason = String(textarea.value || "").trim();
         if (reason.length < 5) {
@@ -1207,8 +1470,10 @@
 
     // ID pada Sisa Press mengikuti ID entry Filling asal, jadi nilai Botol/Kardus
     // bisa diambil dari data Pengerjaan tanpa menambah kolom/sheet baru.
-    const sourceEntry = (state.entries || []).find(entry =>
-      String(entry.id || "") === String((item && item.id) || "") && entry.tab === "filling"
+    const sourceEntry = (state.entries || []).find(
+      (entry) =>
+        String(entry.id || "") === String((item && item.id) || "") &&
+        entry.tab === "filling",
     );
     return Number(sourceEntry && sourceEntry.qtyBotolPerKardus) || 0;
   }
@@ -1218,31 +1483,41 @@
     const lots = [];
 
     // 1) Sisa yang sudah resmi tersimpan di Sheet "Sisa Press".
-    (state.remainders || []).forEach(item => {
+    (state.remainders || []).forEach((item) => {
       const remaining = Number(item.sisaQty ?? item.remaining) || 0;
       if (remaining <= 0) return;
-      const hasGroupStats = item.groupQtyFilling !== undefined && item.groupQtyPressTerpakai !== undefined;
+      const hasGroupStats =
+        item.groupQtyFilling !== undefined &&
+        item.groupQtyPressTerpakai !== undefined;
       lots.push({
         id: String(item.id || ""),
         tanggalAsal: String(item.tanggalAsal || item.tanggal || ""),
         produk: String(item.produk || "").trim(),
         botol: String(item.botol || "").trim(),
         qtyBotolPerKardus: getQtyBotolPerKardusFromRemainder(item),
-        qtyBotolPerKardusValues: Array.isArray(item.groupQtyBotolPerKardusValues)
-          ? item.groupQtyBotolPerKardusValues.map(Number).filter(value => value > 0)
+        qtyBotolPerKardusValues: Array.isArray(
+          item.groupQtyBotolPerKardusValues,
+        )
+          ? item.groupQtyBotolPerKardusValues
+              .map(Number)
+              .filter((value) => value > 0)
           : [],
         qtyFilling: Number(item.qtyFilling) || remaining,
         qtyPressTerpakai: Number(item.qtyPressTerpakai) || 0,
-        groupQtyFilling: hasGroupStats ? (Number(item.groupQtyFilling) || 0) : null,
-        groupQtyPressTerpakai: hasGroupStats ? (Number(item.groupQtyPressTerpakai) || 0) : null,
+        groupQtyFilling: hasGroupStats
+          ? Number(item.groupQtyFilling) || 0
+          : null,
+        groupQtyPressTerpakai: hasGroupStats
+          ? Number(item.groupQtyPressTerpakai) || 0
+          : null,
         previewPressTerpakai: 0,
         remaining,
-        source: "spreadsheet"
+        source: "spreadsheet",
       });
     });
 
     // 2) Filling yang BARU MASUK PREVIEW ikut dibaca Press walaupun belum disimpan.
-    (state.preview.filling || []).forEach(item => {
+    (state.preview.filling || []).forEach((item) => {
       const qty = Number(item.totalQty) || 0;
       if (qty <= 0) return;
       lots.push({
@@ -1257,41 +1532,50 @@
         groupQtyPressTerpakai: null,
         previewPressTerpakai: 0,
         remaining: qty,
-        source: "preview"
+        source: "preview",
       });
     });
 
     // FIFO per Nama Produk: preview Press mengurangi lot tertua terlebih dahulu.
     const previewPress = (state.preview.press || [])
-      .filter(item => item.id !== excludePreviewId)
+      .filter((item) => item.id !== excludePreviewId)
       .slice()
-      .sort((a, b) =>
-        String(a.tanggal || "").localeCompare(String(b.tanggal || "")) ||
-        String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
+      .sort(
+        (a, b) =>
+          String(a.tanggal || "").localeCompare(String(b.tanggal || "")) ||
+          String(a.createdAt || "").localeCompare(String(b.createdAt || "")),
       );
 
-    previewPress.forEach(press => {
+    previewPress.forEach((press) => {
       let needed = Number(press.totalQty) || 0;
       if (needed <= 0) return;
-      const key = String(press.produk || "").trim().toLowerCase();
+      const key = String(press.produk || "")
+        .trim()
+        .toLowerCase();
       const pressDate = String(press.tanggal || todayStr());
 
       lots
-        .filter(lot =>
-          lot.remaining > 0 &&
-          String(lot.produk || "").trim().toLowerCase() === key &&
-          (!lot.tanggalAsal || lot.tanggalAsal <= pressDate)
+        .filter(
+          (lot) =>
+            lot.remaining > 0 &&
+            String(lot.produk || "")
+              .trim()
+              .toLowerCase() === key &&
+            (!lot.tanggalAsal || lot.tanggalAsal <= pressDate),
         )
-        .sort((a, b) =>
-          String(a.tanggalAsal || "").localeCompare(String(b.tanggalAsal || "")) ||
-          String(a.id).localeCompare(String(b.id))
+        .sort(
+          (a, b) =>
+            String(a.tanggalAsal || "").localeCompare(
+              String(b.tanggalAsal || ""),
+            ) || String(a.id).localeCompare(String(b.id)),
         )
-        .forEach(lot => {
+        .forEach((lot) => {
           if (needed <= 0) return;
           const used = Math.min(needed, lot.remaining);
           lot.remaining -= used;
           lot.qtyPressTerpakai += used;
-          lot.previewPressTerpakai = (Number(lot.previewPressTerpakai) || 0) + used;
+          lot.previewPressTerpakai =
+            (Number(lot.previewPressTerpakai) || 0) + used;
           needed -= used;
         });
     });
@@ -1303,7 +1587,9 @@
     // Backend mengirim groupQtyFilling/groupQtyPressTerpakai agar histori lot
     // yang sudah habis Press tetap masuk ke kolom Qty Filling dan Sudah Press.
     const grouped = new Map();
-    lots.forEach(lot => {
+    lots.forEach((lot) => {
+      // Filter per lot agar Filling masa depan tidak ikut saldo tanggal Press.
+      if (options.pressDate && lot.tanggalAsal > options.pressDate) return;
       const key = balanceKey(lot.produk, lot.botol);
       if (!grouped.has(key)) {
         grouped.set(key, {
@@ -1316,7 +1602,7 @@
           remaining: 0,
           savedGroupStatsApplied: false,
           qtyBotolPerKardusValues: new Set(),
-          sources: new Set()
+          sources: new Set(),
         });
       }
       const group = grouped.get(key);
@@ -1324,11 +1610,19 @@
 
       // Tanggal Asal adalah lot tertua yang masih memiliki sisa setelah seluruh
       // Preview Press dialokasikan.
-      if (lot.remaining > 0 && tanggal && (!group.tanggalAsal || tanggal < group.tanggalAsal)) {
+      if (
+        lot.remaining > 0 &&
+        tanggal &&
+        (!group.tanggalAsal || tanggal < group.tanggalAsal)
+      ) {
         group.tanggalAsal = tanggal;
       }
 
-      if (lot.source === "spreadsheet" && lot.groupQtyFilling !== null && lot.groupQtyPressTerpakai !== null) {
+      if (
+        lot.source === "spreadsheet" &&
+        lot.groupQtyFilling !== null &&
+        lot.groupQtyPressTerpakai !== null
+      ) {
         // Nilai grup dari backend identik pada setiap lot aktif kombinasi yang sama,
         // sehingga cukup dimasukkan satu kali agar tidak terduplikasi.
         if (!group.savedGroupStatsApplied) {
@@ -1353,7 +1647,7 @@
       const backendPerKardus = Array.isArray(lot.qtyBotolPerKardusValues)
         ? lot.qtyBotolPerKardusValues
         : [];
-      backendPerKardus.forEach(value => {
+      backendPerKardus.forEach((value) => {
         const qty = Number(value) || 0;
         if (qty > 0) group.qtyBotolPerKardusValues.add(qty);
       });
@@ -1363,28 +1657,42 @@
     });
 
     return Array.from(grouped.values())
-      .filter(group => group.remaining > 0)
-      .map(group => ({
+      .filter((group) => group.remaining > 0)
+      .map((group) => ({
         ...group,
-        qtyBotolPerKardus: Array.from(group.qtyBotolPerKardusValues).sort((a, b) => a - b),
+        qtyBotolPerKardus: Array.from(group.qtyBotolPerKardusValues).sort(
+          (a, b) => a - b,
+        ),
         source: group.sources.size > 1 ? "mixed" : Array.from(group.sources)[0],
         hasPreview: group.sources.has("preview"),
-        hasSpreadsheet: group.sources.has("spreadsheet")
+        hasSpreadsheet: group.sources.has("spreadsheet"),
       }))
-      .sort((a, b) =>
-        String(a.tanggalAsal || "").localeCompare(String(b.tanggalAsal || "")) ||
-        a.produk.localeCompare(b.produk, "id") ||
-        a.botol.localeCompare(b.botol, "id")
+      .sort(
+        (a, b) =>
+          String(a.tanggalAsal || "").localeCompare(
+            String(b.tanggalAsal || ""),
+          ) ||
+          a.produk.localeCompare(b.produk, "id") ||
+          a.botol.localeCompare(b.botol, "id"),
       );
   }
 
-  function getPressAvailable(produk, excludePreviewId = "", pressDate = todayStr()) {
-    const key = String(produk || "").trim().toLowerCase();
+  function getPressAvailable(
+    produk,
+    excludePreviewId = "",
+    pressDate = todayStr(),
+  ) {
+    const key = String(produk || "")
+      .trim()
+      .toLowerCase();
     if (!key) return 0;
-    return getPressBalanceRows({ excludePreviewId })
-      .filter(row =>
-        String(row.produk || "").trim().toLowerCase() === key &&
-        (!row.tanggalAsal || row.tanggalAsal <= pressDate)
+    return getPressBalanceRows({ excludePreviewId, pressDate })
+      .filter(
+        (row) =>
+          String(row.produk || "")
+            .trim()
+            .toLowerCase() === key &&
+          (!row.tanggalAsal || row.tanggalAsal <= pressDate),
       )
       .reduce((sum, row) => sum + (Number(row.remaining) || 0), 0);
   }
@@ -1399,42 +1707,60 @@
     if (!tbody) return;
 
     const allRows = getPressBalanceRows();
-    const query = String(state.pressBalance.search || "").trim().toLowerCase();
+    const query = String(state.pressBalance.search || "")
+      .trim()
+      .toLowerCase();
     const rows = query
-      ? allRows.filter(row => String(row.produk || "").toLowerCase().includes(query))
+      ? allRows.filter((row) =>
+          String(row.produk || "")
+            .toLowerCase()
+            .includes(query),
+        )
       : allRows;
 
-    const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PRESS_BALANCE_PAGE_SIZE));
-    state.pressBalance.page = Math.min(Math.max(1, state.pressBalance.page || 1), totalPages);
+    const totalPages = Math.max(
+      1,
+      Math.ceil(rows.length / CONFIG.PRESS_BALANCE_PAGE_SIZE),
+    );
+    state.pressBalance.page = Math.min(
+      Math.max(1, state.pressBalance.page || 1),
+      totalPages,
+    );
     const page = state.pressBalance.page;
     const start = (page - 1) * CONFIG.PRESS_BALANCE_PAGE_SIZE;
-    const visibleRows = rows.slice(start, start + CONFIG.PRESS_BALANCE_PAGE_SIZE);
+    const visibleRows = rows.slice(
+      start,
+      start + CONFIG.PRESS_BALANCE_PAGE_SIZE,
+    );
 
     if (searchInput && searchInput.value !== state.pressBalance.search) {
       searchInput.value = state.pressBalance.search || "";
     }
 
-    tbody.innerHTML = visibleRows.length ? visibleRows.map(row => {
-      const produkAktif = isMasterValue("produk", row.produk);
-      const botolAktif = isMasterValue("botol", row.botol);
-      const sourceLabel = row.source === "preview"
-        ? '<span class="sync-badge pending">Preview Filling</span>'
-        : row.source === "mixed"
-          ? '<span class="sync-badge pending">Spreadsheet + Preview</span>'
-          : '<span class="sync-badge saved">Spreadsheet</span>';
-      const deleteAllowed = can("deleteUnpressed");
-      const deleteDisabled = row.hasPreview || !row.hasSpreadsheet;
-      // !deleteAllowed || row.hasPreview || !row.hasSpreadsheet;
-      const deleteTitle = row.hasPreview
-      // !deleteAllowed
-      // ? 'Anda tidak memiliki akses menghapus pengerjaan yang belum di-Press.'
-        ? 'Simpan Preview Filling terlebih dahulu sebelum menghapus'
-        : (!row.hasSpreadsheet
-          ? 'Data ini belum disimpan.'
-          : 'Hapus sisa dengan alasan');
-          // : (!row.hasSpreadsheet ? 'Data ini belum tersimpan di Spreadsheet.' : 'Hapus sisa dengan alasan.');
+    tbody.innerHTML = visibleRows.length
+      ? visibleRows
+          .map((row) => {
+            const produkAktif = isMasterValue("produk", row.produk);
+            const botolAktif = isMasterValue("botol", row.botol);
+            const sourceLabel =
+              row.source === "preview"
+                ? '<span class="sync-badge pending">Preview Filling</span>'
+                : row.source === "mixed"
+                  ? '<span class="sync-badge pending">Spreadsheet + Preview</span>'
+                  : '<span class="sync-badge saved">Spreadsheet</span>';
+            const deleteAllowed = can("deleteUnpressed");
+            const deleteDisabled = row.hasPreview || !row.hasSpreadsheet;
+            // !deleteAllowed || row.hasPreview || !row.hasSpreadsheet;
+            const deleteTitle = row.hasPreview
+              ? // !deleteAllowed
+                // ? 'Anda tidak memiliki akses menghapus pengerjaan yang belum di-Press.'
+                "Simpan Preview Filling terlebih dahulu sebelum menghapus"
+              : !row.hasSpreadsheet
+                ? "Data ini belum disimpan."
+                : "Hapus sisa dengan alasan";
+            // : (!row.hasSpreadsheet ? 'Data ini belum tersimpan di Spreadsheet.' : 'Hapus sisa dengan alasan.');
 
-      return `
+            return `
       <tr>
         <td><strong>${esc(row.tanggalAsal || "—")}</strong></td>
         <td>
@@ -1442,7 +1768,7 @@
           ${!produkAktif ? '<div class="press-master-history">Produk historis</div>' : ""}
         </td>
         <td>${esc(row.botol || "—")}${!botolAktif ? '<div class="press-master-history">Botol historis</div>' : ""}</td>
-        <td>${row.qtyBotolPerKardus.length ? row.qtyBotolPerKardus.map(value => Number(value).toLocaleString("id-ID")).join(" / ") : "—"}</td>
+        <td>${row.qtyBotolPerKardus.length ? row.qtyBotolPerKardus.map((value) => Number(value).toLocaleString("id-ID")).join(" / ") : "—"}</td>
         <td>${Number(row.qtyFilling).toLocaleString("id-ID")}</td>
         <td>${Number(row.qtyPressTerpakai).toLocaleString("id-ID")}</td>
         <td><strong>${Number(row.remaining).toLocaleString("id-ID")}</strong></td>
@@ -1452,34 +1778,46 @@
             <button type="button" class="btn btn-ghost press-balance-use"
               data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}"
               ${!produkAktif ? 'disabled title="Produk sudah tidak ada di Master."' : ""}>Gunakan</button>
-            ${deleteAllowed ? `
+            ${
+              deleteAllowed
+                ? `
             <button type="button" class="btn btn-danger press-balance-delete"
             data-produk="${esc(row.produk)}"
             data-botol="${esc(row.botol)}" ${deleteDisabled ? "disabled" : ""}
             title="${esc(deleteTitle)}"> Hapus </button>
-              `:""
+              `
+                : ""
             }
           </div>
         </td>
       </tr>`;
-    }).join("")
+          })
+          .join("")
       : `<tr><td colspan="9" class="empty-row">${query ? "Nama produk tidak ditemukan." : "Tidak ada sisa Filling yang menunggu Press."}</td></tr>`;
 
-    const remainingTotal = rows.reduce((sum, row) => sum + (Number(row.remaining) || 0), 0);
+    const remainingTotal = rows.reduce(
+      (sum, row) => sum + (Number(row.remaining) || 0),
+      0,
+    );
     const from = rows.length ? start + 1 : 0;
     const to = Math.min(start + CONFIG.PRESS_BALANCE_PAGE_SIZE, rows.length);
     if (summary) {
-      const previewCount = rows.filter(row => row.hasPreview).length;
+      const previewCount = rows.filter((row) => row.hasPreview).length;
       summary.textContent =
         `${from}–${to} dari ${rows.length} kombinasi Produk + Botol · Sisa ${remainingTotal.toLocaleString("id-ID")} botol` +
         (query ? ` · Pencarian: ${state.pressBalance.search}` : "") +
-        (previewCount ? ` · ${previewCount} kombinasi memuat Preview Filling` : "");
+        (previewCount
+          ? ` · ${previewCount} kombinasi memuat Preview Filling`
+          : "");
     }
 
-    renderPagination(pagination, page, totalPages, nextPage => {
+    renderPagination(pagination, page, totalPages, (nextPage) => {
       state.pressBalance.page = nextPage;
       renderPressBalance();
-      qs(".press-balance-panel", section)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      qs(".press-balance-panel", section)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
     });
 
     const form = qs(".form-panel", section);
@@ -1490,39 +1828,92 @@
   function updatePressAvailabilityHint(form) {
     if (!form || form.dataset.line !== "press") return;
     const produk = qs(".f-produk", form)?.value || "";
-    const editingId = qs(".f-editing-id", form)?.value || "";
+    const editingNode = qs(".f-editing-id", form);
+    const editingId = editingNode?.value || "";
+    const editingSource = editingNode?.dataset.source || "";
     const hint = qs(".press-available-hint", form);
+    const submitBtn = qs(".f-submit-btn", form);
+    const pressDate = qs(".f-tanggal", form)?.value || todayStr();
+    const savedEdit = editingId && editingSource === "saved";
+    const available = getPressAvailable(produk, editingId, pressDate);
+    const blocked = !savedEdit &&
+      (!isMasterValue("produk", produk) || available <= 0);
+    if (submitBtn) {
+      submitBtn.disabled = blocked;
+      submitBtn.title = blocked
+        ? "Press tidak dapat ditambahkan: pilih produk yang memiliki sisa Filling pada Pengerjaan belum di Press."
+        : "";
+    }
     if (!hint) return;
 
     if (!isMasterValue("produk", produk)) {
       hint.dataset.state = "empty";
-      hint.textContent = "Pilih Nama Produk dari data master untuk melihat sisa Qty Filling.";
+      hint.textContent =
+        "Pilih Nama Produk dari data master untuk melihat sisa Qty Filling.";
       return;
     }
 
-    const available = getPressAvailable(produk, editingId, todayStr());
-    const lots = getPressBalanceRows({ excludePreviewId: editingId })
-      .filter(row =>
-        String(row.produk || "").trim().toLowerCase() === String(produk).trim().toLowerCase() &&
-        (!row.tanggalAsal || row.tanggalAsal <= todayStr())
+    // Saat mengedit Press yang SUDAH TERSIMPAN, nilai entry lama sudah ikut
+    // mengurangi Sheet Sisa Press. Karena itu saldo dari state.remainders tidak
+    // boleh dipakai untuk menolak update: backend akan membuat proyeksi yang benar
+    // dengan mengeluarkan entry lama terlebih dahulu, lalu memasukkan hasil edit.
+    if (editingId && editingSource === "saved") {
+      const existing = (state.entries || []).find(
+        (item) =>
+          String(item.id || "") === String(editingId) && item.tab === "press",
       );
+      const oldQty = Number(existing?.totalQty) || 0;
+      hint.dataset.state = "ok";
+      hint.textContent = existing
+        ? `Mode edit data tersimpan · Qty Press saat ini ${oldQty.toLocaleString("id-ID")} botol. Saldo Filling akan dihitung ulang saat Simpan Perubahan dengan mengeluarkan data lama dari perhitungan.`
+        : "Mode edit data tersimpan · Saldo Filling akan dihitung ulang saat Simpan Perubahan.";
+      return;
+    }
+
+    const lots = getPressBalanceRows({ excludePreviewId: editingId, pressDate }).filter(
+      (row) =>
+        String(row.produk || "")
+          .trim()
+          .toLowerCase() === String(produk).trim().toLowerCase() &&
+          (!row.tanggalAsal || row.tanggalAsal <= pressDate),
+    );
     const oldest = lots.length ? lots[0].tanggalAsal : "";
 
     hint.dataset.state = available > 0 ? "ok" : "empty";
-    hint.textContent = available > 0
-      ? `Sisa Qty Filling untuk ${produk}: ${available.toLocaleString("id-ID")} botol` +
-        (oldest && oldest < todayStr() ? ` · termasuk tinggalan sejak ${oldest}` : "") + "."
-      : `Produk ${produk} sudah balance atau belum memiliki Qty Filling.`;
+    hint.textContent =
+      available > 0
+        ? `Sisa Qty Filling untuk ${produk}: ${available.toLocaleString("id-ID")} botol` +
+          (oldest && oldest < todayStr()
+            ? ` · termasuk tinggalan sejak ${oldest}`
+            : "") +
+          "."
+        : `Press tidak dapat ditambahkan. Tidak ada sisa Filling untuk produk ${produk} pada tanggal ${pressDate} di Pengerjaan belum di Press. Buat data Filling terlebih dahulu jika belum pernah dibuat.`;
   }
 
-  function validatePressPayload(payload, editingId = "") {
+  function validatePressPayload(payload, editingId = "", editingSource = "") {
     if (payload.line !== "press") return "";
-    const requested = (Number(payload.qtyKardus) || 0) * (Number(payload.qtyBotolPerKardus) || 0);
-    const available = getPressAvailable(payload.produk, editingId, payload.tanggal || todayStr());
+    const requested =
+      (Number(payload.qtyKardus) || 0) *
+      (Number(payload.qtyBotolPerKardus) || 0);
+    if (requested <= 0) return "Total Qty Press harus lebih dari 0 botol.";
+
+    // Update saved Press harus divalidasi terhadap kondisi PROYEKSI, bukan saldo
+    // Sisa Press saat ini karena entry yang sedang diedit masih termasuk konsumsi.
+    // Backend entry.update/assertProjectedBalance_ sudah melakukan simulasi tersebut.
+    if (editingId && editingSource === "saved") return "";
+
+    // Create / edit Preview tetap memakai validasi cepat di browser seperti semula.
+    const available = getPressAvailable(
+      payload.produk,
+      editingId,
+      payload.tanggal || todayStr(),
+    );
+    if (available <= 0) {
+      return `Press tidak dapat ditambahkan karena tidak ada sisa Filling untuk produk ${payload.produk} pada tanggal pengerjaan. Buat data Filling terlebih dahulu jika belum pernah dibuat.`;
+    }
     if (requested > available) {
       return `Qty Press ${requested.toLocaleString("id-ID")} botol melebihi sisa Filling ${Math.max(0, available).toLocaleString("id-ID")} botol untuk produk ${payload.produk}. Balance Press dihitung berdasarkan Nama Produk.`;
     }
-    if (requested <= 0) return "Total Qty Press harus lebih dari 0 botol.";
     return "";
   }
 
@@ -1535,7 +1926,8 @@
 
     let idCell = `<span class="id-badge">${esc(entry.reportId)}</span>`;
     if (isPending) {
-      idCell = '<span class="sync-badge pending"><span class="sync-spinner"></span>Menyimpan…</span>';
+      idCell =
+        '<span class="sync-badge pending"><span class="sync-spinner"></span>Menyimpan…</span>';
     } else if (isError) {
       idCell = '<span class="sync-badge error">Gagal disimpan</span>';
     }
@@ -1552,6 +1944,8 @@
         <td><strong>${Number(entry.totalQty) || 0}</strong></td>
         <td>${esc(entry.botolPecahJenis || "—")}</td>
         <td class="${Number(entry.qtyBotolPecah) > 0 ? "pecah-tag" : ""}">${Number(entry.qtyBotolPecah) || 0}</td>
+        ${entry.tab === "filling" ? `<td>${Number(entry.qtyKardusBasah) || 0}</td>` : ""}
+        <td class="update-count-col">${Math.max(0, Math.floor(Number(entry.updateCount) || 0))}</td>
         <td class="row-actions">
           ${isPending ? '<span class="sync-note">Diproses</span>' : ""}
           ${isError ? `<button type="button" class="btn btn-secondary btn-retry" data-id="${esc(entry.id)}">Coba Lagi</button>` : ""}
@@ -1562,15 +1956,21 @@
   }
 
   function combinedWorkEntries(line) {
-    const saved = filteredEntries(line).map(entry => ({ ...entry, _displaySource: "saved" }));
-    const preview = filteredPreviewEntries(line).map(entry => ({ ...entry, _displaySource: "preview" }));
+    const saved = filteredEntries(line).map((entry) => ({
+      ...entry,
+      _displaySource: "saved",
+    }));
+    const preview = filteredPreviewEntries(line).map((entry) => ({
+      ...entry,
+      _displaySource: "preview",
+    }));
 
     // Preview dan data tersimpan hari ini ditampilkan pada satu tabel.
     // Pembeda visual sengaja hanya melalui kolom ID:
     // - preview  => PREVIEW
     // - tersimpan => reportId dari Spreadsheet
     return [...saved, ...preview].sort((a, b) =>
-      String(b.createdAt || "").localeCompare(String(a.createdAt || ""))
+      String(b.createdAt || "").localeCompare(String(a.createdAt || "")),
     );
   }
 
@@ -1587,6 +1987,8 @@
         <td><strong>${Number(entry.totalQty) || 0}</strong></td>
         <td>${esc(entry.botolPecahJenis || "—")}</td>
         <td class="${Number(entry.qtyBotolPecah) > 0 ? "pecah-tag" : ""}">${Number(entry.qtyBotolPecah) || 0}</td>
+        ${entry.tab === "filling" ? `<td>${Number(entry.qtyKardusBasah) || 0}</td>` : ""}
+        <td class="update-count-col">${Math.max(0, Math.floor(Number(entry.updateCount) || 0))}</td>
         <td class="row-actions">
           <button type="button" class="btn btn-ghost btn-preview-edit" data-id="${esc(entry.id)}">Edit</button>
           <button type="button" class="btn btn-danger btn-preview-delete" data-id="${esc(entry.id)}">Hapus</button>
@@ -1619,18 +2021,35 @@
     const visibleRows = rows.slice(start, start + CONFIG.PAGE_SIZE);
 
     tbody.innerHTML = visibleRows.length
-      ? visibleRows.map(entry => entry._displaySource === "preview"
-          ? renderPreviewRow(entry)
-          : renderEntryRow(entry)
-        ).join("")
-      : '<tr><td colspan="11" class="empty-row">Belum ada pengerjaan hari ini.</td></tr>';
+      ? visibleRows
+          .map((entry) =>
+            entry._displaySource === "preview"
+              ? renderPreviewRow(entry)
+              : renderEntryRow(entry),
+          )
+          .join("")
+      : `<tr><td colspan="12" class="empty-row">Belum ada pengerjaan hari ini.</td></tr>`;
 
-    const totalQty = rows.reduce((sum, e) => sum + (Number(e.totalQty) || 0), 0);
-    const totalPecah = rows.reduce((sum, e) => sum + (Number(e.qtyBotolPecah) || 0), 0);
+    const totalQty = rows.reduce(
+      (sum, e) => sum + (Number(e.totalQty) || 0),
+      0,
+    );
+    const totalPecah = rows.reduce(
+      (sum, e) => sum + (Number(e.qtyBotolPecah) || 0),
+      0,
+    );
+    const totalKardusBasah = rows.reduce(
+      (sum, e) => sum + (Number(e.qtyKardusBasah) || 0),
+      0,
+    );
     const from = rows.length ? start + 1 : 0;
     const to = Math.min(start + CONFIG.PAGE_SIZE, rows.length);
     if (summary) {
-      summary.textContent = `${from}–${to} dari ${rows.length} data hari ini · Total Qty Botol: ${totalQty.toLocaleString("id-ID")} · Total Botol Pecah: ${totalPecah.toLocaleString("id-ID")}`;
+      summary.textContent =
+        `${from}–${to} dari ${rows.length} data hari ini · Total Qty Botol: ${totalQty.toLocaleString("id-ID")} · Total Botol Pecah: ${totalPecah.toLocaleString("id-ID")}` +
+        (line === "filling"
+          ? ` · Total Kardus Basah: ${totalKardusBasah.toLocaleString("id-ID")}`
+          : "");
     }
 
     if (saveBtn) {
@@ -1641,12 +2060,11 @@
       if (line === "filling") updateSaveButtonState("press");
     }
 
-    renderPagination(pagination, page, totalPages, nextPage => {
+    renderPagination(pagination, page, totalPages, (nextPage) => {
       state.pages[line] = nextPage;
       renderPreview(line);
     });
   }
-
 
   function wireLineView(line) {
     const section = el("view-" + line);
@@ -1664,6 +2082,7 @@
     const qtyBotol = qs(".f-qty-botol", form);
     const total = qs(".f-total", form);
     const qtyPecah = qs(".f-qty-pecah", form);
+    const qtyKardusBasah = qs(".f-qty-kardus-basah", form);
     const submitBtn = qs(".f-submit-btn", form);
     const cancelBtn = qs(".f-cancel-btn", form);
     const errorEl = qs(".f-error", form);
@@ -1671,7 +2090,9 @@
     tanggal.value = todayStr();
 
     function recalc() {
-      total.value = ((Number(qtyKardus.value) || 0) * (Number(qtyBotol.value) || 0)).toLocaleString("id-ID");
+      total.value = (
+        (Number(qtyKardus.value) || 0) * (Number(qtyBotol.value) || 0)
+      ).toLocaleString("id-ID");
       if (line === "press") updatePressAvailabilityHint(form);
     }
 
@@ -1687,12 +2108,16 @@
       tanggal.value = todayStr();
       total.value = "0";
       qtyPecah.value = "0";
+      if (qtyKardusBasah) {
+        qtyKardusBasah.value = "0";
+        qtyKardusBasah.setCustomValidity("");
+      }
       submitBtn.textContent = "+ Tambah List";
       submitBtn.disabled = false;
       cancelBtn.hidden = true;
       stamp.textContent = "ID otomatis";
       errorEl.hidden = true;
-      qsa(".master-search-input", form).forEach(input => {
+      qsa(".master-search-input", form).forEach((input) => {
         input.setCustomValidity("");
         input.classList.remove("is-invalid");
       });
@@ -1713,8 +2138,19 @@
     botol.addEventListener("input", () => {
       if (line === "press") updatePressAvailabilityHint(form);
     });
-    qtyKardus.addEventListener("input", recalc);
+    qtyKardus.addEventListener("input", () => {
+      recalc();
+      if (qtyKardusBasah) qtyKardusBasah.setCustomValidity("");
+    });
     qtyBotol.addEventListener("input", recalc);
+    tanggal.addEventListener("change", () => {
+      if (line === "press") updatePressAvailabilityHint(form);
+    });
+    if (qtyKardusBasah) {
+      qtyKardusBasah.addEventListener("input", () =>
+        qtyKardusBasah.setCustomValidity(""),
+      );
+    }
     cancelBtn.addEventListener("click", resetForm);
 
     // Simpan draft form setiap ada perubahan agar refresh tidak menghapus input.
@@ -1736,12 +2172,13 @@
         totalQty: payload.qtyKardus * payload.qtyBotolPerKardus,
         botolPecahJenis: payload.botolPecahJenis || "",
         qtyBotolPecah: payload.qtyBotolPecah || 0,
+        qtyKardusBasah: line === "filling" ? payload.qtyKardusBasah || 0 : 0,
         createdBy: state.currentUser ? state.currentUser.username : "",
-        createdByName: state.currentUser ? (state.currentUser.name || state.currentUser.username) : "",
         createdAt,
-        updatedAt: createdAt,
+        updatedAt: "",
+        updateCount: 0,
         _syncState: "pending",
-        _syncPayload: { ...payload, clientRequestId }
+        _syncPayload: { ...payload, clientRequestId },
       };
     }
 
@@ -1751,17 +2188,18 @@
       renderEntries(line);
 
       enqueueWrite(() => apiPost("entry.create", { data: entry._syncPayload }))
-        .then(response => {
+        .then((response) => {
           // Backend memakai clientRequestId yang sama sebagai ID, sehingga retry aman
           // dan baris sementara langsung diganti oleh data resmi Spreadsheet.
           upsertEntry(response.entry);
-          if (Array.isArray(response.remainders)) state.remainders = response.remainders;
+          if (Array.isArray(response.remainders))
+            state.remainders = response.remainders;
           renderEntries(line);
           renderPressBalance();
           toast(`Tersimpan — ${response.entry.reportId}`);
         })
-        .catch(err => {
-          const current = state.entries.find(x => x.id === entry.id);
+        .catch((err) => {
+          const current = state.entries.find((x) => x.id === entry.id);
           if (current) {
             current._syncState = "error";
             current._syncError = err.message;
@@ -1772,7 +2210,7 @@
         });
     }
 
-    form.addEventListener("submit", async event => {
+    form.addEventListener("submit", async (event) => {
       event.preventDefault();
       errorEl.hidden = true;
       if (!can(line === "press" ? "accessPress" : "accessFilling")) {
@@ -1788,17 +2226,23 @@
         botol: qs(".f-botol", form).value,
         qtyKardus: Number(qtyKardus.value),
         qtyBotolPerKardus: Number(qtyBotol.value),
-        botolPecahJenis: botolPecah && botolPecah.value !== "-" ? botolPecah.value : "",
+        botolPecahJenis:
+          botolPecah && botolPecah.value !== "-" ? botolPecah.value : "",
         // botolPecahJenis: qs(".f-botol-pecah", form).value,
-        qtyBotolPecah: Number(qtyPecah.value) || 0
+        qtyBotolPecah: Number(qtyPecah.value) || 0,
+        qtyKardusBasah:
+          line === "filling" ? Number(qtyKardusBasah?.value) || 0 : 0,
       };
 
       const masterInputs = [operator, produk, botol];
-      const masterValid = masterInputs.every(input => validateMasterInput(input));
+      const masterValid = masterInputs.every((input) =>
+        validateMasterInput(input),
+      );
       if (!masterValid) {
-        errorEl.textContent = "Operator, Produk, dan Botol harus dipilih dari data master yang tersedia.";
+        errorEl.textContent =
+          "Operator, Produk, dan Botol harus dipilih dari data master yang tersedia.";
         errorEl.hidden = false;
-        masterInputs.find(input => !input.checkValidity())?.reportValidity();
+        masterInputs.find((input) => !input.checkValidity())?.reportValidity();
         return;
       }
 
@@ -1808,16 +2252,39 @@
       payload.botol = canonicalMasterValue("botol", botol.value);
       payload.botolPecahJenis = payload.botol;
 
-      if (!Number.isFinite(payload.qtyKardus) || payload.qtyKardus < 0 ||
-          !Number.isFinite(payload.qtyBotolPerKardus) || payload.qtyBotolPerKardus < 0 ||
-          payload.qtyBotolPecah < 0) {
+      if (
+        !Number.isFinite(payload.qtyKardus) ||
+        payload.qtyKardus < 0 ||
+        !Number.isFinite(payload.qtyBotolPerKardus) ||
+        payload.qtyBotolPerKardus < 0 ||
+        payload.qtyBotolPecah < 0 ||
+        !Number.isFinite(payload.qtyKardusBasah) ||
+        payload.qtyKardusBasah < 0
+      ) {
         errorEl.textContent = "Lengkapi Qty dengan benar.";
         errorEl.hidden = false;
         return;
       }
 
+      // Khusus Filling, Qty Kardus Basah tidak boleh melebihi Qty Pengerjaan (Kardus).
+      if (line === "filling" && payload.qtyKardusBasah > payload.qtyKardus) {
+        errorEl.textContent =
+          "Qty Kardus Basah tidak boleh lebih besar dari Qty Pengerjaan (Kardus).";
+        errorEl.hidden = false;
+        if (qtyKardusBasah) {
+          qtyKardusBasah.setCustomValidity(
+            "Qty Kardus Basah tidak boleh lebih besar dari Qty Pengerjaan (Kardus).",
+          );
+          qtyKardusBasah.reportValidity();
+          qtyKardusBasah.focus();
+        }
+        return;
+      }
+      if (qtyKardusBasah) qtyKardusBasah.setCustomValidity("");
+
       const id = editing.value;
-      const pressError = validatePressPayload(payload, id);
+      const editingSource = editing.dataset.source || "";
+      const pressError = validatePressPayload(payload, id, editingSource);
       if (pressError) {
         errorEl.textContent = pressError;
         errorEl.hidden = false;
@@ -1828,9 +2295,12 @@
       if (id && editing.dataset.source === "saved") {
         submitBtn.disabled = true;
         try {
-          const response = await enqueueWrite(() => apiPost("entry.update", { id, data: payload }));
+          const response = await enqueueWrite(() =>
+            apiPost("entry.update", { id, data: payload }),
+          );
           if (response.entry) upsertEntry(response.entry);
-          if (Array.isArray(response.remainders)) state.remainders = response.remainders;
+          if (Array.isArray(response.remainders))
+            state.remainders = response.remainders;
           resetForm();
           renderEntries(line);
           renderPressBalance();
@@ -1845,7 +2315,7 @@
 
       // UPDATE data preview saja. Belum menyentuh Spreadsheet.
       if (id) {
-        const index = state.preview[line].findIndex(item => item.id === id);
+        const index = state.preview[line].findIndex((item) => item.id === id);
         if (index >= 0) {
           state.preview[line][index] = {
             ...state.preview[line][index],
@@ -1857,7 +2327,18 @@
             qtyBotolPerKardus: payload.qtyBotolPerKardus,
             totalQty: payload.qtyKardus * payload.qtyBotolPerKardus,
             botolPecahJenis: payload.botolPecahJenis || "",
-            qtyBotolPecah: payload.qtyBotolPecah || 0
+            qtyBotolPecah: payload.qtyBotolPecah || 0,
+            qtyKardusBasah:
+              line === "filling" ? payload.qtyKardusBasah || 0 : 0,
+            // Update pertama pada Preview tetap 0; mulai update kedua dihitung 1.
+            // updatedAt menandai update pertama dan ikut tersimpan di draft lokal.
+            // Counter ini ikut dibawa saat preview akhirnya disimpan ke Spreadsheet.
+            updatedAt: nowIso(),
+            updateCount:
+              Math.max(
+                0,
+                Math.floor(Number(state.preview[line][index].updateCount) || 0),
+              ) + (state.preview[line][index].updatedAt ? 1 : 0),
           };
           state.pages[line] = 1;
           persistPreview();
@@ -1883,7 +2364,10 @@
         totalQty: payload.qtyKardus * payload.qtyBotolPerKardus,
         botolPecahJenis: payload.botolPecahJenis || "",
         qtyBotolPecah: payload.qtyBotolPecah || 0,
-        createdAt: nowIso()
+        qtyKardusBasah: line === "filling" ? payload.qtyKardusBasah || 0 : 0,
+        createdAt: nowIso(),
+        updatedAt: "",
+        updateCount: 0,
       });
       state.pages[line] = 1;
       persistPreview();
@@ -1932,7 +2416,10 @@
         // boleh dikirim sebelum Preview Filling selesai disimpan ke Spreadsheet.
         if (line === "press" && hasUnsavedFillingPreview()) {
           updateSaveButtonState("press");
-          toast("Simpan data Filling terlebih dahulu sebelum menyimpan Press.", true);
+          toast(
+            "Simpan data Filling terlebih dahulu sebelum menyimpan Press.",
+            true,
+          );
           return;
         }
 
@@ -1942,7 +2429,7 @@
         // FAST SAVE: seluruh preview dikirim dalam SATU request.
         // Backend membaca Pengerjaan sekali, menulis setValues sekali,
         // lalu menghitung Sisa Press sekali untuk seluruh batch.
-        const batchPayload = previewRows.map(item => ({
+        const batchPayload = previewRows.map((item) => ({
           line: item.tab,
           tanggal: item.tanggal,
           operator: item.operator,
@@ -1952,20 +2439,32 @@
           qtyBotolPerKardus: Number(item.qtyBotolPerKardus) || 0,
           botolPecahJenis: item.botolPecahJenis || "",
           qtyBotolPecah: Number(item.qtyBotolPecah) || 0,
-          clientRequestId: item.id
+          qtyKardusBasah:
+            item.tab === "filling" ? Number(item.qtyKardusBasah) || 0 : 0,
+          // Pertahankan histori edit yang terjadi ketika baris masih Preview.
+          updatedAt: item.updatedAt || "",
+          updateCount: Math.max(0, Math.floor(Number(item.updateCount) || 0)),
+          clientRequestId: item.id,
         }));
 
         try {
-          const response = await enqueueWrite(() => apiPost("entry.batchCreate", {
-            data: batchPayload
-          }));
+          const response = await enqueueWrite(() =>
+            apiPost("entry.batchCreate", {
+              data: batchPayload,
+            }),
+          );
 
-          const savedIds = new Set(Array.isArray(response.savedIds) ? response.savedIds : []);
+          const savedIds = new Set(
+            Array.isArray(response.savedIds) ? response.savedIds : [],
+          );
           (response.entries || []).forEach(upsertEntry);
-          if (Array.isArray(response.remainders)) state.remainders = response.remainders;
+          if (Array.isArray(response.remainders))
+            state.remainders = response.remainders;
 
           // Hapus dari preview hanya ID yang sudah dikonfirmasi server.
-          state.preview[line] = (state.preview[line] || []).filter(item => !savedIds.has(item.id));
+          state.preview[line] = (state.preview[line] || []).filter(
+            (item) => !savedIds.has(item.id),
+          );
           state.pages[line] = 1;
           persistPreview();
           renderPreview(line);
@@ -1978,7 +2477,10 @@
             toast(`${successCount} data berhasil disimpan ke Spreadsheet.`);
           }
           if (retryCount) {
-            toast(`${retryCount} data belum tersimpan. Silakan klik Simpan lagi.`, true);
+            toast(
+              `${retryCount} data belum tersimpan. Silakan klik Simpan lagi.`,
+              true,
+            );
           }
         } catch (err) {
           // Batch bersifat aman: jika server menolak sebelum write, seluruh preview tetap ada.
@@ -1994,22 +2496,58 @@
 
     qs(".f-export-btn", section).addEventListener("click", () => {
       const rows = filteredPreviewEntries(line);
-      if (!rows.length) return toast("Belum ada data preview untuk diexport.", true);
+      if (!rows.length)
+        return toast("Belum ada data preview untuk diexport.", true);
+      const headers = [
+        "ID Pengerjaan",
+        "Line",
+        "Tanggal",
+        "Operator",
+        "Produk",
+        "Botol",
+        "Qty Kardus",
+        "Botol/Kardus",
+        "Total Qty",
+        "Botol Pecah",
+        "Qty Pecah",
+      ];
+      if (line === "filling") headers.push("Qty Kardus Basah");
+      headers.push("Dibuat Oleh");
       const csv = toCSV(
-        ["ID Pengerjaan", "Line", "Tanggal", "Operator", "Produk", "Botol", "Qty Kardus", "Botol/Kardus", "Total Qty", "Botol Pecah", "Qty Pecah", "Dibuat Oleh"],
-        rows.map(e => [e.reportId, LINE_LABEL[e.tab], e.tanggal, e.operator, e.produk, e.botol, e.qtyKardus, e.qtyBotolPerKardus, e.totalQty, e.botolPecahJenis || "", e.qtyBotolPecah, e.createdByName || e.createdBy || "PREVIEW"])
+        headers,
+        rows.map((e) => {
+          const row = [
+            e.reportId,
+            LINE_LABEL[e.tab],
+            e.tanggal,
+            e.operator,
+            e.produk,
+            e.botol,
+            e.qtyKardus,
+            e.qtyBotolPerKardus,
+            e.totalQty,
+            e.botolPecahJenis || "",
+            e.qtyBotolPecah,
+          ];
+          if (line === "filling") row.push(Number(e.qtyKardusBasah) || 0);
+          row.push(e.createdBy || "PREVIEW");
+          return row;
+        }),
       );
       downloadText(`laporan-${line}-${todayStr()}.csv`, csv);
     });
 
-    qs(".f-tbody", section).addEventListener("click", async event => {
+    qs(".f-tbody", section).addEventListener("click", async (event) => {
       // Data tersimpan memakai tombol Update/Hapus seperti sebelumnya.
       const savedEditBtn = event.target.closest(".btn-edit");
       const savedDeleteBtn = event.target.closest(".btn-delete");
 
       if (savedEditBtn) {
-        const entry = state.entries.find(x => x.id === savedEditBtn.dataset.id);
-        if (!entry || !canEditEntry(entry)) return toast("Anda tidak memiliki akses mengedit data ini.", true);
+        const entry = state.entries.find(
+          (x) => x.id === savedEditBtn.dataset.id,
+        );
+        if (!entry || !canEditEntry(entry))
+          return toast("Anda tidak memiliki akses mengedit data ini.", true);
         editing.value = entry.id;
         editing.dataset.source = "saved";
         tanggal.value = entry.tanggal;
@@ -2018,8 +2556,10 @@
         botol.value = entry.botol;
         qtyKardus.value = entry.qtyKardus;
         qtyBotol.value = entry.qtyBotolPerKardus;
-        if (botolPecah) botolPecah.value = entry.botolPecahJenis || entry.botol || "-";
+        if (botolPecah)
+          botolPecah.value = entry.botolPecahJenis || entry.botol || "-";
         qtyPecah.value = entry.qtyBotolPecah || 0;
+        if (qtyKardusBasah) qtyKardusBasah.value = entry.qtyKardusBasah || 0;
         recalc();
         submitBtn.textContent = "Simpan Perubahan";
         cancelBtn.hidden = false;
@@ -2029,14 +2569,20 @@
       }
 
       if (savedDeleteBtn) {
-        const entry = state.entries.find(x => x.id === savedDeleteBtn.dataset.id);
-        if (!entry || !canDeleteEntry(entry)) return toast("Anda tidak memiliki akses menghapus data ini.", true);
+        const entry = state.entries.find(
+          (x) => x.id === savedDeleteBtn.dataset.id,
+        );
+        if (!entry || !canDeleteEntry(entry))
+          return toast("Anda tidak memiliki akses menghapus data ini.", true);
         if (!confirm(`Hapus data ${entry.reportId}?`)) return;
         savedDeleteBtn.disabled = true;
         try {
-          const response = await enqueueWrite(() => apiPost("entry.delete", { id: entry.id }));
-          state.entries = state.entries.filter(x => x.id !== entry.id);
-          if (Array.isArray(response.remainders)) state.remainders = response.remainders;
+          const response = await enqueueWrite(() =>
+            apiPost("entry.delete", { id: entry.id }),
+          );
+          state.entries = state.entries.filter((x) => x.id !== entry.id);
+          if (Array.isArray(response.remainders))
+            state.remainders = response.remainders;
           renderPreview(line);
           renderPressBalance();
           toast("Data berhasil dihapus.");
@@ -2052,7 +2598,9 @@
       const previewDeleteBtn = event.target.closest(".btn-preview-delete");
 
       if (previewEditBtn) {
-        const entry = state.preview[line].find(x => x.id === previewEditBtn.dataset.id);
+        const entry = state.preview[line].find(
+          (x) => x.id === previewEditBtn.dataset.id,
+        );
         if (!entry) return;
         editing.value = entry.id;
         editing.dataset.source = "preview";
@@ -2062,8 +2610,10 @@
         qs(".f-botol", form).value = entry.botol;
         qtyKardus.value = entry.qtyKardus;
         qtyBotol.value = entry.qtyBotolPerKardus;
-        if (botolPecah) botolPecah.value = entry.botolPecahJenis || entry.botol || "-";
+        if (botolPecah)
+          botolPecah.value = entry.botolPecahJenis || entry.botol || "-";
         qtyPecah.value = entry.qtyBotolPecah || 0;
+        if (qtyKardusBasah) qtyKardusBasah.value = entry.qtyKardusBasah || 0;
         recalc();
         submitBtn.textContent = "Simpan Perubahan";
         cancelBtn.hidden = false;
@@ -2075,7 +2625,9 @@
       }
 
       if (previewDeleteBtn) {
-        state.preview[line] = state.preview[line].filter(x => x.id !== previewDeleteBtn.dataset.id);
+        state.preview[line] = state.preview[line].filter(
+          (x) => x.id !== previewDeleteBtn.dataset.id,
+        );
         state.pages[line] = 1;
         persistPreview();
         renderPreview(line);
@@ -2083,9 +2635,7 @@
         toast("Data dihapus dari preview.");
       }
     });
-
   }
-
 
   /* ------------------------- APD ------------------------- */
   const APD_VARIABLES = Object.freeze([
@@ -2093,8 +2643,12 @@
     { key: "lenganDitarik", label: "Lengan ditarik ke atas", weight: 20 },
     { key: "sepatuDiinjak", label: "Sepatu diinjak", weight: 10 },
     { key: "rambutKelihatan", label: "Rambut kelihatan", weight: 15 },
-    { key: "resletingTidakPenuh", label: "Tidak diresleting secara penuh", weight: 10 },
-    { key: "memakaiAksesoris", label: "Memakai aksesoris", weight: 20 }
+    {
+      key: "resletingTidakPenuh",
+      label: "Tidak diresleting secara penuh",
+      weight: 10,
+    },
+    { key: "memakaiAksesoris", label: "Memakai aksesoris", weight: 20 },
   ]);
 
   const APD_REASON_MAX_WORDS = 300;
@@ -2107,7 +2661,7 @@
   function calculateApd(scores) {
     let totalPoints = 0;
     let percentage = 0;
-    APD_VARIABLES.forEach(variable => {
+    APD_VARIABLES.forEach((variable) => {
       const point = Number(scores[variable.key]) || 0;
       totalPoints += point;
       percentage += point * (variable.weight / 5);
@@ -2117,7 +2671,8 @@
 
   function apdRecordHtml(item, source, activeEditingId, activeEditingSource) {
     const isSaved = source === "saved";
-    const isActive = item.id === activeEditingId && activeEditingSource === source;
+    const isActive =
+      item.id === activeEditingId && activeEditingSource === source;
     return `
       <div class="apd-unified-grid apd-preview-record ${isActive ? (isSaved ? "is-saved-editing" : "is-editing") : ""}" data-id="${esc(item.id)}">
         <div class="apd-record-cell apd-record-operator">
@@ -2150,21 +2705,31 @@
     const activeEditingSource = editingNode?.dataset.source || "";
     if (!container) return;
 
-    const allRows = (state.preview.apd || []).slice().sort((a, b) =>
-      String(a.createdAt || "").localeCompare(String(b.createdAt || ""))
+    const allRows = (state.preview.apd || [])
+      .slice()
+      .sort((a, b) =>
+        String(a.createdAt || "").localeCompare(String(b.createdAt || "")),
+      );
+    const totalPages = Math.max(
+      1,
+      Math.ceil(allRows.length / CONFIG.PAGE_SIZE),
     );
-    const totalPages = Math.max(1, Math.ceil(allRows.length / CONFIG.PAGE_SIZE));
     state.pages.apd = Math.min(Math.max(1, state.pages.apd || 1), totalPages);
     const page = state.pages.apd;
     const start = (page - 1) * CONFIG.PAGE_SIZE;
     const rows = allRows.slice(start, start + CONFIG.PAGE_SIZE);
 
-    container.innerHTML = rows.map(item => apdRecordHtml(item, "preview", activeEditingId, activeEditingSource)).join("");
+    container.innerHTML = rows
+      .map((item) =>
+        apdRecordHtml(item, "preview", activeEditingId, activeEditingSource),
+      )
+      .join("");
 
     const from = allRows.length ? start + 1 : 0;
     const to = Math.min(start + CONFIG.PAGE_SIZE, allRows.length);
     const avg = allRows.length
-      ? allRows.reduce((sum, item) => sum + (Number(item.percentage) || 0), 0) / allRows.length
+      ? allRows.reduce((sum, item) => sum + (Number(item.percentage) || 0), 0) /
+        allRows.length
       : 0;
     if (summary) {
       summary.textContent = allRows.length
@@ -2176,7 +2741,7 @@
       saveBtn.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> ${allRows.length ? `Simpan (${allRows.length})` : "Simpan"}`;
     }
 
-    renderPagination(pagination, page, totalPages, nextPage => {
+    renderPagination(pagination, page, totalPages, (nextPage) => {
       state.pages.apd = nextPage;
       renderApdPreview();
     });
@@ -2193,27 +2758,40 @@
 
     const today = todayStr();
     const allRows = (state.apdEntries || [])
-      .filter(item => item && item.tanggal === today)
+      .filter((item) => item && item.tanggal === today)
       .slice()
-      .sort((a, b) =>
-        String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")) ||
-        (Number(b.rowNumber) || 0) - (Number(a.rowNumber) || 0)
+      .sort(
+        (a, b) =>
+          String(b.updatedAt || b.createdAt || "").localeCompare(
+            String(a.updatedAt || a.createdAt || ""),
+          ) || (Number(b.rowNumber) || 0) - (Number(a.rowNumber) || 0),
       );
 
-    const totalPages = Math.max(1, Math.ceil(allRows.length / CONFIG.PAGE_SIZE));
-    state.pages.apdSaved = Math.min(Math.max(1, state.pages.apdSaved || 1), totalPages);
+    const totalPages = Math.max(
+      1,
+      Math.ceil(allRows.length / CONFIG.PAGE_SIZE),
+    );
+    state.pages.apdSaved = Math.min(
+      Math.max(1, state.pages.apdSaved || 1),
+      totalPages,
+    );
     const page = state.pages.apdSaved;
     const start = (page - 1) * CONFIG.PAGE_SIZE;
     const rows = allRows.slice(start, start + CONFIG.PAGE_SIZE);
 
     container.innerHTML = rows.length
-      ? rows.map(item => apdRecordHtml(item, "saved", activeEditingId, activeEditingSource)).join("")
+      ? rows
+          .map((item) =>
+            apdRecordHtml(item, "saved", activeEditingId, activeEditingSource),
+          )
+          .join("")
       : '<div class="apd-saved-empty">Belum ada data APD yang tersimpan pada hari ini.</div>';
 
     const from = allRows.length ? start + 1 : 0;
     const to = Math.min(start + CONFIG.PAGE_SIZE, allRows.length);
     const avg = allRows.length
-      ? allRows.reduce((sum, item) => sum + (Number(item.percentage) || 0), 0) / allRows.length
+      ? allRows.reduce((sum, item) => sum + (Number(item.percentage) || 0), 0) /
+        allRows.length
       : 0;
     if (summary) {
       summary.textContent = allRows.length
@@ -2221,7 +2799,7 @@
         : `Belum ada data tersimpan untuk ${today}.`;
     }
 
-    renderPagination(pagination, page, totalPages, nextPage => {
+    renderPagination(pagination, page, totalPages, (nextPage) => {
       state.pages.apdSaved = nextPage;
       renderApdSavedToday();
     });
@@ -2252,7 +2830,9 @@
 
     function scoresFromForm() {
       const scores = {};
-      scoreInputs.forEach(input => { scores[input.dataset.apdKey] = Number(input.value); });
+      scoreInputs.forEach((input) => {
+        scores[input.dataset.apdKey] = Number(input.value);
+      });
       return scores;
     }
 
@@ -2271,9 +2851,11 @@
         reasonWordCount.textContent = `${words} / ${APD_REASON_MAX_WORDS} kata`;
         reasonWordCount.classList.toggle("limit", words > APD_REASON_MAX_WORDS);
       }
-      reason.setCustomValidity(words > APD_REASON_MAX_WORDS
-        ? `Alasan maksimal ${APD_REASON_MAX_WORDS} kata.`
-        : "");
+      reason.setCustomValidity(
+        words > APD_REASON_MAX_WORDS
+          ? `Alasan maksimal ${APD_REASON_MAX_WORDS} kata.`
+          : "",
+      );
       return words;
     }
 
@@ -2309,19 +2891,25 @@
       }
       if (tanggal) tanggal.value = item.tanggal || todayStr();
       if (operator) operator.value = item.operator || "";
-      scoreInputs.forEach(input => { input.value = item.scores?.[input.dataset.apdKey] ?? ""; });
+      scoreInputs.forEach((input) => {
+        input.value = item.scores?.[input.dataset.apdKey] ?? "";
+      });
       if (reason) reason.value = item.alasan || "";
       refreshCalculation();
       refreshReasonCounter();
       if (addBtn) addBtn.textContent = "Simpan Perubahan";
       if (cancelBtn) cancelBtn.hidden = false;
-      if (stamp) stamp.textContent = source === "saved" ? "EDIT DATA TERSIMPAN" : "EDIT PREVIEW";
+      if (stamp)
+        stamp.textContent =
+          source === "saved" ? "EDIT DATA TERSIMPAN" : "EDIT PREVIEW";
       renderApdPreview();
       renderApdSavedToday();
       form.scrollIntoView({ behavior: "smooth", block: "center" });
     }
 
-    scoreInputs.forEach(input => input.addEventListener("input", refreshCalculation));
+    scoreInputs.forEach((input) =>
+      input.addEventListener("input", refreshCalculation),
+    );
     reason?.addEventListener("input", refreshReasonCounter);
     cancelBtn?.addEventListener("click", () => {
       resetForm();
@@ -2329,28 +2917,40 @@
       renderApdSavedToday();
     });
 
-    form.addEventListener("submit", async event => {
+    form.addEventListener("submit", async (event) => {
       event.preventDefault();
       if (errorEl) errorEl.hidden = true;
 
       if (!can("accessApd")) {
-        if (errorEl) { errorEl.textContent = "Anda tidak memiliki akses APD."; errorEl.hidden = false; }
+        if (errorEl) {
+          errorEl.textContent = "Anda tidak memiliki akses APD.";
+          errorEl.hidden = false;
+        }
         return;
       }
 
       if (!validateMasterInput(operator)) {
-        if (errorEl) { errorEl.textContent = "Nama operator harus dipilih dari data master."; errorEl.hidden = false; }
+        if (errorEl) {
+          errorEl.textContent = "Nama operator harus dipilih dari data master.";
+          errorEl.hidden = false;
+        }
         operator?.reportValidity();
         return;
       }
 
-      const invalidScore = scoreInputs.find(input => {
+      const invalidScore = scoreInputs.find((input) => {
         const text = String(input.value || "").trim();
         const value = Number(text);
-        return text === "" || !Number.isInteger(value) || value < 0 || value > 5;
+        return (
+          text === "" || !Number.isInteger(value) || value < 0 || value > 5
+        );
       });
       if (invalidScore) {
-        if (errorEl) { errorEl.textContent = "Semua variable APD wajib diisi dengan poin bulat 0 sampai 5."; errorEl.hidden = false; }
+        if (errorEl) {
+          errorEl.textContent =
+            "Semua variable APD wajib diisi dengan poin bulat 0 sampai 5.";
+          errorEl.hidden = false;
+        }
         invalidScore.focus();
         return;
       }
@@ -2365,34 +2965,43 @@
         return;
       }
 
-      const canonicalOperator = canonicalMasterValue("operator", operator.value);
+      const canonicalOperator = canonicalMasterValue(
+        "operator",
+        operator.value,
+      );
       const scores = scoresFromForm();
       const result = calculateApd(scores);
       const id = editingId?.value || "";
       const source = editingId?.dataset.source || "";
       const formDate = tanggal?.value || todayStr();
 
-      const duplicatePreview = (state.preview.apd || []).find(item =>
-        !(source === "preview" && item.id === id) &&
-        item.tanggal === formDate &&
-        String(item.operator || "").toLowerCase() === canonicalOperator.toLowerCase()
+      const duplicatePreview = (state.preview.apd || []).find(
+        (item) =>
+          !(source === "preview" && item.id === id) &&
+          item.tanggal === formDate &&
+          String(item.operator || "").toLowerCase() ===
+            canonicalOperator.toLowerCase(),
       );
       if (duplicatePreview) {
         if (errorEl) {
-          errorEl.textContent = "Operator ini sudah ada di preview APD pada tanggal yang sama. Gunakan tombol Edit pada baris preview tersebut.";
+          errorEl.textContent =
+            "Operator ini sudah ada di preview APD pada tanggal yang sama. Gunakan tombol Edit pada baris preview tersebut.";
           errorEl.hidden = false;
         }
         return;
       }
 
-      const duplicateSaved = (state.apdEntries || []).find(item =>
-        !(source === "saved" && item.id === id) &&
-        item.tanggal === formDate &&
-        String(item.operator || "").toLowerCase() === canonicalOperator.toLowerCase()
+      const duplicateSaved = (state.apdEntries || []).find(
+        (item) =>
+          !(source === "saved" && item.id === id) &&
+          item.tanggal === formDate &&
+          String(item.operator || "").toLowerCase() ===
+            canonicalOperator.toLowerCase(),
       );
       if (duplicateSaved) {
         if (errorEl) {
-          errorEl.textContent = "Operator ini sudah memiliki data APD yang tersimpan pada tanggal yang sama. Gunakan tombol Edit pada section Data Tersimpan Hari Ini.";
+          errorEl.textContent =
+            "Operator ini sudah memiliki data APD yang tersimpan pada tanggal yang sama. Gunakan tombol Edit pada section Data Tersimpan Hari Ini.";
           errorEl.hidden = false;
         }
         return;
@@ -2402,7 +3011,7 @@
         tanggal: formDate,
         operator: canonicalOperator,
         scores: { ...scores },
-        alasan: String(reason?.value || "").trim()
+        alasan: String(reason?.value || "").trim(),
       };
 
       // Edit data yang SUDAH tersimpan selalu menggunakan endpoint update.
@@ -2410,15 +3019,23 @@
       if (id && source === "saved") {
         if (addBtn) addBtn.disabled = true;
         try {
-          const response = await enqueueWrite(() => apiPost("apd.update", { id, data: payload }));
-          if (Array.isArray(response.apdEntries)) state.apdEntries = response.apdEntries;
+          const response = await enqueueWrite(() =>
+            apiPost("apd.update", { id, data: payload }),
+          );
+          if (Array.isArray(response.apdEntries))
+            state.apdEntries = response.apdEntries;
           state.pages.apdSaved = 1;
           resetForm();
           renderApdPreview();
           renderApdSavedToday();
-          toast("Data APD tersimpan berhasil diperbarui tanpa membuat duplikat.");
+          toast(
+            "Data APD tersimpan berhasil diperbarui tanpa membuat duplikat.",
+          );
         } catch (err) {
-          if (errorEl) { errorEl.textContent = err.message; errorEl.hidden = false; }
+          if (errorEl) {
+            errorEl.textContent = err.message;
+            errorEl.hidden = false;
+          }
           if (addBtn) addBtn.disabled = false;
         }
         return;
@@ -2433,17 +3050,20 @@
         percentage: result.percentage,
         alasan: payload.alasan,
         createdAt: id
-          ? ((state.preview.apd || []).find(row => row.id === id)?.createdAt || nowIso())
-          : nowIso()
+          ? (state.preview.apd || []).find((row) => row.id === id)?.createdAt ||
+            nowIso()
+          : nowIso(),
       };
 
       if (id && source === "preview") {
-        const index = state.preview.apd.findIndex(row => row.id === id);
+        const index = state.preview.apd.findIndex((row) => row.id === id);
         if (index >= 0) state.preview.apd[index] = item;
         toast("Data APD di preview berhasil diperbarui.");
       } else {
         state.preview.apd.push(item);
-        toast("Data APD ditambahkan ke preview. Belum disimpan ke Spreadsheet.");
+        toast(
+          "Data APD ditambahkan ke preview. Belum disimpan ke Spreadsheet.",
+        );
       }
 
       state.pages.apd = 1;
@@ -2454,52 +3074,86 @@
       setTimeout(() => operator?.focus(), 0);
     });
 
-    previewBody?.addEventListener("click", event => {
+    previewBody?.addEventListener("click", (event) => {
       const editBtn = event.target.closest(".apd-edit");
       const deleteBtn = event.target.closest(".apd-delete");
 
       if (editBtn) {
-        const item = (state.preview.apd || []).find(row => row.id === editBtn.dataset.id);
+        const item = (state.preview.apd || []).find(
+          (row) => row.id === editBtn.dataset.id,
+        );
         if (!item) return;
         loadItemIntoForm(item, "preview");
         return;
       }
 
       if (deleteBtn) {
-        state.preview.apd = (state.preview.apd || []).filter(row => row.id !== deleteBtn.dataset.id);
+        state.preview.apd = (state.preview.apd || []).filter(
+          (row) => row.id !== deleteBtn.dataset.id,
+        );
         state.pages.apd = 1;
         persistPreview();
-        if (editingId?.value === deleteBtn.dataset.id && editingId.dataset.source === "preview") resetForm();
+        if (
+          editingId?.value === deleteBtn.dataset.id &&
+          editingId.dataset.source === "preview"
+        )
+          resetForm();
         renderApdPreview();
         renderApdSavedToday();
         toast("Data APD dihapus dari preview.");
       }
     });
 
-    savedBody?.addEventListener("click", async event => {
+    savedBody?.addEventListener("click", async (event) => {
       const editBtn = event.target.closest(".apd-saved-edit");
       const deleteBtn = event.target.closest(".apd-saved-delete");
 
       if (editBtn) {
-        const item = (state.apdEntries || []).find(row => row.id === editBtn.dataset.id);
-        if (!item) return toast("Data APD tersimpan tidak ditemukan. Muat ulang halaman.", true);
+        const item = (state.apdEntries || []).find(
+          (row) => row.id === editBtn.dataset.id,
+        );
+        if (!item)
+          return toast(
+            "Data APD tersimpan tidak ditemukan. Muat ulang halaman.",
+            true,
+          );
         loadItemIntoForm(item, "saved");
         return;
       }
 
       if (deleteBtn) {
-        if (!can("accessApd")) return toast("Anda tidak memiliki akses APD.", true);
-        const item = (state.apdEntries || []).find(row => row.id === deleteBtn.dataset.id);
-        if (!item) return toast("Data APD tersimpan tidak ditemukan. Muat ulang halaman.", true);
-        if (!confirm(`Hapus data APD ${item.operator} tanggal ${item.tanggal}?`)) return;
+        if (!can("accessApd"))
+          return toast("Anda tidak memiliki akses APD.", true);
+        const item = (state.apdEntries || []).find(
+          (row) => row.id === deleteBtn.dataset.id,
+        );
+        if (!item)
+          return toast(
+            "Data APD tersimpan tidak ditemukan. Muat ulang halaman.",
+            true,
+          );
+        if (
+          !confirm(`Hapus data APD ${item.operator} tanggal ${item.tanggal}?`)
+        )
+          return;
 
         deleteBtn.disabled = true;
         try {
-          const response = await enqueueWrite(() => apiPost("apd.delete", { id: item.id }));
-          if (Array.isArray(response.apdEntries)) state.apdEntries = response.apdEntries;
-          else state.apdEntries = (state.apdEntries || []).filter(row => row.id !== item.id);
+          const response = await enqueueWrite(() =>
+            apiPost("apd.delete", { id: item.id }),
+          );
+          if (Array.isArray(response.apdEntries))
+            state.apdEntries = response.apdEntries;
+          else
+            state.apdEntries = (state.apdEntries || []).filter(
+              (row) => row.id !== item.id,
+            );
           state.pages.apdSaved = 1;
-          if (editingId?.value === item.id && editingId.dataset.source === "saved") resetForm();
+          if (
+            editingId?.value === item.id &&
+            editingId.dataset.source === "saved"
+          )
+            resetForm();
           renderApdPreview();
           renderApdSavedToday();
           toast("Data APD tersimpan berhasil dihapus.");
@@ -2513,28 +3167,40 @@
     saveBtn?.addEventListener("click", async () => {
       const rows = [...(state.preview.apd || [])];
       if (!rows.length) return toast("Belum ada data APD di preview.", true);
-      if (!can("accessApd")) return toast("Anda tidak memiliki akses APD.", true);
+      if (!can("accessApd"))
+        return toast("Anda tidak memiliki akses APD.", true);
 
       saveBtn.disabled = true;
       saveBtn.textContent = `Menyimpan ${rows.length} data...`;
       try {
-        const payload = rows.map(item => ({
+        const payload = rows.map((item) => ({
           tanggal: item.tanggal,
           operator: item.operator,
           scores: item.scores,
           alasan: item.alasan || "",
-          clientRequestId: item.id
+          clientRequestId: item.id,
         }));
-        const response = await enqueueWrite(() => apiPost("apd.batchCreate", { data: payload }));
-        const savedIds = new Set(Array.isArray(response.savedIds) ? response.savedIds : rows.map(item => item.id));
-        state.preview.apd = (state.preview.apd || []).filter(item => !savedIds.has(item.id));
-        if (Array.isArray(response.apdEntries)) state.apdEntries = response.apdEntries;
+        const response = await enqueueWrite(() =>
+          apiPost("apd.batchCreate", { data: payload }),
+        );
+        const savedIds = new Set(
+          Array.isArray(response.savedIds)
+            ? response.savedIds
+            : rows.map((item) => item.id),
+        );
+        state.preview.apd = (state.preview.apd || []).filter(
+          (item) => !savedIds.has(item.id),
+        );
+        if (Array.isArray(response.apdEntries))
+          state.apdEntries = response.apdEntries;
         state.pages.apd = 1;
         state.pages.apdSaved = 1;
         persistPreview();
         renderApdPreview();
         renderApdSavedToday();
-        toast(`${Number(response.savedCount) || rows.length} data APD berhasil disimpan ke sheet APD.`);
+        toast(
+          `${Number(response.savedCount) || rows.length} data APD berhasil disimpan ke sheet APD.`,
+        );
       } catch (err) {
         renderApdPreview();
         renderApdSavedToday();
@@ -2550,10 +3216,12 @@
 
   /* ------------------------- DASHBOARD ------------------------- */
   function dashboardEntries() {
-    const saved = (state.entries || []).filter(entry => entry && entry._syncState !== "error");
+    const saved = (state.entries || []).filter(
+      (entry) => entry && entry._syncState !== "error",
+    );
     const preview = [
       ...((state.preview && state.preview.filling) || []),
-      ...((state.preview && state.preview.press) || [])
+      ...((state.preview && state.preview.press) || []),
     ];
     return [...saved, ...preview];
   }
@@ -2569,7 +3237,7 @@
   }
 
   function dashboardDateKey(date) {
-    const p = n => String(n).padStart(2, "0");
+    const p = (n) => String(n).padStart(2, "0");
     return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`;
   }
 
@@ -2583,7 +3251,10 @@
     const date = dashboardDateParts(dateStr);
     const today = dashboardDateParts(todayStr());
     if (!date || !today) return 0;
-    return Math.max(0, Math.floor((today.getTime() - date.getTime()) / 86400000));
+    return Math.max(
+      0,
+      Math.floor((today.getTime() - date.getTime()) / 86400000),
+    );
   }
 
   function dashboardSetText(id, value) {
@@ -2606,10 +3277,9 @@
     return new Date(
       date.getFullYear(),
       date.getMonth(),
-      date.getDate() + amount
+      date.getDate() + amount,
     );
   }
-
 
   function dashboardMonthKey(date) {
     const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -2617,29 +3287,21 @@
     return `${date.getFullYear()}-${month}`;
   }
 
-
   function dashboardDaysBetween(start, end) {
     const diff = end.getTime() - start.getTime();
 
     return Math.floor(diff / 86400000) + 1;
   }
 
-
   function dashboardChartConfig() {
-    const today =
-      dashboardDateParts(todayStr()) ||
-      new Date();
+    const today = dashboardDateParts(todayStr()) || new Date();
 
-    const mode =
-      state.dashboard?.chartMode ||
-      "7days";
-
+    const mode = state.dashboard?.chartMode || "7days";
 
     /* =============================
       7 HARI TERAKHIR
       ============================= */
     if (mode === "7days") {
-
       return {
         mode,
         groupBy: "day",
@@ -2647,16 +3309,14 @@
         start: dashboardAddDays(today, -6),
         end: today,
 
-        label: "7 Hari Terakhir"
+        label: "7 Hari Terakhir",
       };
     }
-
 
     /* =============================
       30 HARI TERAKHIR
       ============================= */
     if (mode === "30days") {
-
       return {
         mode,
         groupBy: "day",
@@ -2664,18 +3324,15 @@
         start: dashboardAddDays(today, -29),
         end: today,
 
-        label: "30 Hari Terakhir"
+        label: "30 Hari Terakhir",
       };
     }
-
 
     /* =============================
       BERDASARKAN BULAN
       ============================= */
     if (mode === "month") {
-
-      let monthValue =
-        state.dashboard.chartMonth;
+      let monthValue = state.dashboard.chartMonth;
 
       if (!monthValue) {
         monthValue = dashboardMonthKey(today);
@@ -2686,36 +3343,29 @@
       const year = Number(parts[0]);
       const month = Number(parts[1]) - 1;
 
-      const start =
-        new Date(year, month, 1);
+      const start = new Date(year, month, 1);
 
-      const end =
-        new Date(year, month + 1, 0);
+      const end = new Date(year, month + 1, 0);
 
-      const label =
-        start.toLocaleDateString("id-ID", {
-          month: "long",
-          year: "numeric"
-        });
+      const label = start.toLocaleDateString("id-ID", {
+        month: "long",
+        year: "numeric",
+      });
 
       return {
         mode,
         groupBy: "day",
         start,
         end,
-        label
+        label,
       };
     }
-
 
     /* =============================
       BERDASARKAN TAHUN
       ============================= */
     if (mode === "year") {
-
-      const year =
-        Number(state.dashboard.chartYear) ||
-        today.getFullYear();
+      const year = Number(state.dashboard.chartYear) || today.getFullYear();
 
       return {
         mode,
@@ -2724,26 +3374,17 @@
         start: new Date(year, 0, 1),
         end: new Date(year, 11, 31),
 
-        label: `Tahun ${year}`
+        label: `Tahun ${year}`,
       };
     }
-
 
     /* =============================
       RENTANG TANGGAL
       ============================= */
     if (mode === "range") {
+      let start = dashboardDateParts(state.dashboard.chartStart);
 
-      let start =
-        dashboardDateParts(
-          state.dashboard.chartStart
-        );
-
-      let end =
-        dashboardDateParts(
-          state.dashboard.chartEnd
-        );
-
+      let end = dashboardDateParts(state.dashboard.chartEnd);
 
       if (!start) {
         start = dashboardAddDays(today, -6);
@@ -2752,7 +3393,6 @@
       if (!end) {
         end = today;
       }
-
 
       /*
         Jika user secara tidak sengaja
@@ -2765,10 +3405,7 @@
         end = temp;
       }
 
-
-      const totalDays =
-        dashboardDaysBetween(start, end);
-
+      const totalDays = dashboardDaysBetween(start, end);
 
       /*
         Jika rentang <= 62 hari
@@ -2779,57 +3416,43 @@
         supaya chart tidak berisi
         ratusan batang.
       */
-      const groupBy =
-        totalDays <= 62
-          ? "day"
-          : "month";
+      const groupBy = totalDays <= 62 ? "day" : "month";
 
+      const startLabel = start.toLocaleDateString("id-ID", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      });
 
-      const startLabel =
-        start.toLocaleDateString("id-ID", {
-          day: "2-digit",
-          month: "short",
-          year: "numeric"
-        });
-
-      const endLabel =
-        end.toLocaleDateString("id-ID", {
-          day: "2-digit",
-          month: "short",
-          year: "numeric"
-        });
-
+      const endLabel = end.toLocaleDateString("id-ID", {
+        day: "2-digit",
+        month: "short",
+        year: "numeric",
+      });
 
       return {
         mode,
         groupBy,
         start,
         end,
-        label: `${startLabel} – ${endLabel}`
+        label: `${startLabel} – ${endLabel}`,
       };
     }
-
 
     return {
       mode: "7days",
       groupBy: "day",
       start: dashboardAddDays(today, -6),
       end: today,
-      label: "7 Hari Terakhir"
+      label: "7 Hari Terakhir",
     };
   }
-
 
   /* =========================================================
     BUAT DATA CHART PER HARI
     ========================================================= */
 
-  function dashboardDailyBuckets(
-    entries,
-    start,
-    end
-  ) {
-
+  function dashboardDailyBuckets(entries, start, end) {
     const buckets = [];
 
     for (
@@ -2837,96 +3460,47 @@
       date <= end;
       date = dashboardAddDays(date, 1)
     ) {
+      const key = dashboardDateKey(date);
 
-      const key =
-        dashboardDateKey(date);
+      const filling = entries
+        .filter((entry) => entry.tab === "filling" && entry.tanggal === key)
+        .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
 
-
-      const filling =
-        entries
-          .filter(entry =>
-            entry.tab === "filling" &&
-            entry.tanggal === key
-          )
-          .reduce(
-            (sum, entry) =>
-              sum +
-              (Number(entry.totalQty) || 0),
-            0
-          );
-
-
-      const press =
-        entries
-          .filter(entry =>
-            entry.tab === "press" &&
-            entry.tanggal === key
-          )
-          .reduce(
-            (sum, entry) =>
-              sum +
-              (Number(entry.totalQty) || 0),
-            0
-          );
-
+      const press = entries
+        .filter((entry) => entry.tab === "press" && entry.tanggal === key)
+        .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
 
       buckets.push({
         key,
 
         date: new Date(date),
 
-        label:
-          date.toLocaleDateString(
-            "id-ID",
-            {
-              day: "2-digit",
-              month: "short"
-            }
-          ),
+        label: date.toLocaleDateString("id-ID", {
+          day: "2-digit",
+          month: "short",
+        }),
 
         filling,
-        press
+        press,
       });
     }
 
-
     return buckets;
   }
-
 
   /* =========================================================
     BUAT DATA CHART PER BULAN
     ========================================================= */
 
-  function dashboardMonthlyBuckets(
-    entries,
-    start,
-    end
-  ) {
-
+  function dashboardMonthlyBuckets(entries, start, end) {
     const buckets = [];
 
-    let current =
-      new Date(
-        start.getFullYear(),
-        start.getMonth(),
-        1
-      );
+    let current = new Date(start.getFullYear(), start.getMonth(), 1);
 
-
-    const last =
-      new Date(
-        end.getFullYear(),
-        end.getMonth(),
-        1
-      );
-
+    const last = new Date(end.getFullYear(), end.getMonth(), 1);
 
     while (current <= last) {
-
-      const key =
-        dashboardMonthKey(current);
-
+      const key = dashboardMonthKey(current);
 
       /*
         Tetap filter berdasarkan start-end asli.
@@ -2937,166 +3511,77 @@
         data tanggal 1-14 Januari
         tidak ikut dihitung.
       */
-      const periodEntries =
-        entries.filter(entry => {
+      const periodEntries = entries.filter((entry) => {
+        const date = dashboardDateParts(entry.tanggal);
 
-          const date =
-            dashboardDateParts(
-              entry.tanggal
-            );
+        if (!date) return false;
 
-          if (!date) return false;
+        return date >= start && date <= end && dashboardMonthKey(date) === key;
+      });
 
-          return (
-            date >= start &&
-            date <= end &&
-            dashboardMonthKey(date) === key
-          );
-        });
+      const filling = periodEntries
+        .filter((entry) => entry.tab === "filling")
+        .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
 
-
-      const filling =
-        periodEntries
-          .filter(
-            entry =>
-              entry.tab === "filling"
-          )
-          .reduce(
-            (sum, entry) =>
-              sum +
-              (Number(entry.totalQty) || 0),
-            0
-          );
-
-
-      const press =
-        periodEntries
-          .filter(
-            entry =>
-              entry.tab === "press"
-          )
-          .reduce(
-            (sum, entry) =>
-              sum +
-              (Number(entry.totalQty) || 0),
-            0
-          );
-
+      const press = periodEntries
+        .filter((entry) => entry.tab === "press")
+        .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
 
       buckets.push({
         key,
 
         date: new Date(current),
 
-        label:
-          current.toLocaleDateString(
-            "id-ID",
-            {
-              month: "short",
-              year:
-                start.getFullYear() !==
-                end.getFullYear()
-                  ? "2-digit"
-                  : undefined
-            }
-          ),
+        label: current.toLocaleDateString("id-ID", {
+          month: "short",
+          year:
+            start.getFullYear() !== end.getFullYear() ? "2-digit" : undefined,
+        }),
 
         filling,
-        press
+        press,
       });
 
-
-      current =
-        new Date(
-          current.getFullYear(),
-          current.getMonth() + 1,
-          1
-        );
+      current = new Date(current.getFullYear(), current.getMonth() + 1, 1);
     }
-
 
     return buckets;
   }
-
 
   /* =========================================================
     RENDER CHART
     ========================================================= */
 
   function renderDashboardWeekly(entries) {
-
-    const chart =
-      el("dashboardWeeklyChart");
+    const chart = el("dashboardWeeklyChart");
 
     if (!chart) return;
 
-
-    const config =
-      dashboardChartConfig();
-
+    const config = dashboardChartConfig();
 
     /*
       Ubah tulisan eyebrow secara otomatis
       mengikuti filter.
     */
-    dashboardSetText(
-      "dashboardChartPeriodLabel",
-      config.label
-    );
-
+    dashboardSetText("dashboardChartPeriodLabel", config.label);
 
     const buckets =
       config.groupBy === "month"
-        ? dashboardMonthlyBuckets(
-            entries,
-            config.start,
-            config.end
-          )
-        : dashboardDailyBuckets(
-            entries,
-            config.start,
-            config.end
-          );
+        ? dashboardMonthlyBuckets(entries, config.start, config.end)
+        : dashboardDailyBuckets(entries, config.start, config.end);
 
+    const maxValue = Math.max(
+      1,
+      ...buckets.flatMap((item) => [item.filling, item.press]),
+    );
 
-    const maxValue =
-      Math.max(
-        1,
-        ...buckets.flatMap(
-          item => [
-            item.filling,
-            item.press
-          ]
-        )
-      );
-
-
-    chart.innerHTML =
-      buckets.map(item => {
-
+    chart.innerHTML = buckets
+      .map((item) => {
         const fillingHeight =
-          item.filling > 0
-            ? Math.max(
-                5,
-                (
-                  item.filling /
-                  maxValue
-                ) * 100
-              )
-            : 0;
-
+          item.filling > 0 ? Math.max(5, (item.filling / maxValue) * 100) : 0;
 
         const pressHeight =
-          item.press > 0
-            ? Math.max(
-                5,
-                (
-                  item.press /
-                  maxValue
-                ) * 100
-              )
-            : 0;
-
+          item.press > 0 ? Math.max(5, (item.press / maxValue) * 100) : 0;
 
         return `
           <div class="dashboard-day-group">
@@ -3109,9 +3594,7 @@
                 title="Filling ${dashboardQty(item.filling)} pcs"
               >
                 <span>
-                  ${item.filling
-                    ? dashboardQty(item.filling)
-                    : "0"}
+                  ${item.filling ? dashboardQty(item.filling) : "0"}
                 </span>
               </div>
 
@@ -3122,9 +3605,7 @@
                 title="Press ${dashboardQty(item.press)} pcs"
               >
                 <span>
-                  ${item.press
-                    ? dashboardQty(item.press)
-                    : "0"}
+                  ${item.press ? dashboardQty(item.press) : "0"}
                 </span>
               </div>
 
@@ -3136,8 +3617,8 @@
 
           </div>
         `;
-
-      }).join("");
+      })
+      .join("");
   }
   // function renderDashboardWeekly(entries) {
   //   const chart = el("dashboardWeeklyChart");
@@ -3203,34 +3684,43 @@
     if (!wrap) return;
 
     const alerts = [];
-    const sorted = balanceRows.slice().sort((a, b) =>
-      dashboardAgeDays(b.tanggalAsal) - dashboardAgeDays(a.tanggalAsal) ||
-      (Number(b.remaining) || 0) - (Number(a.remaining) || 0)
-    );
+    const sorted = balanceRows
+      .slice()
+      .sort(
+        (a, b) =>
+          dashboardAgeDays(b.tanggalAsal) - dashboardAgeDays(a.tanggalAsal) ||
+          (Number(b.remaining) || 0) - (Number(a.remaining) || 0),
+      );
 
-    sorted.filter(row => dashboardAgeDays(row.tanggalAsal) >= 2).slice(0, 2).forEach(row => {
-      alerts.push({
-        type: "critical",
-        label: "KRITIS",
-        text: `${row.produk} — sisa Press ${dashboardQty(row.remaining)} pcs sejak ${dashboardShortDate(row.tanggalAsal)}`
-      });
-    });
-
-    if (alerts.length < 3) {
-      sorted.filter(row => dashboardAgeDays(row.tanggalAsal) === 1).slice(0, 3 - alerts.length).forEach(row => {
+    sorted
+      .filter((row) => dashboardAgeDays(row.tanggalAsal) >= 2)
+      .slice(0, 2)
+      .forEach((row) => {
         alerts.push({
-          type: "warning",
-          label: "PERINGATAN",
-          text: `${row.produk} — sisa Press ${dashboardQty(row.remaining)} pcs sejak kemarin`
+          type: "critical",
+          label: "KRITIS",
+          text: `${row.produk} — sisa Press ${dashboardQty(row.remaining)} pcs sejak ${dashboardShortDate(row.tanggalAsal)}`,
         });
       });
+
+    if (alerts.length < 3) {
+      sorted
+        .filter((row) => dashboardAgeDays(row.tanggalAsal) === 1)
+        .slice(0, 3 - alerts.length)
+        .forEach((row) => {
+          alerts.push({
+            type: "warning",
+            label: "PERINGATAN",
+            text: `${row.produk} — sisa Press ${dashboardQty(row.remaining)} pcs sejak kemarin`,
+          });
+        });
     }
 
     if (brokenToday > 0 && alerts.length < 4) {
       alerts.push({
         type: "attention",
         label: "PERHATIAN",
-        text: `Botol pecah Press hari ini: ${dashboardQty(brokenToday)} pcs`
+        text: `Botol pecah Press hari ini: ${dashboardQty(brokenToday)} pcs`,
       });
     }
 
@@ -3238,7 +3728,7 @@
       alerts.push({
         type: "attention",
         label: "PERHATIAN",
-        text: `${balanceRows.length} kombinasi Produk + Botol masih menunggu Press`
+        text: `${balanceRows.length} kombinasi Produk + Botol masih menunggu Press`,
       });
     }
 
@@ -3255,12 +3745,16 @@
       return;
     }
 
-    wrap.innerHTML = activeAlerts.map(item => `
+    wrap.innerHTML = activeAlerts
+      .map(
+        (item) => `
       <div class="dashboard-alert ${item.type}">
         <span class="dashboard-alert-icon">${item.type === "critical" ? "!" : item.type === "warning" ? "!" : "•"}</span>
         <span class="dashboard-alert-text">${esc(item.text)}</span>
         <span class="dashboard-alert-tag">${item.label}</span>
-      </div>`).join("");
+      </div>`,
+      )
+      .join("");
   }
 
   function renderDashboardPriority(balanceRows) {
@@ -3274,19 +3768,24 @@
       Logic lama tetap dipertahankan
       ===================================== */
     const allRows = balanceRows
-        .slice()
-        .sort((a, b) =>
+      .slice()
+      .sort(
+        (a, b) =>
           dashboardAgeDays(b.tanggalAsal) - dashboardAgeDays(a.tanggalAsal) ||
-          String(a.tanggalAsal || "").localeCompare(String(b.tanggalAsal || "")) ||
-          (Number(b.remaining) || 0) - (Number(a.remaining) || 0)
-        );
+          String(a.tanggalAsal || "").localeCompare(
+            String(b.tanggalAsal || ""),
+          ) ||
+          (Number(b.remaining) || 0) - (Number(a.remaining) || 0),
+      );
     /* =====================================
       PAGINATION
       ===================================== */
     const pageSize = CONFIG.DASHBOARD_PRIORITY_PAGE_SIZE;
-    const totalPages =
-      Math.max(1, Math.ceil(allRows.length /pageSize));
-      state.dashboard.priorityPage = Math.min(Math.max(1, state.dashboard.priorityPage || 1), totalPages);
+    const totalPages = Math.max(1, Math.ceil(allRows.length / pageSize));
+    state.dashboard.priorityPage = Math.min(
+      Math.max(1, state.dashboard.priorityPage || 1),
+      totalPages,
+    );
     const page = state.dashboard.priorityPage;
     const start = (page - 1) * pageSize;
     const rows = allRows.slice(start, start + pageSize);
@@ -3312,15 +3811,18 @@
     /* =====================================
       RENDER ROW
       ===================================== */
-    tbody.innerHTML =
-      rows.map(row => {
+    tbody.innerHTML = rows
+      .map((row) => {
         const level = dashboardPriorityLevel(row);
         const age = dashboardAgeDays(row.tanggalAsal);
-        const canUse = can("accessPress") && 
-            isMasterValue("produk", row.produk) && isMasterValue("botol", row.botol);
+        const canUse =
+          can("accessPress") &&
+          isMasterValue("produk", row.produk) &&
+          isMasterValue("botol", row.botol);
         const actionTitle = !can("accessPress")
-            ? "Anda tidak memiliki akses Press."
-            : !isMasterValue("produk", row.produk) || !isMasterValue("botol",row.botol)
+          ? "Anda tidak memiliki akses Press."
+          : !isMasterValue("produk", row.produk) ||
+              !isMasterValue("botol", row.botol)
             ? "Produk/Botol historis tidak tersedia di Master."
             : "Buka form Press dengan produk ini.";
         return `
@@ -3340,7 +3842,7 @@
             </td>
             <td>
               <span class="dashboard-age ${level.key}">
-                ${age === 0 ? "Hari ini": `${age} hari`}
+                ${age === 0 ? "Hari ini" : `${age} hari`}
               </span>
             </td>
             <td>
@@ -3353,24 +3855,26 @@
             </td>
           </tr>
         `;
-      }).join("");
+      })
+      .join("");
     /* =====================================
       SUMMARY
       ===================================== */
     const from = start + 1;
     const to = Math.min(start + pageSize, allRows.length);
     if (summary) {
-      summary.textContent =`${from}–${to} dari ${allRows.length} prioritas pengerjaan`;}
+      summary.textContent = `${from}–${to} dari ${allRows.length} prioritas pengerjaan`;
+    }
     /* =====================================
       TOMBOL PAGINATION
       ===================================== */
-    renderPagination(pagination, page, totalPages, nextPage => {
-        state.dashboard.priorityPage = nextPage;
-        renderDashboardPriority(balanceRows);
-        document.querySelector(".dashboard-priority-panel")
-        ?.scrollIntoView({behavior: "smooth", block: "start"});
-      }
-    );
+    renderPagination(pagination, page, totalPages, (nextPage) => {
+      state.dashboard.priorityPage = nextPage;
+      renderDashboardPriority(balanceRows);
+      document
+        .querySelector(".dashboard-priority-panel")
+        ?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
   // function renderDashboardPriority(balanceRows) {
   //   const tbody = el("dashboardPriorityBody");
@@ -3416,7 +3920,7 @@
     if (!wrap) return;
 
     const grouped = new Map();
-    balanceRows.forEach(row => {
+    balanceRows.forEach((row) => {
       const key = String(row.produk || "").trim() || "Tanpa Produk";
       grouped.set(key, (grouped.get(key) || 0) + (Number(row.remaining) || 0));
     });
@@ -3427,24 +3931,29 @@
       .slice(0, 10);
 
     if (!rows.length) {
-      wrap.innerHTML = '<div class="dashboard-empty-state">Tidak ada sisa Press.</div>';
+      wrap.innerHTML =
+        '<div class="dashboard-empty-state">Tidak ada sisa Press.</div>';
       return;
     }
 
-    const max = Math.max(1, ...rows.map(row => row.remaining));
-    wrap.innerHTML = rows.map(row => `
+    const max = Math.max(1, ...rows.map((row) => row.remaining));
+    wrap.innerHTML = rows
+      .map(
+        (row) => `
       <div class="dashboard-hbar-row">
         <span class="dashboard-hbar-label" title="${esc(row.produk)}">${esc(row.produk)}</span>
-        <span class="dashboard-hbar-track"><i style="width:${Math.max(3, row.remaining / max * 100)}%"></i></span>
+        <span class="dashboard-hbar-track"><i style="width:${Math.max(3, (row.remaining / max) * 100)}%"></i></span>
         <strong>${dashboardQty(row.remaining)}</strong>
-      </div>`).join("");
+      </div>`,
+      )
+      .join("");
   }
 
   function dashboardPercent(value, maxFractionDigits = 2) {
     const number = Number(value) || 0;
     return `${number.toLocaleString("id-ID", {
       minimumFractionDigits: 0,
-      maximumFractionDigits: maxFractionDigits
+      maximumFractionDigits: maxFractionDigits,
     })}%`;
   }
 
@@ -3457,23 +3966,38 @@
       const [year, month] = value.split("-").map(Number);
       const start = new Date(year, month - 1, 1);
       const end = new Date(year, month, 0);
-      return { mode, start, end, label: start.toLocaleDateString("id-ID", { month: "long", year: "numeric" }) };
+      return {
+        mode,
+        start,
+        end,
+        label: start.toLocaleDateString("id-ID", {
+          month: "long",
+          year: "numeric",
+        }),
+      };
     }
 
     if (mode === "year") {
       const year = Number(state.dashboard.pressKpiYear) || today.getFullYear();
-      return { mode, start: new Date(year, 0, 1), end: new Date(year, 11, 31), label: `Tahun ${year}` };
+      return {
+        mode,
+        start: new Date(year, 0, 1),
+        end: new Date(year, 11, 31),
+        label: `Tahun ${year}`,
+      };
     }
 
     if (mode === "range") {
-      let start = dashboardDateParts(state.dashboard.pressKpiStart) || dashboardAddDays(today, -6);
+      let start =
+        dashboardDateParts(state.dashboard.pressKpiStart) ||
+        dashboardAddDays(today, -6);
       let end = dashboardDateParts(state.dashboard.pressKpiEnd) || today;
       if (start > end) [start, end] = [end, start];
       return {
         mode,
         start,
         end,
-        label: `${start.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })} – ${end.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })}`
+        label: `${start.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })} – ${end.toLocaleDateString("id-ID", { day: "2-digit", month: "short", year: "numeric" })}`,
       };
     }
 
@@ -3496,16 +4020,33 @@
     const targetPerDay = 3500;
     const workHours = 7;
     const period = dashboardPressKpiPeriod();
-    const operatorFilter = String(state.dashboard.pressKpiOperator || "").trim().toLowerCase();
+    const operatorFilter = String(state.dashboard.pressKpiOperator || "")
+      .trim()
+      .toLowerCase();
     const grouped = new Map();
 
     entries
-      .filter(entry => entry.tab === "press" && dashboardDateInPeriod(entry.tanggal, period))
-      .filter(entry => !operatorFilter || String(entry.operator || "").trim().toLowerCase().includes(operatorFilter))
-      .forEach(entry => {
+      .filter(
+        (entry) =>
+          entry.tab === "press" && dashboardDateInPeriod(entry.tanggal, period),
+      )
+      .filter(
+        (entry) =>
+          !operatorFilter ||
+          String(entry.operator || "")
+            .trim()
+            .toLowerCase()
+            .includes(operatorFilter),
+      )
+      .forEach((entry) => {
         const operator = String(entry.operator || "").trim() || "—";
         if (!grouped.has(operator)) {
-          grouped.set(operator, { operator, totalPress: 0, broken: 0, activeDates: new Set() });
+          grouped.set(operator, {
+            operator,
+            totalPress: 0,
+            broken: 0,
+            activeDates: new Set(),
+          });
         }
         const row = grouped.get(operator);
         row.totalPress += Number(entry.totalQty) || 0;
@@ -3515,17 +4056,26 @@
 
     const apdByOperator = new Map();
     (state.apdEntries || [])
-      .filter(item => item && dashboardDateInPeriod(item.tanggal, period))
-      .filter(item => !operatorFilter || String(item.operator || "").trim().toLowerCase().includes(operatorFilter))
-      .forEach(item => {
-        const key = String(item.operator || "").trim().toLowerCase();
+      .filter((item) => item && dashboardDateInPeriod(item.tanggal, period))
+      .filter(
+        (item) =>
+          !operatorFilter ||
+          String(item.operator || "")
+            .trim()
+            .toLowerCase()
+            .includes(operatorFilter),
+      )
+      .forEach((item) => {
+        const key = String(item.operator || "")
+          .trim()
+          .toLowerCase();
         if (!key) return;
         if (!apdByOperator.has(key)) apdByOperator.set(key, []);
         apdByOperator.get(key).push(Number(item.percentage) || 0);
       });
 
     const allRows = Array.from(grouped.values())
-      .map(row => {
+      .map((row) => {
         const activeDays = Math.max(1, row.activeDates.size);
         const apdValues = apdByOperator.get(row.operator.toLowerCase()) || [];
         const kpiApd = apdValues.length
@@ -3535,22 +4085,33 @@
           ...row,
           activeDays,
           perHour: row.totalPress / (workHours * activeDays),
-          kpiResult: row.totalPress / (targetPerDay * activeDays) * 100,
-          kpiReject: row.totalPress > 0 ? row.broken / row.totalPress * 100 : 0,
+          kpiResult: (row.totalPress / (targetPerDay * activeDays)) * 100,
+          kpiReject:
+            row.totalPress > 0 ? (row.broken / row.totalPress) * 100 : 0,
           kpiApd,
-          apdCount: apdValues.length
+          apdCount: apdValues.length,
         };
       })
-      .sort((a, b) => b.totalPress - a.totalPress || a.operator.localeCompare(b.operator, "id"));
+      .sort(
+        (a, b) =>
+          b.totalPress - a.totalPress ||
+          a.operator.localeCompare(b.operator, "id"),
+      );
 
     const pageSize = CONFIG.DASHBOARD_PRESS_KPI_PAGE_SIZE;
     const totalPages = Math.max(1, Math.ceil(allRows.length / pageSize));
-    state.dashboard.pressKpiPage = Math.min(Math.max(1, state.dashboard.pressKpiPage || 1), totalPages);
+    state.dashboard.pressKpiPage = Math.min(
+      Math.max(1, state.dashboard.pressKpiPage || 1),
+      totalPages,
+    );
     const page = state.dashboard.pressKpiPage;
     const start = (page - 1) * pageSize;
     const visibleRows = allRows.slice(start, start + pageSize);
 
-    tbody.innerHTML = visibleRows.length ? visibleRows.map(row => `
+    tbody.innerHTML = visibleRows.length
+      ? visibleRows
+          .map(
+            (row) => `
       <tr>
         <td><strong>${highlightSearchMatch(row.operator, state.dashboard.pressKpiOperator)}</strong></td>
         <td><strong>${dashboardQty(row.totalPress)}</strong></td>
@@ -3559,17 +4120,25 @@
         <td class="${row.broken > 0 ? "pecah-tag" : ""}">${dashboardQty(row.broken)}</td>
         <td><span class="dashboard-kpi-percent reject">${dashboardPercent(row.kpiReject)}</span></td>
         <td><span class="dashboard-kpi-percent apd">${row.kpiApd === null ? "—" : dashboardPercent(row.kpiApd)}</span></td>
-      </tr>`).join("")
+      </tr>`,
+          )
+          .join("")
       : `<tr><td colspan="7" class="empty-row">Belum ada data Press pada periode/filter ini.</td></tr>`;
 
     const totalPress = allRows.reduce((sum, row) => sum + row.totalPress, 0);
     const totalBroken = allRows.reduce((sum, row) => sum + row.broken, 0);
-    const rejectTotal = totalPress > 0 ? totalBroken / totalPress * 100 : 0;
+    const rejectTotal = totalPress > 0 ? (totalBroken / totalPress) * 100 : 0;
 
-    dashboardSetText("dashboardPressKpiOperators", dashboardQty(allRows.length));
+    dashboardSetText(
+      "dashboardPressKpiOperators",
+      dashboardQty(allRows.length),
+    );
     dashboardSetText("dashboardPressKpiTotal", dashboardQty(totalPress));
     dashboardSetText("dashboardPressKpiBroken", dashboardQty(totalBroken));
-    dashboardSetText("dashboardPressKpiRejectTotal", dashboardPercent(rejectTotal));
+    dashboardSetText(
+      "dashboardPressKpiRejectTotal",
+      dashboardPercent(rejectTotal),
+    );
 
     if (summary) {
       if (allRows.length) {
@@ -3583,7 +4152,7 @@
 
     if (pagination) {
       pagination.hidden = totalPages <= 1;
-      renderPagination(pagination, page, totalPages, nextPage => {
+      renderPagination(pagination, page, totalPages, (nextPage) => {
         state.dashboard.pressKpiPage = nextPage;
         renderDashboardPressKpi(entries);
       });
@@ -3596,27 +4165,36 @@
     const today = todayStr();
     const grouped = new Map();
 
-    entries.filter(entry => entry.tanggal === today).forEach(entry => {
-      const operator = String(entry.operator || "").trim() || "—";
-      if (!grouped.has(operator)) grouped.set(operator, { operator, filling: 0, press: 0 });
-      const item = grouped.get(operator);
-      const qty = Number(entry.totalQty) || 0;
-      if (entry.tab === "filling") item.filling += qty;
-      if (entry.tab === "press") item.press += qty;
-    });
+    entries
+      .filter((entry) => entry.tanggal === today)
+      .forEach((entry) => {
+        const operator = String(entry.operator || "").trim() || "—";
+        if (!grouped.has(operator))
+          grouped.set(operator, { operator, filling: 0, press: 0 });
+        const item = grouped.get(operator);
+        const qty = Number(entry.totalQty) || 0;
+        if (entry.tab === "filling") item.filling += qty;
+        if (entry.tab === "press") item.press += qty;
+      });
 
     const rows = Array.from(grouped.values())
-      .map(row => ({ ...row, total: row.filling + row.press }))
+      .map((row) => ({ ...row, total: row.filling + row.press }))
       .sort((a, b) => b.total - a.total)
       .slice(0, 6);
 
-    tbody.innerHTML = rows.length ? rows.map(row => `
+    tbody.innerHTML = rows.length
+      ? rows
+          .map(
+            (row) => `
       <tr>
         <td><strong>${esc(row.operator)}</strong></td>
         <td>${dashboardQty(row.filling)}</td>
         <td>${dashboardQty(row.press)}</td>
         <td><strong class="dashboard-total-value">${dashboardQty(row.total)}</strong></td>
-      </tr>`).join("") : '<tr><td colspan="4" class="empty-row">Belum ada data produksi hari ini.</td></tr>';
+      </tr>`,
+          )
+          .join("")
+      : '<tr><td colspan="4" class="empty-row">Belum ada data produksi hari ini.</td></tr>';
   }
 
   function renderDashboard() {
@@ -3626,41 +4204,62 @@
     const today = todayStr();
     const balanceRows = getPressBalanceRows();
     const fillingToday = entries
-      .filter(entry => entry.tab === "filling" && entry.tanggal === today)
+      .filter((entry) => entry.tab === "filling" && entry.tanggal === today)
       .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
     const pressToday = entries
-      .filter(entry => entry.tab === "press" && entry.tanggal === today)
+      .filter((entry) => entry.tab === "press" && entry.tanggal === today)
       .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
     // Botol rusak Filling hanya dicatat sebagai data Spreadsheet.
     // KPI/alert kerusakan hanya memakai Botol Rusak dari proses Press.
     const brokenToday = entries
-      .filter(entry => entry.tab === "press" && entry.tanggal === today)
+      .filter((entry) => entry.tab === "press" && entry.tanggal === today)
       .reduce((sum, entry) => sum + (Number(entry.qtyBotolPecah) || 0), 0);
-    const waiting = balanceRows.reduce((sum, row) => sum + (Number(row.remaining) || 0), 0);
+    const waiting = balanceRows.reduce(
+      (sum, row) => sum + (Number(row.remaining) || 0),
+      0,
+    );
     const oldestDays = balanceRows.length
-      ? Math.max(...balanceRows.map(row => dashboardAgeDays(row.tanggalAsal)))
+      ? Math.max(...balanceRows.map((row) => dashboardAgeDays(row.tanggalAsal)))
       : 0;
     const fillingAll = entries
-      .filter(entry => entry.tab === "filling")
+      .filter((entry) => entry.tab === "filling")
       .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
     const pressAll = entries
-      .filter(entry => entry.tab === "press")
+      .filter((entry) => entry.tab === "press")
       .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
-    const donePercent = fillingAll > 0 ? Math.min(100, Math.max(0, pressAll / fillingAll * 100)) : 0;
+    const donePercent =
+      fillingAll > 0
+        ? Math.min(100, Math.max(0, (pressAll / fillingAll) * 100))
+        : 0;
 
-    dashboardSetText("dashboardDate", new Date().toLocaleDateString("id-ID", {
-      weekday: "long", day: "2-digit", month: "long", year: "numeric"
-    }));
+    dashboardSetText(
+      "dashboardDate",
+      new Date().toLocaleDateString("id-ID", {
+        weekday: "long",
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+      }),
+    );
     dashboardSetText("dashFillingToday", dashboardQty(fillingToday));
     dashboardSetText("dashPressToday", dashboardQty(pressToday));
     dashboardSetText("dashPressRemaining", dashboardQty(waiting));
-    dashboardSetText("dashActiveProducts", dashboardQty(masterValues("produk").length));
+    dashboardSetText(
+      "dashActiveProducts",
+      dashboardQty(masterValues("produk").length),
+    );
     dashboardSetText("dashBrokenToday", dashboardQty(brokenToday));
     dashboardSetText("dashOldestDays", dashboardQty(oldestDays));
     dashboardSetText("dashFlowFilling", `${dashboardQty(fillingToday)} pcs`);
-    dashboardSetText("dashFlowWaiting", `${dashboardQty(waiting)} pcs tertunda`);
+    dashboardSetText(
+      "dashFlowWaiting",
+      `${dashboardQty(waiting)} pcs tertunda`,
+    );
     dashboardSetText("dashFlowPress", `${dashboardQty(pressToday)} pcs`);
-    dashboardSetText("dashFlowDone", `${donePercent.toLocaleString("id-ID", { maximumFractionDigits: 1 })}% selesai`);
+    dashboardSetText(
+      "dashFlowDone",
+      `${donePercent.toLocaleString("id-ID", { maximumFractionDigits: 1 })}% selesai`,
+    );
 
     renderDashboardWeekly(entries);
     renderDashboardAlerts(balanceRows, brokenToday);
@@ -3671,7 +4270,7 @@
   }
 
   function initDashboard() {
-  /* =====================================================
+    /* =====================================================
      FILTER CHART DASHBOARD
      ===================================================== */
     const today = dashboardDateParts(todayStr()) || new Date();
@@ -3702,25 +4301,39 @@
     const pressKpiStartInput = el("dashboardPressKpiStart");
     const pressKpiEndInput = el("dashboardPressKpiEnd");
 
-    if (!state.dashboard.pressKpiMonth) state.dashboard.pressKpiMonth = currentMonth;
-    if (!state.dashboard.pressKpiYear) state.dashboard.pressKpiYear = currentYear;
+    if (!state.dashboard.pressKpiMonth)
+      state.dashboard.pressKpiMonth = currentMonth;
+    if (!state.dashboard.pressKpiYear)
+      state.dashboard.pressKpiYear = currentYear;
 
     function updatePressKpiFilterUI() {
       const mode = state.dashboard.pressKpiMode || "date";
-      if (el("dashboardPressKpiDateWrap")) el("dashboardPressKpiDateWrap").hidden = mode !== "date";
-      if (el("dashboardPressKpiMonthWrap")) el("dashboardPressKpiMonthWrap").hidden = mode !== "month";
-      if (el("dashboardPressKpiYearWrap")) el("dashboardPressKpiYearWrap").hidden = mode !== "year";
-      if (el("dashboardPressKpiStartWrap")) el("dashboardPressKpiStartWrap").hidden = mode !== "range";
-      if (el("dashboardPressKpiEndWrap")) el("dashboardPressKpiEndWrap").hidden = mode !== "range";
+      if (el("dashboardPressKpiDateWrap"))
+        el("dashboardPressKpiDateWrap").hidden = mode !== "date";
+      if (el("dashboardPressKpiMonthWrap"))
+        el("dashboardPressKpiMonthWrap").hidden = mode !== "month";
+      if (el("dashboardPressKpiYearWrap"))
+        el("dashboardPressKpiYearWrap").hidden = mode !== "year";
+      if (el("dashboardPressKpiStartWrap"))
+        el("dashboardPressKpiStartWrap").hidden = mode !== "range";
+      if (el("dashboardPressKpiEndWrap"))
+        el("dashboardPressKpiEndWrap").hidden = mode !== "range";
     }
 
-    if (pressKpiModeInput) pressKpiModeInput.value = state.dashboard.pressKpiMode || "date";
-    if (pressKpiOperatorInput) pressKpiOperatorInput.value = state.dashboard.pressKpiOperator || "";
-    if (pressKpiDateInput) pressKpiDateInput.value = state.dashboard.pressKpiDate;
-    if (pressKpiMonthInput) pressKpiMonthInput.value = state.dashboard.pressKpiMonth;
-    if (pressKpiYearInput) pressKpiYearInput.value = state.dashboard.pressKpiYear;
-    if (pressKpiStartInput) pressKpiStartInput.value = state.dashboard.pressKpiStart || "";
-    if (pressKpiEndInput) pressKpiEndInput.value = state.dashboard.pressKpiEnd || "";
+    if (pressKpiModeInput)
+      pressKpiModeInput.value = state.dashboard.pressKpiMode || "date";
+    if (pressKpiOperatorInput)
+      pressKpiOperatorInput.value = state.dashboard.pressKpiOperator || "";
+    if (pressKpiDateInput)
+      pressKpiDateInput.value = state.dashboard.pressKpiDate;
+    if (pressKpiMonthInput)
+      pressKpiMonthInput.value = state.dashboard.pressKpiMonth;
+    if (pressKpiYearInput)
+      pressKpiYearInput.value = state.dashboard.pressKpiYear;
+    if (pressKpiStartInput)
+      pressKpiStartInput.value = state.dashboard.pressKpiStart || "";
+    if (pressKpiEndInput)
+      pressKpiEndInput.value = state.dashboard.pressKpiEnd || "";
     updatePressKpiFilterUI();
 
     const rerenderPressKpi = () => {
@@ -3729,17 +4342,31 @@
     };
     const updatePressKpiOperatorClear = () => {
       if (pressKpiOperatorClear) {
-        pressKpiOperatorClear.hidden = !String(pressKpiOperatorInput?.value || "").trim();
+        pressKpiOperatorClear.hidden = !String(
+          pressKpiOperatorInput?.value || "",
+        ).trim();
       }
     };
-    pressKpiModeInput?.addEventListener("change", () => { state.dashboard.pressKpiMode = pressKpiModeInput.value; updatePressKpiFilterUI(); rerenderPressKpi(); });
+    pressKpiModeInput?.addEventListener("change", () => {
+      state.dashboard.pressKpiMode = pressKpiModeInput.value;
+      updatePressKpiFilterUI();
+      rerenderPressKpi();
+    });
     const syncPressKpiOperatorFilter = () => {
-      state.dashboard.pressKpiOperator = String(pressKpiOperatorInput?.value || "").trim();
+      state.dashboard.pressKpiOperator = String(
+        pressKpiOperatorInput?.value || "",
+      ).trim();
       updatePressKpiOperatorClear();
       rerenderPressKpi();
     };
-    pressKpiOperatorInput?.addEventListener("input", syncPressKpiOperatorFilter);
-    pressKpiOperatorInput?.addEventListener("change", syncPressKpiOperatorFilter);
+    pressKpiOperatorInput?.addEventListener(
+      "input",
+      syncPressKpiOperatorFilter,
+    );
+    pressKpiOperatorInput?.addEventListener(
+      "change",
+      syncPressKpiOperatorFilter,
+    );
     pressKpiOperatorClear?.addEventListener("click", () => {
       if (pressKpiOperatorInput) pressKpiOperatorInput.value = "";
       state.dashboard.pressKpiOperator = "";
@@ -3748,11 +4375,26 @@
       pressKpiOperatorInput?.focus();
     });
     updatePressKpiOperatorClear();
-    pressKpiDateInput?.addEventListener("change", () => { state.dashboard.pressKpiDate = pressKpiDateInput.value || todayStr(); rerenderPressKpi(); });
-    pressKpiMonthInput?.addEventListener("change", () => { state.dashboard.pressKpiMonth = pressKpiMonthInput.value || currentMonth; rerenderPressKpi(); });
-    pressKpiYearInput?.addEventListener("change", () => { state.dashboard.pressKpiYear = pressKpiYearInput.value || currentYear; rerenderPressKpi(); });
-    pressKpiStartInput?.addEventListener("change", () => { state.dashboard.pressKpiStart = pressKpiStartInput.value; rerenderPressKpi(); });
-    pressKpiEndInput?.addEventListener("change", () => { state.dashboard.pressKpiEnd = pressKpiEndInput.value; rerenderPressKpi(); });
+    pressKpiDateInput?.addEventListener("change", () => {
+      state.dashboard.pressKpiDate = pressKpiDateInput.value || todayStr();
+      rerenderPressKpi();
+    });
+    pressKpiMonthInput?.addEventListener("change", () => {
+      state.dashboard.pressKpiMonth = pressKpiMonthInput.value || currentMonth;
+      rerenderPressKpi();
+    });
+    pressKpiYearInput?.addEventListener("change", () => {
+      state.dashboard.pressKpiYear = pressKpiYearInput.value || currentYear;
+      rerenderPressKpi();
+    });
+    pressKpiStartInput?.addEventListener("change", () => {
+      state.dashboard.pressKpiStart = pressKpiStartInput.value;
+      rerenderPressKpi();
+    });
+    pressKpiEndInput?.addEventListener("change", () => {
+      state.dashboard.pressKpiEnd = pressKpiEndInput.value;
+      rerenderPressKpi();
+    });
 
     if (modeInput) {
       modeInput.value = state.dashboard.chartMode;
@@ -3764,46 +4406,35 @@
       yearInput.value = state.dashboard.chartYear;
     }
     updateDashboardChartFilterUI();
-    modeInput?.addEventListener(
-      "change", () => {
-        state.dashboard.chartMode = modeInput.value;
-        updateDashboardChartFilterUI();
-        renderDashboardWeekly(dashboardEntries()
-        );
-      }
-    );
+    modeInput?.addEventListener("change", () => {
+      state.dashboard.chartMode = modeInput.value;
+      updateDashboardChartFilterUI();
+      renderDashboardWeekly(dashboardEntries());
+    });
 
-    monthInput?.addEventListener(
-      "change", () => {
-        state.dashboard.chartMonth = monthInput.value;
+    monthInput?.addEventListener("change", () => {
+      state.dashboard.chartMonth = monthInput.value;
+      renderDashboardWeekly(dashboardEntries());
+    });
+
+    yearInput?.addEventListener("change", () => {
+      state.dashboard.chartYear = yearInput.value;
+      renderDashboardWeekly(dashboardEntries());
+    });
+
+    startInput?.addEventListener("change", () => {
+      state.dashboard.chartStart = startInput.value;
+      if (state.dashboard.chartMode === "range") {
         renderDashboardWeekly(dashboardEntries());
       }
-    );
+    });
 
-    yearInput?.addEventListener(
-      "change", () => {
-        state.dashboard.chartYear = yearInput.value;
+    endInput?.addEventListener("change", () => {
+      state.dashboard.chartEnd = endInput.value;
+      if (state.dashboard.chartMode === "range") {
         renderDashboardWeekly(dashboardEntries());
       }
-    );
-
-    startInput?.addEventListener(
-      "change", () => {
-        state.dashboard.chartStart = startInput.value;
-        if (state.dashboard.chartMode === "range") {
-          renderDashboardWeekly(dashboardEntries());
-        }
-      }
-    );
-
-    endInput?.addEventListener(
-      "change", () => {
-        state.dashboard.chartEnd = endInput.value;
-        if (state.dashboard.chartMode === "range") {
-          renderDashboardWeekly(dashboardEntries());
-        }
-      }
-    );
+    });
     const refreshBtn = el("dashboardRefresh");
     refreshBtn?.addEventListener("click", async () => {
       refreshBtn.disabled = true;
@@ -3821,13 +4452,15 @@
       }
     });
 
-    el("dashboardPriorityBody")?.addEventListener("click", event => {
+    el("dashboardPriorityBody")?.addEventListener("click", (event) => {
       const btn = event.target.closest(".dashboard-work-btn");
       if (!btn || btn.disabled) return;
-      if (!can("accessPress")) return toast("Anda tidak memiliki akses Press.", true);
+      if (!can("accessPress"))
+        return toast("Anda tidak memiliki akses Press.", true);
 
       const pressTab = qs('.tab-btn[data-view="press"]');
-      if (!pressTab || pressTab.hidden) return toast("Tab Press tidak tersedia untuk user ini.", true);
+      if (!pressTab || pressTab.hidden)
+        return toast("Tab Press tidak tersedia untuk user ini.", true);
       pressTab.click();
 
       const section = el("view-press");
@@ -3854,21 +4487,21 @@
   function initTabs() {
     const tabbar = el("mainTabbar");
     if (!tabbar) return;
-    tabbar.addEventListener("click", event => {
+    tabbar.addEventListener("click", (event) => {
       const btn = event.target.closest(".tab-btn");
       if (!btn || !state.currentUser) return;
       const view = btn.dataset.view;
       const permissionMap = {
-        dashboard : "accessDashboard",
+        dashboard: "accessDashboard",
         filling: "accessFilling",
         press: "accessPress",
         apd: "accessApd",
         laporan: "accessReports",
-        master: "accessMaster"
+        master: "accessMaster",
       };
 
       const permisson = permissionMap[view];
-      if(!permisson || !can(permisson)){
+      if (!permisson || !can(permisson)) {
         return;
       }
       // const allowed = view === "dashboard" ? can("accessDashboard")
@@ -3878,25 +4511,75 @@
       //         : view === "master" ? can("accessMaster") : false;
       // if (!allowed) return;
 
-      qsa(".tab-btn", tabbar).forEach(node => { 
+      qsa(".tab-btn", tabbar).forEach((node) => {
         node.classList.toggle("active", node === btn);
       });
-      qsa(".content > .view").forEach(node => { node.hidden = node.id !== "view-" + view; });
+      qsa(".content > .view").forEach((node) => {
+        node.hidden = node.id !== "view-" + view;
+      });
     });
   }
 
   /* ------------------------- LAPORAN ------------------------- */
+  function laporanMetricColumns(
+    lineValue = state.lastLaporan?.line || el("lap-line")?.value || "all",
+  ) {
+    const line = String(lineValue || "all").toLowerCase();
+    const columns = [{ key: "_kpiResult", label: "KPI Hasil", tone: "result" }];
+
+    // KPI Kardus Basah hanya relevan untuk Filling, sedangkan KPI Botol Rusak
+    // hanya relevan untuk Press. Pada Semua Line keduanya ditampilkan.
+    if (line === "all" || line === "filling") {
+      columns.push({
+        key: "_kpiWetCarton",
+        label: "KPI Kardus Basah",
+        tone: "wet",
+      });
+    }
+    if (line === "all" || line === "press") {
+      columns.push({
+        key: "_kpiBroken",
+        label: "KPI Botol Rusak",
+        tone: "reject",
+      });
+    }
+
+    columns.push({ key: "_kpiApd", label: "KPI APD", tone: "apd" });
+    return columns;
+  }
+
+  function laporanMetricCellHtml(entry, column) {
+    return `<td><span class="dashboard-kpi-percent ${esc(column.tone)}">${kpiReportDisplay(entry[column.key])}</span></td>`;
+  }
+
   function renderLaporanRows() {
     if (!state.lastLaporan) return;
     const rows = state.lastLaporan.rows;
     const tbody = el("lap-tbody");
+    if (!tbody) return;
+
+    const metricColumns = laporanMetricColumns(state.lastLaporan.line);
+    const table = tbody.closest("table");
+    const headerRow = table?.querySelector("thead tr");
+    if (headerRow) {
+      headerRow.innerHTML = `
+        <th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th>
+        ${metricColumns.map((column) => `<th>${esc(column.label)}</th>`).join("")}
+      `;
+    }
+
     const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PAGE_SIZE));
-    state.pages.laporan = Math.min(Math.max(1, state.pages.laporan), totalPages);
+    state.pages.laporan = Math.min(
+      Math.max(1, state.pages.laporan),
+      totalPages,
+    );
     const page = state.pages.laporan;
     const start = (page - 1) * CONFIG.PAGE_SIZE;
     const visible = rows.slice(start, start + CONFIG.PAGE_SIZE);
 
-    tbody.innerHTML = visible.map(e => `
+    tbody.innerHTML = visible
+      .map(
+        (e) => `
       <tr>
         <td><span class="id-badge">${esc(e.reportId)}</span></td>
         <td>${esc(LINE_LABEL[e.tab] || e.tab)}</td>
@@ -3907,22 +4590,27 @@
         <td>${Number(e.qtyKardus) || 0}</td>
         <td><strong>${Number(e.totalQty) || 0}</strong></td>
         <td>${Number(e.qtyBotolPecah) || 0}</td>
-        <td><span class="dashboard-kpi-percent result">${kpiReportDisplay(e._kpiResult)}</span></td>
-        <td><span class="dashboard-kpi-percent reject">${kpiReportDisplay(e._kpiBroken)}</span></td>
-        <td><span class="dashboard-kpi-percent apd">${kpiReportDisplay(e._kpiApd)}</span></td>
-      </tr>`).join("");
+        ${metricColumns.map((column) => laporanMetricCellHtml(e, column)).join("")}
+      </tr>`,
+      )
+      .join("");
 
     const from = rows.length ? start + 1 : 0;
     const to = Math.min(start + CONFIG.PAGE_SIZE, rows.length);
-    el("lap-page-summary").textContent = `${from}–${to} dari ${rows.length} entri · Halaman ${page} dari ${totalPages}`;
-    renderPagination(el("lap-pagination"), page, totalPages, nextPage => {
+    el("lap-page-summary").textContent =
+      `${from}–${to} dari ${rows.length} entri · Halaman ${page} dari ${totalPages}`;
+    renderPagination(el("lap-pagination"), page, totalPages, (nextPage) => {
       state.pages.laporan = nextPage;
       renderLaporanRows();
     });
   }
 
   function buildLaporanPrintHtml(options = {}) {
-    if (!state.lastLaporan || !Array.isArray(state.lastLaporan.rows) || !state.lastLaporan.rows.length) {
+    if (
+      !state.lastLaporan ||
+      !Array.isArray(state.lastLaporan.rows) ||
+      !state.lastLaporan.rows.length
+    ) {
       return "";
     }
 
@@ -3932,12 +4620,38 @@
     const created = el("lap-created")?.textContent || fmtDateTime(nowIso());
     const by = el("lap-by")?.textContent || "—";
     const period = el("lap-period")?.textContent || "Semua tanggal";
+    const metricColumns = laporanMetricColumns(state.lastLaporan.line);
 
-    const totalKardus = rows.reduce((sum, e) => sum + (Number(e.qtyKardus) || 0), 0);
-    const totalQty = rows.reduce((sum, e) => sum + (Number(e.totalQty) || 0), 0);
-    const totalPecah = rows.reduce((sum, e) => sum + (Number(e.qtyBotolPecah) || 0), 0);
+    const totalKardus = rows.reduce(
+      (sum, e) => sum + (Number(e.qtyKardus) || 0),
+      0,
+    );
+    const totalQty = rows.reduce(
+      (sum, e) => sum + (Number(e.totalQty) || 0),
+      0,
+    );
+    const totalPecah = rows.reduce(
+      (sum, e) => sum + (Number(e.qtyBotolPecah) || 0),
+      0,
+    );
+    const totalKardusBasah = rows.reduce(
+      (sum, e) => sum + (Number(e.qtyKardusBasah) || 0),
+      0,
+    );
+    const reportLine = String(state.lastLaporan.line || "all").toLowerCase();
+    const fourthStatTotal =
+      reportLine === "filling" ? totalKardusBasah : totalPecah;
+    const fourthStatLabel =
+      reportLine === "filling" ? "Total Kardus Basah" : "Total Botol Pecah";
+    const showFourthStat = reportLine !== "all";
+    const printStatColumns = showFourthStat ? 4 : 3;
+    const fourthStatHtml = showFourthStat
+      ? `<div class="stat"><strong>${fourthStatTotal.toLocaleString("id-ID")}</strong><span>${esc(fourthStatLabel)}</span></div>`
+      : "";
 
-    const bodyRows = rows.map(e => `
+    const bodyRows = rows
+      .map(
+        (e) => `
       <tr>
         <td class="mono">${esc(e.reportId)}</td>
         <td>${esc(LINE_LABEL[e.tab] || e.tab)}</td>
@@ -3948,10 +4662,10 @@
         <td class="num">${(Number(e.qtyKardus) || 0).toLocaleString("id-ID")}</td>
         <td class="num">${(Number(e.totalQty) || 0).toLocaleString("id-ID")}</td>
         <td class="num">${(Number(e.qtyBotolPecah) || 0).toLocaleString("id-ID")}</td>
-        <td class="num">${esc(kpiReportDisplay(e._kpiResult))}</td>
-        <td class="num">${esc(kpiReportDisplay(e._kpiBroken))}</td>
-        <td class="num">${esc(kpiReportDisplay(e._kpiApd))}</td>
-      </tr>`).join("");
+        ${metricColumns.map((column) => `<td class="num">${esc(kpiReportDisplay(e[column.key]))}</td>`).join("")}
+      </tr>`,
+      )
+      .join("");
 
     return `<!DOCTYPE html>
 <html lang="id">
@@ -3971,11 +4685,11 @@
     .report-id { margin-top: 4px; font-family: Consolas, monospace; font-weight: 700; font-size: 10px; }
     .meta { min-width: 260px; text-align: right; font-size: 8px; line-height: 1.55; }
     .meta div { white-space: nowrap; }
-    .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 0 0 8px; }
+    .stats { display: grid; grid-template-columns: repeat(${printStatColumns}, 1fr); gap: 6px; margin: 0 0 8px; }
     .stat { border: 1px solid #d1d5db; padding: 5px 7px; text-align: center; border-radius: 4px; }
     .stat strong { display: block; font-size: 12px; }
     .stat span { display: block; margin-top: 1px; font-size: 7px; color: #4b5563; text-transform: uppercase; }
-    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    table { width: 100%; border-collapse: collapse; table-layout: auto; }
     thead { display: table-header-group; }
     tfoot { display: table-footer-group; }
     tr { break-inside: avoid; page-break-inside: avoid; }
@@ -3985,18 +4699,7 @@
     .mono { font-family: Consolas, "Courier New", monospace; font-size: 7.2px; }
     .num { text-align: right; white-space: nowrap; }
     .wrap { overflow-wrap: anywhere; word-break: break-word; }
-    th:nth-child(1), td:nth-child(1) { width: 10%; }
-    th:nth-child(2), td:nth-child(2) { width: 5%; }
-    th:nth-child(3), td:nth-child(3) { width: 7%; }
-    th:nth-child(4), td:nth-child(4) { width: 11%; }
-    th:nth-child(5), td:nth-child(5) { width: 17%; }
-    th:nth-child(6), td:nth-child(6) { width: 11%; }
-    th:nth-child(7), td:nth-child(7) { width: 5%; }
-    th:nth-child(8), td:nth-child(8) { width: 6%; }
-    th:nth-child(9), td:nth-child(9) { width: 5%; }
-    th:nth-child(10), td:nth-child(10) { width: 7%; }
-    th:nth-child(11), td:nth-child(11) { width: 8%; }
-    th:nth-child(12), td:nth-child(12) { width: 8%; }
+    th, td { word-break: break-word; }
     .footer-note { margin-top: 6px; color: #6b7280; font-size: 7px; text-align: right; }
     @media print {
       html, body { width: 100%; }
@@ -4025,13 +4728,13 @@
       <div class="stat"><strong>${rows.length.toLocaleString("id-ID")}</strong><span>Total Entri</span></div>
       <div class="stat"><strong>${totalKardus.toLocaleString("id-ID")}</strong><span>Total Kardus</span></div>
       <div class="stat"><strong>${totalQty.toLocaleString("id-ID")}</strong><span>Total Qty Botol</span></div>
-      <div class="stat"><strong>${totalPecah.toLocaleString("id-ID")}</strong><span>Total Botol Pecah</span></div>
+      ${fourthStatHtml}
     </section>
 
     <table>
       <thead>
         <tr>
-          <th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th><th>KPI Hasil</th><th>KPI Botol Rusak</th><th>KPI APD</th>
+          <th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th>${metricColumns.map((column) => `<th>${esc(column.label)}</th>`).join("")}
         </tr>
       </thead>
       <tbody>${bodyRows}</tbody>
@@ -4049,7 +4752,10 @@
     }
 
     const html = buildLaporanPrintHtml({
-      title: mode === "pdf" ? "Laporan Hasil Pengerjaan" : "Laporan Hasil Pengerjaan"
+      title:
+        mode === "pdf"
+          ? "Laporan Hasil Pengerjaan"
+          : "Laporan Hasil Pengerjaan",
     });
     if (!html) {
       toast("Data laporan tidak tersedia.", true);
@@ -4059,7 +4765,10 @@
     // Dibuka langsung dari event klik agar tidak dianggap popup oleh browser.
     const printWindow = window.open("", "_blank", "width=1280,height=860");
     if (!printWindow) {
-      toast("Popup diblokir browser. Izinkan popup untuk melakukan Export PDF/Cetak.", true);
+      toast(
+        "Popup diblokir browser. Izinkan popup untuk melakukan Export PDF/Cetak.",
+        true,
+      );
       return;
     }
 
@@ -4079,7 +4788,9 @@
     if (printWindow.document.readyState === "complete") {
       setTimeout(doPrint, 250);
     } else {
-      printWindow.addEventListener("load", () => setTimeout(doPrint, 250), { once: true });
+      printWindow.addEventListener("load", () => setTimeout(doPrint, 250), {
+        once: true,
+      });
     }
 
     if (mode === "pdf") {
@@ -4087,16 +4798,60 @@
     }
   }
 
+  // KPI Hasil pada Laporan Hasil Pengerjaan:
+  // - Press mempertahankan logic lama berbasis target harian (target bulanan / 20 hari kerja).
+  // - Filling HARUS sama dengan indikator OUTPUT pada Laporan KPI Filling:
+  //   (Aktual Filling / Target Output Filling Bulanan) x Bobot Output 40.
+  //   Contoh 5.616 / 150.000 x 40 = 1,4976 -> 1,50%.
+  const KPI_WORKING_DAYS_PER_MONTH = 20;
 
-  const KPI_RESULT_TARGET_PER_DAY = 3500;
+  function kpiDailyOutputTarget(line) {
+    const monthlyTarget =
+      String(line || "").toLowerCase() === "press"
+        ? getKpiPressOutputTarget()
+        : getKpiFillingOutputTarget();
+    return Math.max(1, Number(monthlyTarget) || 0) / KPI_WORKING_DAYS_PER_MONTH;
+  }
+
+  function kpiFillingOutputAchievement(totalQty) {
+    const actual = Math.max(0, Number(totalQty) || 0);
+    const monthlyTarget = Math.max(
+      1,
+      Number(getKpiFillingOutputTarget()) ||
+        KPI_FILLING_DEFAULTS.outputTargetMonthly,
+    );
+    return actual > 0
+      ? (actual / monthlyTarget) * KPI_FILLING_DEFAULTS.weights.output
+      : null;
+  }
+
+  function kpiOperatorKey(value) {
+    return String(value || "")
+      .normalize("NFKC")
+      .replace(/\u00a0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase();
+  }
 
   function averageKpiValues(values) {
-    const valid = (values || []).filter(value => value !== null && value !== undefined && Number.isFinite(Number(value))).map(Number);
-    return valid.length ? valid.reduce((sum, value) => sum + value, 0) / valid.length : null;
+    const valid = (values || [])
+      .filter(
+        (value) =>
+          value !== null &&
+          value !== undefined &&
+          Number.isFinite(Number(value)),
+      )
+      .map(Number);
+    return valid.length
+      ? valid.reduce((sum, value) => sum + value, 0) / valid.length
+      : null;
   }
 
   function kpiReportDisplay(value) {
-    return value === null || value === undefined || !Number.isFinite(Number(value))
+    return value === null ||
+      value === undefined ||
+      !Number.isFinite(Number(value))
       ? "—"
       : dashboardPercent(Number(value));
   }
@@ -4113,7 +4868,7 @@
       start: ALL_START,
       end: ALL_END,
       label: "Semua tanggal",
-      averagingLabel: "Rata-rata KPI harian seluruh data"
+      averagingLabel: "Rata-rata KPI harian seluruh data",
     });
 
     if (!mode) return allPeriod();
@@ -4128,21 +4883,25 @@
         mode,
         start,
         end,
-        label: start.toLocaleDateString("id-ID", { month: "long", year: "numeric" }),
-        averagingLabel: "Rata-rata KPI harian"
+        label: start.toLocaleDateString("id-ID", {
+          month: "long",
+          year: "numeric",
+        }),
+        averagingLabel: "Rata-rata KPI harian",
       };
     }
 
     if (mode === "year") {
       const rawYear = String(el("lap-year")?.value || "").trim();
       const year = Number(rawYear);
-      if (!rawYear || !Number.isInteger(year) || year < 1900 || year > 2999) return allPeriod();
+      if (!rawYear || !Number.isInteger(year) || year < 1900 || year > 2999)
+        return allPeriod();
       return {
         mode,
         start: new Date(year, 0, 1),
         end: new Date(year, 11, 31),
         label: `Tahun ${year}`,
-        averagingLabel: "Rata-rata KPI bulanan"
+        averagingLabel: "Rata-rata KPI bulanan",
       };
     }
 
@@ -4156,7 +4915,8 @@
       if (start > end) [start, end] = [end, start];
 
       let label = "Semua tanggal";
-      if (rawStart && rawEnd) label = `${dashboardDateKey(start)} s/d ${dashboardDateKey(end)}`;
+      if (rawStart && rawEnd)
+        label = `${dashboardDateKey(start)} s/d ${dashboardDateKey(end)}`;
       else if (rawStart) label = `Mulai ${dashboardDateKey(start)}`;
       else if (rawEnd) label = `Sampai ${dashboardDateKey(end)}`;
 
@@ -4165,7 +4925,7 @@
         start,
         end,
         label,
-        averagingLabel: "Rata-rata KPI harian"
+        averagingLabel: "Rata-rata KPI harian",
       };
     }
 
@@ -4178,7 +4938,7 @@
         start: date,
         end: date,
         label: dashboardDateKey(date),
-        averagingLabel: "KPI tanggal terpilih"
+        averagingLabel: "KPI tanggal terpilih",
       };
     }
 
@@ -4186,40 +4946,74 @@
   }
 
   function buildEmployeeKpiRows(period, operatorName = "") {
-    const selectedOperator = String(operatorName || "").trim().toLowerCase();
+    const selectedOperator = kpiOperatorKey(operatorName);
     const operators = new Map();
 
     function ensureOperator(name) {
       const clean = String(name || "").trim();
       if (!clean) return null;
-      const key = clean.toLowerCase();
+      const key = kpiOperatorKey(clean);
       if (selectedOperator && key !== selectedOperator) return null;
       if (!operators.has(key)) {
         operators.set(key, {
           operator: clean,
           pressByDate: new Map(),
-          apdByDate: new Map()
+          fillingByDate: new Map(),
+          apdByDate: new Map(),
         });
       }
       return operators.get(key);
     }
 
     (state.entries || [])
-      .filter(entry => !entry._syncState && entry.tab === "press" && dashboardDateInPeriod(entry.tanggal, period))
-      .forEach(entry => {
+      .filter(
+        (entry) =>
+          !entry._syncState &&
+          entry.tab === "press" &&
+          dashboardDateInPeriod(entry.tanggal, period),
+      )
+      .forEach((entry) => {
         const row = ensureOperator(entry.operator);
         if (!row) return;
         const dateKey = String(entry.tanggal || "");
-        if (!row.pressByDate.has(dateKey)) row.pressByDate.set(dateKey, { total: 0, broken: 0 });
+        if (!row.pressByDate.has(dateKey))
+          row.pressByDate.set(dateKey, { total: 0, broken: 0 });
         const day = row.pressByDate.get(dateKey);
         day.total += Number(entry.totalQty) || 0;
-        // KPI Botol Rusak sengaja hanya mengambil kerusakan dari tab Press.
+        // KPI Botol Rusak hanya mengambil kerusakan dari tab Press.
         day.broken += Number(entry.qtyBotolPecah) || 0;
       });
 
+    (state.entries || [])
+      .filter(
+        (entry) =>
+          !entry._syncState &&
+          entry.tab === "filling" &&
+          dashboardDateInPeriod(entry.tanggal, period),
+      )
+      .forEach((entry) => {
+        const row = ensureOperator(entry.operator);
+        if (!row) return;
+        const dateKey = String(entry.tanggal || "");
+        if (!row.fillingByDate.has(dateKey)) {
+          row.fillingByDate.set(dateKey, {
+            total: 0,
+            workedCartons: 0,
+            wetCartons: 0,
+          });
+        }
+        const day = row.fillingByDate.get(dateKey);
+        day.total += Number(entry.totalQty) || 0;
+        day.workedCartons += Number(entry.qtyKardus) || 0;
+        day.wetCartons += Number(entry.qtyKardusBasah) || 0;
+      });
+
+    // APD berlaku untuk operator pada tanggal/periode yang sama, baik operator tersebut
+    // sedang mengerjakan Filling maupun Press. Key operator dinormalisasi agar data lama
+    // yang berbeda spasi/non-breaking-space tetap dapat dipasangkan.
     (state.apdEntries || [])
-      .filter(item => item && dashboardDateInPeriod(item.tanggal, period))
-      .forEach(item => {
+      .filter((item) => item && dashboardDateInPeriod(item.tanggal, period))
+      .forEach((item) => {
         const row = ensureOperator(item.operator);
         if (!row) return;
         const dateKey = String(item.tanggal || "");
@@ -4227,153 +5021,1224 @@
         row.apdByDate.get(dateKey).push(Number(item.percentage) || 0);
       });
 
-    return Array.from(operators.values()).map(row => {
-      const dailyPress = Array.from(row.pressByDate.entries()).map(([date, value]) => ({
-        date,
-        month: date.slice(0, 7),
-        kpiResult: value.total > 0 ? value.total / KPI_RESULT_TARGET_PER_DAY * 100 : null,
-        kpiBroken: value.total > 0 ? value.broken / value.total * 100 : null
-      }));
+    const pressDailyTarget = kpiDailyOutputTarget("press");
 
-      const dailyApd = Array.from(row.apdByDate.entries()).map(([date, values]) => ({
-        date,
-        month: date.slice(0, 7),
-        value: averageKpiValues(values)
-      }));
+    return Array.from(operators.values())
+      .map((row) => {
+        const dailyPress = Array.from(row.pressByDate.entries()).map(
+          ([date, value]) => ({
+            date,
+            month: date.slice(0, 7),
+            kpiResult:
+              value.total > 0 ? (value.total / pressDailyTarget) * 100 : null,
+            kpiBroken:
+              value.total > 0 ? (value.broken / value.total) * 100 : null,
+          }),
+        );
 
-      let kpiResult = null;
-      let kpiBroken = null;
-      let kpiApd = null;
+        const dailyFilling = Array.from(row.fillingByDate.entries()).map(
+          ([date, value]) => ({
+            date,
+            month: date.slice(0, 7),
+            total: Number(value.total) || 0,
+            kpiWetCarton: kpiFillingSpillPercent(
+              value.wetCartons,
+              value.workedCartons,
+            ),
+          }),
+        );
 
-      if (period.mode === "date") {
-        const dateKey = dashboardDateKey(period.start);
-        const pressDay = dailyPress.find(item => item.date === dateKey);
-        const apdDay = dailyApd.find(item => item.date === dateKey);
-        kpiResult = pressDay ? pressDay.kpiResult : null;
-        kpiBroken = pressDay ? pressDay.kpiBroken : null;
-        kpiApd = apdDay ? apdDay.value : null;
-      } else if (period.mode === "year") {
-        const monthlyKeys = new Set([
-          ...dailyPress.map(item => item.month),
-          ...dailyApd.map(item => item.month)
-        ]);
-        const monthlyResult = [];
-        const monthlyBroken = [];
-        const monthlyApd = [];
-        monthlyKeys.forEach(monthKey => {
-          monthlyResult.push(averageKpiValues(dailyPress.filter(item => item.month === monthKey).map(item => item.kpiResult)));
-          monthlyBroken.push(averageKpiValues(dailyPress.filter(item => item.month === monthKey).map(item => item.kpiBroken)));
-          monthlyApd.push(averageKpiValues(dailyApd.filter(item => item.month === monthKey).map(item => item.value)));
+        // KPI Filling OUTPUT harus identik dengan baris OUTPUT pada Laporan KPI Filling.
+        // Karena targetnya bulanan, jumlahkan aktual per bulan terlebih dahulu, lalu terapkan bobot 40.
+        const fillingOutputByMonth = new Map();
+        dailyFilling.forEach((item) => {
+          fillingOutputByMonth.set(
+            item.month,
+            (fillingOutputByMonth.get(item.month) || 0) + item.total,
+          );
         });
-        kpiResult = averageKpiValues(monthlyResult);
-        kpiBroken = averageKpiValues(monthlyBroken);
-        kpiApd = averageKpiValues(monthlyApd);
-      } else {
-        // Bulanan, Rentang Tanggal, dan Semua Periode: rata-rata KPI harian.
-        kpiResult = averageKpiValues(dailyPress.map(item => item.kpiResult));
-        kpiBroken = averageKpiValues(dailyPress.map(item => item.kpiBroken));
-        kpiApd = averageKpiValues(dailyApd.map(item => item.value));
-      }
+        const monthlyFillingResult = Array.from(
+          fillingOutputByMonth.entries(),
+        ).map(([month, total]) => ({
+          month,
+          kpiResult: kpiFillingOutputAchievement(total),
+        }));
 
-      return {
-        operator: row.operator,
-        kpiResult,
-        kpiBroken,
-        kpiApd
-      };
-    }).filter(row => row.kpiResult !== null || row.kpiBroken !== null || row.kpiApd !== null)
+        const dailyApd = Array.from(row.apdByDate.entries()).map(
+          ([date, values]) => ({
+            date,
+            month: date.slice(0, 7),
+            value: averageKpiValues(values),
+          }),
+        );
+
+        let kpiResultPress = null;
+        let kpiResultFilling = null;
+        let kpiWetCarton = null;
+        let kpiBroken = null;
+        let kpiApd = null;
+
+        if (period.mode === "date") {
+          const dateKey = dashboardDateKey(period.start);
+          const pressDay = dailyPress.find((item) => item.date === dateKey);
+          const fillingDay = dailyFilling.find((item) => item.date === dateKey);
+          const apdDay = dailyApd.find((item) => item.date === dateKey);
+          kpiResultPress = pressDay ? pressDay.kpiResult : null;
+          // Untuk satu tanggal, aktual tanggal tersebut tetap dibandingkan ke target bulanan
+          // dan dikalikan bobot OUTPUT 40, sama seperti kartu KPI Filling.
+          kpiResultFilling = fillingDay
+            ? kpiFillingOutputAchievement(fillingDay.total)
+            : null;
+          kpiWetCarton = fillingDay ? fillingDay.kpiWetCarton : null;
+          kpiBroken = pressDay ? pressDay.kpiBroken : null;
+          kpiApd = apdDay ? apdDay.value : null;
+        } else if (period.mode === "year") {
+          const monthlyKeys = new Set([
+            ...dailyPress.map((item) => item.month),
+            ...dailyFilling.map((item) => item.month),
+            ...dailyApd.map((item) => item.month),
+          ]);
+          const monthlyPressResult = [];
+          const monthlyWetCarton = [];
+          const monthlyBroken = [];
+          const monthlyApd = [];
+          monthlyKeys.forEach((monthKey) => {
+            monthlyPressResult.push(
+              averageKpiValues(
+                dailyPress
+                  .filter((item) => item.month === monthKey)
+                  .map((item) => item.kpiResult),
+              ),
+            );
+            monthlyWetCarton.push(
+              averageKpiValues(
+                dailyFilling
+                  .filter((item) => item.month === monthKey)
+                  .map((item) => item.kpiWetCarton),
+              ),
+            );
+            monthlyBroken.push(
+              averageKpiValues(
+                dailyPress
+                  .filter((item) => item.month === monthKey)
+                  .map((item) => item.kpiBroken),
+              ),
+            );
+            monthlyApd.push(
+              averageKpiValues(
+                dailyApd
+                  .filter((item) => item.month === monthKey)
+                  .map((item) => item.value),
+              ),
+            );
+          });
+          kpiResultPress = averageKpiValues(monthlyPressResult);
+          kpiResultFilling = averageKpiValues(
+            monthlyFillingResult.map((item) => item.kpiResult),
+          );
+          kpiWetCarton = averageKpiValues(monthlyWetCarton);
+          kpiBroken = averageKpiValues(monthlyBroken);
+          kpiApd = averageKpiValues(monthlyApd);
+        } else {
+          // Bulan / rentang / semua periode:
+          // Press mempertahankan rata-rata KPI harian. Filling menggunakan capaian OUTPUT
+          // bulanan yang sama dengan Laporan KPI Filling; jika mencakup >1 bulan, dirata-ratakan per bulan.
+          kpiResultPress = averageKpiValues(
+            dailyPress.map((item) => item.kpiResult),
+          );
+          kpiResultFilling = averageKpiValues(
+            monthlyFillingResult.map((item) => item.kpiResult),
+          );
+          kpiWetCarton = averageKpiValues(
+            dailyFilling.map((item) => item.kpiWetCarton),
+          );
+          kpiBroken = averageKpiValues(
+            dailyPress.map((item) => item.kpiBroken),
+          );
+          kpiApd = averageKpiValues(dailyApd.map((item) => item.value));
+        }
+
+        return {
+          operator: row.operator,
+          kpiResultPress,
+          kpiResultFilling,
+          kpiWetCarton,
+          kpiBroken,
+          kpiApd,
+        };
+      })
+      .filter(
+        (row) =>
+          row.kpiResultPress !== null ||
+          row.kpiResultFilling !== null ||
+          row.kpiWetCarton !== null ||
+          row.kpiBroken !== null ||
+          row.kpiApd !== null,
+      )
       .sort((a, b) => a.operator.localeCompare(b.operator, "id"));
   }
 
-  function renderKpiLaporanRows() {
-    if (!state.lastKpiLaporan) return;
-    const rows = state.lastKpiLaporan.rows || [];
-    const tbody = el("lap-kpi-tbody");
-    if (!tbody) return;
+  const KPI_PRESS_DEFAULTS = Object.freeze({
+    outputTargetMonthly: 70000,
+    rejectTargetPercent: 1,
+    apdTargetPercent: 95,
+    attendanceTargetPercent: 100,
+    weights: Object.freeze({
+      output: 40,
+      quality: 30,
+      apd: 15,
+      attendance: 15,
+    }),
+  });
 
-    const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PAGE_SIZE));
-    state.pages.kpiLaporan = Math.min(Math.max(1, state.pages.kpiLaporan || 1), totalPages);
-    const page = state.pages.kpiLaporan;
-    const start = (page - 1) * CONFIG.PAGE_SIZE;
-    const visible = rows.slice(start, start + CONFIG.PAGE_SIZE);
+  const KPI_FILLING_DEFAULTS = Object.freeze({
+    outputTargetMonthly: 150000,
+    spillTargetPercent: 1,
+    wetCartonDailyLimit: 5,
+    apdTargetPercent: 95,
+    attendanceTargetPercent: 100,
+    weights: Object.freeze({
+      output: 40,
+      quality: 30,
+      apd: 15,
+      attendance: 15,
+    }),
+  });
 
-    tbody.innerHTML = visible.length ? visible.map(row => `
-      <tr>
-        <td><strong>${esc(row.operator)}</strong></td>
-        <td><span class="dashboard-kpi-percent result">${kpiReportDisplay(row.kpiResult)}</span></td>
-        <td><span class="dashboard-kpi-percent reject">${kpiReportDisplay(row.kpiBroken)}</span></td>
-        <td><span class="dashboard-kpi-percent apd">${kpiReportDisplay(row.kpiApd)}</span></td>
-      </tr>`).join("")
-      : '<tr><td colspan="4" class="empty-row">Tidak ada data KPI pada periode ini.</td></tr>';
+  function normalizeKpiType(value) {
+    return String(value || "").toLowerCase() === "press" ? "press" : "filling";
+  }
 
-    const from = rows.length ? start + 1 : 0;
-    const to = Math.min(start + CONFIG.PAGE_SIZE, rows.length);
-    const summary = el("lap-kpi-page-summary");
-    if (summary) {
-      summary.textContent = `${from}–${to} dari ${rows.length} karyawan · ${state.lastKpiLaporan.period.label} · ${state.lastKpiLaporan.period.averagingLabel}`;
+  function kpiTypeLabel(type) {
+    return normalizeKpiType(type) === "press" ? "Press" : "Filling";
+  }
+
+  function getKpiPressOutputTarget() {
+    const saved = Math.round(
+      Number(state.settings?.kpiPressOutputTargetMonthly) || 0,
+    );
+    return saved > 0 ? saved : KPI_PRESS_DEFAULTS.outputTargetMonthly;
+  }
+
+  function getKpiFillingOutputTarget() {
+    const saved = Math.round(
+      Number(state.settings?.kpiFillingOutputTargetMonthly) || 0,
+    );
+    return saved > 0 ? saved : KPI_FILLING_DEFAULTS.outputTargetMonthly;
+  }
+
+  function getKpiOutputTarget(type) {
+    return normalizeKpiType(type) === "press"
+      ? getKpiPressOutputTarget()
+      : getKpiFillingOutputTarget();
+  }
+
+  function applyKpiPressSettings(settings) {
+    if (!settings || typeof settings !== "object")
+      return getKpiPressOutputTarget();
+    const target = Math.round(
+      Number(settings.kpiPressOutputTargetMonthly) || 0,
+    );
+    if (target > 0) state.settings.kpiPressOutputTargetMonthly = target;
+    return getKpiPressOutputTarget();
+  }
+
+  function applyKpiFillingSettings(settings) {
+    if (!settings || typeof settings !== "object")
+      return getKpiFillingOutputTarget();
+    const target = Math.round(
+      Number(settings.kpiFillingOutputTargetMonthly) || 0,
+    );
+    if (target > 0) state.settings.kpiFillingOutputTargetMonthly = target;
+    return getKpiFillingOutputTarget();
+  }
+
+  async function saveKpiOutputTargets(fillingValue, pressValue) {
+    const fillingTarget = Math.round(Number(fillingValue) || 0);
+    const pressTarget = Math.round(Number(pressValue) || 0);
+
+    if (fillingTarget <= 0) {
+      throw new Error("Target Output KPI Filling / Bulan harus lebih dari 0.");
+    }
+    if (pressTarget <= 0) {
+      throw new Error("Target Output KPI Press / Bulan harus lebih dari 0.");
     }
 
-    renderPagination(el("lap-kpi-pagination"), page, totalPages, nextPage => {
-      state.pages.kpiLaporan = nextPage;
-      renderKpiLaporanRows();
+    const response = await apiPost("settings.kpiTargets.set", {
+      fillingValue: fillingTarget,
+      pressValue: pressTarget,
+    });
+    applyKpiFillingSettings(response.settings);
+    applyKpiPressSettings(response.settings);
+    return {
+      filling: getKpiFillingOutputTarget(),
+      press: getKpiPressOutputTarget(),
+    };
+  }
+
+  function renderKpiPressSetting() {
+    const target = getKpiPressOutputTarget();
+    const input = el("setting-kpi-press-output-target");
+    const current = el("setting-kpi-press-current");
+    if (input && document.activeElement !== input) input.value = String(target);
+    if (current)
+      current.textContent = `${kpiPressQtyText(target)} botol / bulan`;
+  }
+
+  function renderKpiFillingSetting() {
+    const target = getKpiFillingOutputTarget();
+    const input = el("setting-kpi-filling-output-target");
+    const current = el("setting-kpi-filling-current");
+    if (input && document.activeElement !== input) input.value = String(target);
+    if (current)
+      current.textContent = `${kpiPressQtyText(target)} botol / bulan`;
+  }
+
+  function initKpiSettings() {
+    renderKpiFillingSetting();
+    renderKpiPressSetting();
+
+    const saveBtn = el("setting-kpi-save-all");
+    const fillingInput = el("setting-kpi-filling-output-target");
+    const pressInput = el("setting-kpi-press-output-target");
+    if (!saveBtn || !fillingInput || !pressInput) return;
+
+    saveBtn.addEventListener("click", async () => {
+      if (!can("accessMaster")) {
+        return toast("Anda tidak memiliki akses Setting.", true);
+      }
+
+      const fillingValue = Math.round(Number(fillingInput.value) || 0);
+      const pressValue = Math.round(Number(pressInput.value) || 0);
+      if (fillingValue <= 0) {
+        toast("Target Output KPI Filling / Bulan harus lebih dari 0.", true);
+        fillingInput.focus();
+        return;
+      }
+      if (pressValue <= 0) {
+        toast("Target Output KPI Press / Bulan harus lebih dari 0.", true);
+        pressInput.focus();
+        return;
+      }
+
+      const oldText = saveBtn.innerHTML;
+      saveBtn.disabled = true;
+      fillingInput.disabled = true;
+      pressInput.disabled = true;
+      saveBtn.innerHTML =
+        '<i class="fa-solid fa-spinner fa-spin"></i> Menyimpan Semua...';
+
+      try {
+        const targets = await saveKpiOutputTargets(fillingValue, pressValue);
+        fillingInput.value = String(targets.filling);
+        pressInput.value = String(targets.press);
+        renderKpiFillingSetting();
+        renderKpiPressSetting();
+
+        if (typeof window.refreshKpiLaporanAutoPreview === "function") {
+          window.refreshKpiLaporanAutoPreview();
+        }
+
+        toast(
+          `Semua target KPI tersimpan. Filling: ${kpiPressQtyText(targets.filling)} botol/bulan · Press: ${kpiPressQtyText(targets.press)} botol/bulan.`,
+        );
+      } catch (err) {
+        const message =
+          /settings\.kpiTargets\.set|action|tidak dikenal|unknown/i.test(
+            String(err?.message || ""),
+          )
+            ? "Backend Apps Script belum mendukung penyimpanan semua target KPI sekaligus. Deploy Code.gs terbaru lalu coba kembali."
+            : err.message;
+        toast(message, true);
+      } finally {
+        saveBtn.disabled = false;
+        fillingInput.disabled = false;
+        pressInput.disabled = false;
+        saveBtn.innerHTML = oldText;
+      }
     });
   }
 
+  function kpiPressMonthPeriod(monthValue) {
+    const value = String(monthValue || "").trim();
+    if (!/^\d{4}-\d{2}$/.test(value)) return null;
+    const [year, month] = value.split("-").map(Number);
+    if (
+      !Number.isInteger(year) ||
+      !Number.isInteger(month) ||
+      month < 1 ||
+      month > 12
+    )
+      return null;
+    const start = new Date(year, month - 1, 1);
+    const end = new Date(year, month, 0);
+    return {
+      mode: "month",
+      value,
+      start,
+      end,
+      label: start.toLocaleDateString("id-ID", {
+        month: "long",
+        year: "numeric",
+      }),
+    };
+  }
+
+  function kpiPressPercentText(value, digits = 2) {
+    if (
+      value === null ||
+      value === undefined ||
+      !Number.isFinite(Number(value))
+    )
+      return "—";
+    return `${Number(value).toLocaleString("id-ID", {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    })}%`;
+  }
+
+  function kpiPressScoreText(value) {
+    const number = Number(value) || 0;
+    return number.toLocaleString("id-ID", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  }
+
+  function kpiPressQtyText(value) {
+    return (Number(value) || 0).toLocaleString("id-ID");
+  }
+
+  function buildKpiApdActual(operatorKey, period) {
+    const apdByDate = new Map();
+    (state.apdEntries || [])
+      .filter(
+        (item) =>
+          item &&
+          String(item.operator || "")
+            .trim()
+            .toLowerCase() === operatorKey &&
+          dashboardDateInPeriod(item.tanggal, period),
+      )
+      .forEach((item) => {
+        const dateKey = String(item.tanggal || "");
+        if (!apdByDate.has(dateKey)) apdByDate.set(dateKey, []);
+        apdByDate.get(dateKey).push(Number(item.percentage) || 0);
+      });
+
+    const apdDailyValues = Array.from(apdByDate.values()).map((values) =>
+      averageKpiValues(values),
+    );
+    return averageKpiValues(apdDailyValues);
+  }
+
+  function buildKpiAttendance(operatorProduction, savedProduction) {
+    // Mempertahankan logic lama: hari kerja KPI mengikuti hari produksi aktif
+    // perusahaan (Filling/Press), dan operator dianggap hadir bila memiliki
+    // pengerjaan Filling atau Press pada tanggal aktif tersebut.
+    const productionDates = new Set(
+      savedProduction
+        .map((entry) => String(entry.tanggal || ""))
+        .filter(Boolean),
+    );
+    const presentDates = new Set(
+      operatorProduction
+        .map((entry) => String(entry.tanggal || ""))
+        .filter(Boolean),
+    );
+    const attendanceActual = productionDates.size
+      ? Math.min(100, (presentDates.size / productionDates.size) * 100)
+      : 0;
+
+    return {
+      productionDates,
+      presentDates,
+      attendanceActual,
+    };
+  }
+
+  function buildPressKpiReport(
+    operatorName,
+    monthValue,
+    outputTargetMonthly = getKpiPressOutputTarget(),
+  ) {
+    const operator = String(operatorName || "").trim();
+    const operatorKey = operator.toLowerCase();
+    const period = kpiPressMonthPeriod(monthValue);
+    if (!operator || !period) return null;
+
+    const savedProduction = (state.entries || []).filter(
+      (entry) =>
+        entry &&
+        !entry._syncState &&
+        (entry.tab === "filling" || entry.tab === "press") &&
+        dashboardDateInPeriod(entry.tanggal, period),
+    );
+
+    const operatorProduction = savedProduction.filter(
+      (entry) =>
+        String(entry.operator || "")
+          .trim()
+          .toLowerCase() === operatorKey,
+    );
+
+    const pressEntries = operatorProduction.filter(
+      (entry) => entry.tab === "press",
+    );
+    if (!pressEntries.length) return null;
+
+    const pressByDate = new Map();
+    pressEntries.forEach((entry) => {
+      const dateKey = String(entry.tanggal || "");
+      if (!pressByDate.has(dateKey))
+        pressByDate.set(dateKey, { total: 0, broken: 0 });
+      const day = pressByDate.get(dateKey);
+      day.total += Number(entry.totalQty) || 0;
+      day.broken += Number(entry.qtyBotolPecah) || 0;
+    });
+
+    const outputActual = pressEntries.reduce(
+      (sum, entry) => sum + (Number(entry.totalQty) || 0),
+      0,
+    );
+    const rejectDailyValues = Array.from(pressByDate.values())
+      .filter((day) => day.total > 0)
+      .map((day) => (day.broken / day.total) * 100);
+    const rejectActual = averageKpiValues(rejectDailyValues);
+
+    const apdActual = buildKpiApdActual(operatorKey, period);
+    const { productionDates, presentDates, attendanceActual } =
+      buildKpiAttendance(operatorProduction, savedProduction);
+
+    const outputTarget = Math.max(
+      1,
+      Number(outputTargetMonthly) || getKpiPressOutputTarget(),
+    );
+    const outputScore =
+      (outputActual / outputTarget) * KPI_PRESS_DEFAULTS.weights.output;
+
+    let qualityScore = 0;
+    if (outputActual > 0 && rejectActual !== null) {
+      qualityScore =
+        rejectActual <= KPI_PRESS_DEFAULTS.rejectTargetPercent
+          ? KPI_PRESS_DEFAULTS.weights.quality
+          : (KPI_PRESS_DEFAULTS.rejectTargetPercent / rejectActual) *
+            KPI_PRESS_DEFAULTS.weights.quality;
+    }
+
+    const apdScore =
+      apdActual === null
+        ? 0
+        : (apdActual / KPI_PRESS_DEFAULTS.apdTargetPercent) *
+          KPI_PRESS_DEFAULTS.weights.apd;
+
+    const attendanceScore =
+      (attendanceActual / KPI_PRESS_DEFAULTS.attendanceTargetPercent) *
+      KPI_PRESS_DEFAULTS.weights.attendance;
+
+    const rows = [
+      {
+        no: 1,
+        field: "OUTPUT",
+        indicator: "PENCAPAIAN TARGET",
+        weight: KPI_PRESS_DEFAULTS.weights.output,
+        targetText: `>${kpiPressQtyText(outputTarget)} / BULAN`,
+        targetPercent: 100,
+        actualValue: outputActual,
+        actualText: kpiPressQtyText(outputActual),
+        achievement: outputScore,
+        tone: "output",
+      },
+      {
+        no: 2,
+        field: "KUALITAS",
+        indicator: "TINGKAT KERUSAKAN BOTOL",
+        weight: KPI_PRESS_DEFAULTS.weights.quality,
+        targetText: "PRESENTASE RATA-RATA < 1%",
+        targetPercent: 100,
+        actualValue: rejectActual,
+        actualText:
+          outputActual > 0 ? kpiPressPercentText(rejectActual || 0, 2) : "—",
+        achievement: qualityScore,
+        tone: "quality",
+      },
+      {
+        no: 3,
+        field: "KEPATUHAN",
+        indicator: "PEMAKAIAN APD",
+        weight: KPI_PRESS_DEFAULTS.weights.apd,
+        targetText: "RATA-RATA ≥ 95%",
+        targetPercent: 100,
+        actualValue: apdActual,
+        actualText: kpiPressPercentText(apdActual, 2),
+        achievement: apdScore,
+        tone: "apd",
+      },
+      {
+        no: 4,
+        field: "ABSENSI",
+        indicator: "KEHADIRAN",
+        weight: KPI_PRESS_DEFAULTS.weights.attendance,
+        targetText: "FULL 100%",
+        targetPercent: 100,
+        actualValue: attendanceActual,
+        actualText: kpiPressPercentText(attendanceActual, 2),
+        achievement: attendanceScore,
+        tone: "attendance",
+      },
+    ];
+
+    const totalAchievement = rows.reduce(
+      (sum, row) => sum + (Number(row.achievement) || 0),
+      0,
+    );
+
+    return {
+      kpiType: "press",
+      lineLabel: "Press",
+      operator,
+      period,
+      outputTarget,
+      outputActual,
+      rejectActual,
+      apdActual,
+      attendanceActual,
+      productionDays: productionDates.size,
+      presentDays: presentDates.size,
+      lineDays: pressByDate.size,
+      pressDays: pressByDate.size,
+      rows,
+      totalAchievement,
+    };
+  }
+
+  function kpiFillingSpillPercent(qtyWetCartons, qtyWorkedCartons) {
+    const wet = Math.max(0, Number(qtyWetCartons) || 0);
+    const worked = Math.max(0, Number(qtyWorkedCartons) || 0);
+
+    if (wet <= 0) return 0;
+    if (wet <= KPI_FILLING_DEFAULTS.wetCartonDailyLimit) return 1;
+
+    // Logic KPI Filling:
+    // 0 kardus basah = 0%
+    // 1–5 kardus basah = 1%
+    // >5 = 1% + ((Qty Kardus Basah - 5) / Qty Pengerjaan Dus × 30%)
+    // Denominator minimum 1 hanya sebagai pengaman bila ada data lama yang Qty Pengerjaan-nya 0.
+    return (
+      1 +
+      ((wet - KPI_FILLING_DEFAULTS.wetCartonDailyLimit) / Math.max(1, worked)) *
+        30
+    );
+  }
+
+  function buildFillingKpiReport(
+    operatorName,
+    monthValue,
+    outputTargetMonthly = getKpiFillingOutputTarget(),
+  ) {
+    const operator = String(operatorName || "").trim();
+    const operatorKey = operator.toLowerCase();
+    const period = kpiPressMonthPeriod(monthValue);
+    if (!operator || !period) return null;
+
+    const savedProduction = (state.entries || []).filter(
+      (entry) =>
+        entry &&
+        !entry._syncState &&
+        (entry.tab === "filling" || entry.tab === "press") &&
+        dashboardDateInPeriod(entry.tanggal, period),
+    );
+
+    const operatorProduction = savedProduction.filter(
+      (entry) =>
+        String(entry.operator || "")
+          .trim()
+          .toLowerCase() === operatorKey,
+    );
+
+    const fillingEntries = operatorProduction.filter(
+      (entry) => entry.tab === "filling",
+    );
+    if (!fillingEntries.length) return null;
+
+    const fillingByDate = new Map();
+    fillingEntries.forEach((entry) => {
+      const dateKey = String(entry.tanggal || "");
+      if (!fillingByDate.has(dateKey)) {
+        fillingByDate.set(dateKey, {
+          total: 0,
+          workedCartons: 0,
+          wetCartons: 0,
+        });
+      }
+      const day = fillingByDate.get(dateKey);
+      day.total += Number(entry.totalQty) || 0;
+      day.workedCartons += Number(entry.qtyKardus) || 0;
+      day.wetCartons += Number(entry.qtyKardusBasah) || 0;
+    });
+
+    const outputActual = fillingEntries.reduce(
+      (sum, entry) => sum + (Number(entry.totalQty) || 0),
+      0,
+    );
+    const wetCartonsActual = fillingEntries.reduce(
+      (sum, entry) => sum + (Number(entry.qtyKardusBasah) || 0),
+      0,
+    );
+    const workedCartonsActual = fillingEntries.reduce(
+      (sum, entry) => sum + (Number(entry.qtyKardus) || 0),
+      0,
+    );
+
+    // Persentase tumpahan dihitung per hari agar target "maksimal 5 dus basah per hari"
+    // tetap bermakna, lalu dirata-ratakan untuk KPI bulanan.
+    const spillDailyValues = Array.from(fillingByDate.values()).map((day) =>
+      kpiFillingSpillPercent(day.wetCartons, day.workedCartons),
+    );
+    const spillActual = averageKpiValues(spillDailyValues);
+
+    const apdActual = buildKpiApdActual(operatorKey, period);
+    const { productionDates, presentDates, attendanceActual } =
+      buildKpiAttendance(operatorProduction, savedProduction);
+
+    const outputTarget = Math.max(
+      1,
+      Number(outputTargetMonthly) || getKpiFillingOutputTarget(),
+    );
+    const outputScore =
+      (outputActual / outputTarget) * KPI_FILLING_DEFAULTS.weights.output;
+
+    let qualityScore = 0;
+    if (spillActual !== null) {
+      qualityScore =
+        spillActual <= KPI_FILLING_DEFAULTS.spillTargetPercent
+          ? KPI_FILLING_DEFAULTS.weights.quality
+          : (KPI_FILLING_DEFAULTS.spillTargetPercent / spillActual) *
+            KPI_FILLING_DEFAULTS.weights.quality;
+    }
+
+    const apdScore =
+      apdActual === null
+        ? 0
+        : (apdActual / KPI_FILLING_DEFAULTS.apdTargetPercent) *
+          KPI_FILLING_DEFAULTS.weights.apd;
+
+    const attendanceScore =
+      (attendanceActual / KPI_FILLING_DEFAULTS.attendanceTargetPercent) *
+      KPI_FILLING_DEFAULTS.weights.attendance;
+
+    const rows = [
+      {
+        no: 1,
+        field: "OUTPUT",
+        indicator: "PENCAPAIAN TARGET",
+        weight: KPI_FILLING_DEFAULTS.weights.output,
+        targetText: `>${kpiPressQtyText(outputTarget)} / BULAN`,
+        targetPercent: 100,
+        actualValue: outputActual,
+        actualText: kpiPressQtyText(outputActual),
+        achievement: outputScore,
+        tone: "output",
+      },
+      {
+        no: 2,
+        field: "KUALITAS",
+        indicator: "MEMINIMALISIR TUMPAHAN",
+        weight: KPI_FILLING_DEFAULTS.weights.quality,
+        targetText: `MAX ${KPI_FILLING_DEFAULTS.wetCartonDailyLimit} DUS BASAH PER HARI`,
+        targetPercent: 100,
+        actualValue: spillActual,
+        actualText: kpiPressPercentText(spillActual, 2),
+        achievement: qualityScore,
+        tone: "quality",
+      },
+      {
+        no: 3,
+        field: "KEPATUHAN",
+        indicator: "PEMAKAIAN APD",
+        weight: KPI_FILLING_DEFAULTS.weights.apd,
+        targetText: "RATA-RATA > 95%",
+        targetPercent: 100,
+        actualValue: apdActual,
+        actualText: kpiPressPercentText(apdActual, 2),
+        achievement: apdScore,
+        tone: "apd",
+      },
+      {
+        no: 4,
+        field: "ABSENSI",
+        indicator: "KEHADIRAN",
+        weight: KPI_FILLING_DEFAULTS.weights.attendance,
+        targetText: "FULL 100%",
+        targetPercent: 100,
+        actualValue: attendanceActual,
+        actualText: kpiPressPercentText(attendanceActual, 2),
+        achievement: attendanceScore,
+        tone: "attendance",
+      },
+    ];
+
+    const totalAchievement = rows.reduce(
+      (sum, row) => sum + (Number(row.achievement) || 0),
+      0,
+    );
+
+    return {
+      kpiType: "filling",
+      lineLabel: "Filling",
+      operator,
+      period,
+      outputTarget,
+      outputActual,
+      wetCartonsActual,
+      workedCartonsActual,
+      spillActual,
+      apdActual,
+      attendanceActual,
+      productionDays: productionDates.size,
+      presentDays: presentDates.size,
+      lineDays: fillingByDate.size,
+      fillingDays: fillingByDate.size,
+      rows,
+      totalAchievement,
+    };
+  }
+
+  function kpiOperatorsForPeriod(period, type) {
+    const line = normalizeKpiType(type);
+    const names = new Map();
+
+    (state.entries || [])
+      .filter(
+        (item) =>
+          item &&
+          !item._syncState &&
+          item.tab === line &&
+          dashboardDateInPeriod(item.tanggal, period),
+      )
+      .forEach((item) => {
+        const name = String(item.operator || "").trim();
+        if (!name) return;
+        const key = name.toLowerCase();
+        if (!names.has(key)) names.set(key, name);
+      });
+
+    return Array.from(names.values()).sort((a, b) => a.localeCompare(b, "id"));
+  }
+
+  function kpiResolveExactOperator(rawOperator, allowedOperators = []) {
+    const raw = String(rawOperator || "").trim();
+    if (!raw) return "";
+    const key = raw.toLowerCase();
+    return (
+      (allowedOperators || []).find(
+        (name) =>
+          String(name || "")
+            .trim()
+            .toLowerCase() === key,
+      ) || ""
+    );
+  }
+
+  function updateKpiLaporanTypeUi(type) {
+    const normalized = normalizeKpiType(type);
+    const label = kpiTypeLabel(normalized);
+    const isPress = normalized === "press";
+
+    const panel = el("lap-kpi-panel");
+    const result = el("lap-kpi-result");
+    const badge = el("lap-kpi-badge");
+    if (panel) panel.dataset.kpiType = normalized;
+    if (result) result.dataset.kpiType = normalized;
+
+    dashboardSetText("lap-kpi-title", `KPI ${label}`);
+    dashboardSetText("lap-kpi-result-eyebrow", `KPI ${label}`);
+
+    const intro = el("lap-kpi-intro");
+    if (intro) {
+      intro.textContent = isPress
+        ? "Preview KPI Press akan tampil otomatis. Karyawan yang ditampilkan hanya karyawan yang mempunyai pengerjaan Press pada bulan terpilih. Target output KPI Press tetap mengikuti menu Setting."
+        : `Preview KPI Filling akan tampil otomatis. Karyawan yang ditampilkan hanya karyawan yang mempunyai pengerjaan Filling pada bulan terpilih. Target output KPI Filling mengikuti menu Setting (${kpiPressQtyText(getKpiFillingOutputTarget())} botol/bulan).`;
+    }
+
+    if (badge) {
+      badge.dataset.kpiType = normalized;
+      badge.innerHTML = isPress
+        ? '<i class="fa-solid fa-circle-down"></i> KPI PRESS'
+        : '<i class="fa-solid fa-droplet"></i> KPI FILLING';
+    }
+  }
+
+  function kpiPressRowHtml(row) {
+    return `
+      <tr class="kpi-press-row kpi-press-row-${esc(row.tone)}">
+        <td class="kpi-center">${row.no}</td>
+        <td><strong>${esc(row.field)}</strong></td>
+        <td>${esc(row.indicator)}</td>
+        <td class="kpi-center"><strong>${kpiPressScoreText(row.weight).replace(/,00$/, "")}</strong></td>
+        <td>${esc(row.targetText)}</td>
+        <td class="kpi-center">${row.targetPercent}</td>
+        <td class="kpi-center"><strong>${esc(row.actualText)}</strong></td>
+        <td class="kpi-center"><span class="kpi-press-score">${kpiPressScoreText(row.achievement)}</span></td>
+      </tr>`;
+  }
+
+  function kpiPressEmployeeCardHtml(report, index, expanded = false) {
+    const detailId = `kpi-employee-detail-${index}`;
+    return `
+      <article class="kpi-employee-card ${expanded ? "is-expanded" : ""}" data-kpi-card="${index}">
+        <div class="kpi-employee-card-head">
+          <div class="kpi-employee-card-actions">
+            <div class="kpi-employee-name-tile">
+              <h3>${esc(report.operator)}</h3>
+            </div>
+            <div class="kpi-achievement-card">
+              <span>Capaian</span>
+              <strong>${kpiPressScoreText(report.totalAchievement)}%</strong>
+            </div>
+            <button type="button" class="btn btn-ghost kpi-card-toggle" data-kpi-index="${index}" aria-expanded="${expanded ? "true" : "false"}" aria-controls="${detailId}">
+              <i class="fa-solid ${expanded ? "fa-chevron-up" : "fa-chevron-down"}"></i>
+              <span>${expanded ? "Collapse" : "Expand"}</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="kpi-employee-detail" id="${detailId}" ${expanded ? "" : "hidden"}>
+          <div class="kpi-employee-detail-meta">
+            <span>${esc(report.period.label)}</span>
+            <span>Target Output ${esc(kpiPressQtyText(report.outputTarget))} botol/bulan</span>
+          </div>
+          <div class="table-wrap kpi-press-table-wrap">
+            <table class="data-table kpi-press-table">
+              <thead>
+                <tr>
+                  <th>No.</th>
+                  <th>Bidang</th>
+                  <th>Indikator</th>
+                  <th>Bobot</th>
+                  <th>Target</th>
+                  <th>Target (%)</th>
+                  <th>Aktual</th>
+                  <th>Capaian (%)</th>
+                </tr>
+              </thead>
+              <tbody>${report.rows.map(kpiPressRowHtml).join("")}</tbody>
+              <tfoot>
+                <tr class="kpi-press-total-row">
+                  <td colspan="3"><strong>TOTAL</strong></td>
+                  <td><strong>100</strong></td>
+                  <td colspan="2"><strong>CAPAIAN</strong></td>
+                  <td></td>
+                  <td><strong>${kpiPressScoreText(report.totalAchievement)}</strong></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <div class="kpi-employee-detail-summary">
+            <span>Hari Produksi <strong>${report.productionDays}</strong></span>
+            <span>Hari Hadir <strong>${report.presentDays}</strong></span>
+            <span>Hari ${esc(report.lineLabel || "Produksi")} <strong>${report.lineDays || 0}</strong></span>
+          </div>
+        </div>
+      </article>`;
+  }
+
+  function renderKpiLaporanCards() {
+    const reportSet = state.lastKpiLaporan;
+    const container = el("lap-kpi-cards");
+    if (!reportSet || !container) return;
+
+    const reports = reportSet.reports || [];
+    const expandSingle = reports.length === 1;
+    container.innerHTML = reports.length
+      ? reports
+          .map((report, index) =>
+            kpiPressEmployeeCardHtml(report, index, expandSingle),
+          )
+          .join("")
+      : '<div class="dashboard-empty-state">Belum ada karyawan untuk ditampilkan.</div>';
+
+    const toggleAllButton = el("lap-kpi-toggle-all");
+    if (toggleAllButton) {
+      const details = qsa(".kpi-employee-detail", container);
+      const hasCards = details.length > 0;
+      const allExpanded = hasCards && details.every((detail) => !detail.hidden);
+      const icon = qs("i", toggleAllButton);
+      const label = qs("span", toggleAllButton);
+      toggleAllButton.disabled = !hasCards;
+      toggleAllButton.setAttribute(
+        "aria-expanded",
+        allExpanded ? "true" : "false",
+      );
+      if (icon)
+        icon.className = `fa-solid ${allExpanded ? "fa-angles-up" : "fa-angles-down"}`;
+      if (label) label.textContent = allExpanded ? "Collapse" : "Expand";
+    }
+
+    const summary = el("lap-kpi-page-summary");
+    if (summary) {
+      const selectedLabel = reportSet.selectedOperator
+        ? "1 karyawan"
+        : `${reports.length} karyawan`;
+      summary.textContent = `${selectedLabel} KPI ${reportSet.lineLabel} · Periode ${reportSet.period.label} · Target output ${kpiPressQtyText(reportSet.outputTarget)} botol/bulan`;
+    }
+  }
+
+  function setKpiReportExportState(enabled) {
+    ["lap-kpi-export", "lap-kpi-pdf"].forEach((id) => {
+      const btn = el(id);
+      if (btn) btn.disabled = !enabled;
+    });
+  }
+
+  function showKpiLaporan(
+    reports,
+    period,
+    selectedOperator,
+    finalize = false,
+    type = "filling",
+  ) {
+    const result = el("lap-kpi-result");
+    if (!result) return false;
+
+    const kpiType = normalizeKpiType(type);
+    const lineLabel = kpiTypeLabel(kpiType);
+    updateKpiLaporanTypeUi(kpiType);
+
+    if (!Array.isArray(reports) || !reports.length) {
+      state.lastKpiLaporan = null;
+      result.hidden = true;
+      setKpiReportExportState(false);
+      return false;
+    }
+
+    const id = finalize
+      ? genLaporanId().replace(/^LAP-/, `KPI-${lineLabel.toUpperCase()}-`)
+      : "PREVIEW";
+    const outputTarget = getKpiOutputTarget(kpiType);
+    state.lastKpiLaporan = {
+      id,
+      reports,
+      period,
+      kpiType,
+      lineLabel,
+      outputTarget,
+      selectedOperator: selectedOperator || "",
+      isPreview: !finalize,
+    };
+
+    dashboardSetText("lap-kpi-id", finalize ? id : "PREVIEW OTOMATIS");
+    dashboardSetText(
+      "lap-kpi-created",
+      finalize ? fmtDateTime(nowIso()) : "Belum dibuat",
+    );
+    dashboardSetText(
+      "lap-kpi-by",
+      `${state.currentUser?.name || state.currentUser?.username || "—"} (${state.currentUser?.role === "superuser" ? "Super User" : "User"})`,
+    );
+    dashboardSetText("lap-kpi-period", period.label);
+    dashboardSetText(
+      "lap-kpi-employee",
+      selectedOperator || `Semua Karyawan ${lineLabel} (${reports.length})`,
+    );
+
+    renderKpiLaporanCards();
+    result.hidden = false;
+    result.dataset.preview = finalize ? "false" : "true";
+    setKpiReportExportState(finalize);
+    return true;
+  }
+
+  function collectKpiLaporanData(options = {}) {
+    const finalize = Boolean(options.finalize);
+    const type = normalizeKpiType(el("lap-kpi-type")?.value || "filling");
+    const lineLabel = kpiTypeLabel(type);
+    const monthValue = el("lap-kpi-month")?.value || "";
+    const period = kpiPressMonthPeriod(monthValue);
+
+    if (!period) {
+      return {
+        reports: [],
+        period: null,
+        selectedOperator: "",
+        type,
+        error: `Pilih bulan KPI ${lineLabel} yang valid.`,
+      };
+    }
+
+    // Hanya operator yang benar-benar memiliki pengerjaan pada line KPI terpilih.
+    // Master operator, data APD, atau line lain tidak lagi membuat card KPI ikut tampil.
+    const allOperators = kpiOperatorsForPeriod(period, type);
+    const rawOperator = String(el("lap-kpi-operator")?.value || "").trim();
+    let selectedOperator = "";
+    let operators = allOperators;
+
+    if (rawOperator) {
+      const exact = kpiResolveExactOperator(rawOperator, allOperators);
+      if (exact) {
+        selectedOperator = exact;
+        operators = [exact];
+      } else if (!finalize) {
+        const keyword = rawOperator.toLowerCase();
+        operators = allOperators.filter((name) =>
+          name.toLowerCase().includes(keyword),
+        );
+      } else {
+        return {
+          reports: [],
+          period,
+          selectedOperator: "",
+          type,
+          error: `Nama karyawan tersebut tidak mempunyai pengerjaan ${lineLabel} pada bulan terpilih.`,
+        };
+      }
+    }
+
+    const outputTarget = getKpiOutputTarget(type);
+    const reports = operators
+      .map((operator) =>
+        type === "press"
+          ? buildPressKpiReport(operator, monthValue, outputTarget)
+          : buildFillingKpiReport(operator, monthValue, outputTarget),
+      )
+      .filter(Boolean);
+
+    return { reports, period, selectedOperator, type, error: "" };
+  }
+
   function buildKpiLaporanPrintHtml() {
-    if (!state.lastKpiLaporan || !state.lastKpiLaporan.rows?.length) return "";
-    const report = state.lastKpiLaporan;
-    const rows = report.rows;
+    const reportSet = state.lastKpiLaporan;
+    if (!reportSet || reportSet.isPreview || !reportSet.reports?.length)
+      return "";
+
     const created = el("lap-kpi-created")?.textContent || fmtDateTime(nowIso());
     const by = el("lap-kpi-by")?.textContent || "—";
-    const bodyRows = rows.map(row => `
-      <tr>
-        <td>${esc(row.operator)}</td>
-        <td class="num">${esc(kpiReportDisplay(row.kpiResult))}</td>
-        <td class="num">${esc(kpiReportDisplay(row.kpiBroken))}</td>
-        <td class="num">${esc(kpiReportDisplay(row.kpiApd))}</td>
-      </tr>`).join("");
+    const isPress = reportSet.kpiType === "press";
+
+    const sections = reportSet.reports
+      .map((report, index) => {
+        const bodyRows = report.rows
+          .map(
+            (row) => `
+        <tr>
+          <td class="center">${row.no}</td>
+          <td><strong>${esc(row.field)}</strong></td>
+          <td>${esc(row.indicator)}</td>
+          <td class="center">${esc(String(row.weight))}</td>
+          <td>${esc(row.targetText)}</td>
+          <td class="center">${row.targetPercent}</td>
+          <td class="center"><strong>${esc(row.actualText)}</strong></td>
+          <td class="center"><strong>${esc(kpiPressScoreText(row.achievement))}</strong></td>
+        </tr>`,
+          )
+          .join("");
+
+        const qualitySummary = isPress
+          ? `Kerusakan ${esc(report.outputActual > 0 ? kpiPressPercentText(report.rejectActual || 0, 2) : "—")}`
+          : `Kardus Basah ${esc(kpiPressQtyText(report.wetCartonsActual || 0))} dus · Tumpahan ${esc(kpiPressPercentText(report.spillActual, 2))}`;
+
+        return `
+        <section class="employee-section">
+          <div class="employee-head">
+            <div>
+              <div class="employee-no">Karyawan ${index + 1}</div>
+              <h2>${esc(report.operator)}</h2>
+            </div>
+            <div class="achievement"><span>Capaian</span><strong>${esc(kpiPressScoreText(report.totalAchievement))}%</strong></div>
+          </div>
+          <table>
+            <thead><tr><th>No.</th><th>Bidang</th><th>Indikator</th><th>Bobot</th><th>Target</th><th>Target (%)</th><th>Aktual</th><th>Capaian (%)</th></tr></thead>
+            <tbody>${bodyRows}</tbody>
+            <tfoot><tr><td colspan="3">TOTAL</td><td class="center">100</td><td colspan="2">CAPAIAN</td><td></td><td class="center">${esc(kpiPressScoreText(report.totalAchievement))}</td></tr></tfoot>
+          </table>
+          <div class="compact">
+            Output ${esc(kpiPressQtyText(report.outputActual))} · ${qualitySummary} ·
+            APD ${esc(kpiPressPercentText(report.apdActual, 2))} · Kehadiran ${esc(kpiPressPercentText(report.attendanceActual, 2))} ·
+            Hari produksi ${report.productionDays} · Hari hadir ${report.presentDays} · Hari ${esc(report.lineLabel)} ${report.lineDays || 0}
+          </div>
+        </section>`;
+      })
+      .join("");
+
+    const notes = isPress
+      ? `
+        <p><strong>Keterangan:</strong> Target output KPI Press diatur melalui menu Setting.</p>
+        <p>Kerusakan botol dihitung dari rata-rata persentase kerusakan harian pada data Press. Target &lt; 1%.</p>`
+      : `
+        <p><strong>Keterangan:</strong> Target output KPI Filling diatur melalui menu Setting (${esc(kpiPressQtyText(reportSet.outputTarget))} botol/bulan).</p>
+        <p>Tumpahan per hari: 0 kardus basah = 0%; 1–5 = 1%; di atas 5 = 1% + ((Qty Kardus Basah − 5) ÷ Qty Pengerjaan Dus × 30%). Nilai KPI bulanan memakai rata-rata persentase harian.</p>`;
 
     return `<!DOCTYPE html>
 <html lang="id">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>${esc(report.id)}</title>
+  <title>${esc(reportSet.id)}</title>
   <style>
-    @page { size: A4 portrait; margin: 12mm; }
+    @page { size: A4 landscape; margin: 10mm; }
     * { box-sizing: border-box; }
-    body { margin: 0; color: #111827; font-family: Arial, Helvetica, sans-serif; font-size: 10px; }
-    .head { display:flex; justify-content:space-between; gap:20px; margin-bottom:12px; }
+    body { margin:0; color:#111827; font-family:Arial,Helvetica,sans-serif; font-size:9px; }
+    .report-head { display:flex; justify-content:space-between; gap:20px; margin-bottom:12px; border-bottom:1px solid #d1d5db; padding-bottom:9px; }
     .company { font-size:8px; font-weight:700; text-transform:uppercase; letter-spacing:.08em; color:#8a4a0c; }
     h1 { margin:3px 0 4px; font-size:18px; }
-    .id { font-family:Consolas, monospace; font-weight:700; }
-    .meta { text-align:right; line-height:1.6; }
-    .note { margin:0 0 10px; padding:8px 10px; border:1px solid #d1d5db; background:#f8fafc; line-height:1.5; }
+    h2 { margin:0; font-size:14px; }
+    .id { font-family:Consolas,monospace; font-weight:700; }
+    .meta { text-align:right; line-height:1.55; }
+    .employee-section { margin:0 0 14px; break-inside:avoid; page-break-inside:avoid; }
+    .employee-head { display:flex; justify-content:space-between; align-items:center; gap:14px; margin-bottom:6px; }
+    .employee-no { font-size:7.5px; color:#6b7280; text-transform:uppercase; letter-spacing:.06em; }
+    .achievement { min-width:120px; border:1px solid #cbd5e1; border-radius:6px; padding:6px 10px; text-align:center; }
+    .achievement span { display:block; color:#6b7280; font-size:7px; text-transform:uppercase; }
+    .achievement strong { display:block; margin-top:2px; font-size:15px; }
     table { width:100%; border-collapse:collapse; }
-    th, td { border:1px solid #cfd6dd; padding:6px 7px; }
-    th { background:#eef2f5; text-transform:uppercase; font-size:8px; text-align:left; }
-    .num { text-align:center; white-space:nowrap; }
+    th,td { border:1px solid #cfd6dd; padding:5px 6px; }
+    th { background:#dbe5f1; text-transform:uppercase; font-size:7.5px; text-align:left; }
+    .center { text-align:center; white-space:nowrap; }
+    tfoot td { background:#fff200; font-weight:700; }
+    .compact { margin-top:5px; color:#4b5563; font-size:8px; line-height:1.4; }
+    .notes { margin-top:12px; border-top:1px solid #d1d5db; padding-top:7px; font-size:8px; line-height:1.45; color:#374151; }
+    .notes p { margin:2px 0; }
   </style>
 </head>
 <body>
-  <section class="head">
-    <div><div class="company">PT. ABSH FRAGRANCE CREATIONS</div><h1>Laporan KPI Karyawan</h1><div class="id">${esc(report.id)}</div></div>
-    <div class="meta"><div><strong>Dibuat:</strong> ${esc(created)}</div><div><strong>Oleh:</strong> ${esc(by)}</div><div><strong>Periode:</strong> ${esc(report.period.label)}</div></div>
+  <section class="report-head">
+    <div>
+      <div class="company">PT. ABSH FRAGRANCE CREATIONS</div>
+      <h1>Laporan KPI ${esc(reportSet.lineLabel)}</h1>
+      <div class="id">${esc(reportSet.id)}</div>
+      <div>${esc(reportSet.selectedOperator || `Semua Karyawan ${reportSet.lineLabel} (${reportSet.reports.length})`)}</div>
+    </div>
+    <div class="meta">
+      <div><strong>Dibuat:</strong> ${esc(created)}</div>
+      <div><strong>Oleh:</strong> ${esc(by)}</div>
+      <div><strong>Periode:</strong> ${esc(reportSet.period.label)}</div>
+      <div><strong>Target output:</strong> ${esc(kpiPressQtyText(reportSet.outputTarget))} botol/bulan</div>
+    </div>
   </section>
-  <p class="note">${esc(report.period.averagingLabel)}. KPI Hasil dan KPI Botol Rusak hanya memakai data Press. Botol rusak Filling tetap tercatat pada Spreadsheet, tetapi tidak masuk KPI.</p>
-  <table>
-    <thead><tr><th>Karyawan</th><th>KPI Hasil</th><th>KPI Botol Rusak</th><th>KPI APD</th></tr></thead>
-    <tbody>${bodyRows}</tbody>
-  </table>
+  ${sections}
+  <div class="notes">
+    ${notes}
+    <p>APD menggunakan rata-rata nilai APD operator pada bulan yang sama. Target ≥ 95%.</p>
+    <p>Kehadiran mempertahankan logic sebelumnya: menggunakan tanggal produksi aktif perusahaan; operator hadir bila memiliki data Filling atau Press pada tanggal tersebut.</p>
+  </div>
 </body>
 </html>`;
   }
 
   function openKpiLaporanPrintDialog() {
     const html = buildKpiLaporanPrintHtml();
-    if (!html) return toast("Buat Laporan KPI terlebih dahulu.", true);
-    const printWindow = window.open("", "_blank", "width=1000,height=800");
-    if (!printWindow) return toast("Popup diblokir browser. Izinkan popup untuk Export PDF KPI.", true);
+    if (!html)
+      return toast(
+        "Klik Buat Laporan KPI terlebih dahulu sebelum Export PDF.",
+        true,
+      );
+    const printWindow = window.open("", "_blank", "width=1200,height=820");
+    if (!printWindow)
+      return toast(
+        "Popup diblokir browser. Izinkan popup untuk Export PDF KPI.",
+        true,
+      );
     printWindow.document.open();
     printWindow.document.write(html);
     printWindow.document.close();
@@ -4385,85 +6250,269 @@
         toast(`Gagal membuka dialog cetak KPI: ${err.message}`, true);
       }
     };
-    if (printWindow.document.readyState === "complete") setTimeout(doPrint, 250);
-    else printWindow.addEventListener("load", () => setTimeout(doPrint, 250), { once: true });
+    if (printWindow.document.readyState === "complete")
+      setTimeout(doPrint, 250);
+    else
+      printWindow.addEventListener("load", () => setTimeout(doPrint, 250), {
+        once: true,
+      });
+    toast("Dialog PDF KPI dibuka. Pilih 'Save as PDF' / 'Simpan sebagai PDF'.");
+  }
+
+  function initLaporanSubmenu() {
+    const nav = el("laporanSubnav");
+    if (!nav) return;
+    const buttons = qsa(".laporan-subnav-btn", nav);
+    const views = {
+      hasil: el("laporan-subview-hasil"),
+      kpi: el("laporan-subview-kpi"),
+    };
+
+    function showLaporanSubview(name) {
+      const target = views[name] ? name : "hasil";
+      buttons.forEach((btn) => {
+        const active = btn.dataset.laporanView === target;
+        btn.classList.toggle("active", active);
+        btn.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      Object.entries(views).forEach(([key, node]) => {
+        if (node) node.hidden = key !== target;
+      });
+
+      if (
+        target === "kpi" &&
+        typeof window.refreshKpiLaporanAutoPreview === "function"
+      ) {
+        window.refreshKpiLaporanAutoPreview();
+      }
+    }
+
+    nav.addEventListener("click", (event) => {
+      const btn = event.target.closest(".laporan-subnav-btn");
+      if (!btn) return;
+      showLaporanSubview(btn.dataset.laporanView || "hasil");
+    });
+
+    showLaporanSubview("hasil");
   }
 
   function initKpiLaporan() {
     const generate = el("lap-kpi-generate");
     if (!generate) return;
 
-    const today = dashboardDateParts(todayStr()) || new Date();
-    const currentMonth = dashboardMonthKey(today);
-    const currentYear = today.getFullYear();
-    if (el("lap-kpi-date")) el("lap-kpi-date").value = todayStr();
-    if (el("lap-kpi-month")) el("lap-kpi-month").value = currentMonth;
-    if (el("lap-kpi-year")) el("lap-kpi-year").value = currentYear;
-    if (el("lap-kpi-start")) el("lap-kpi-start").value = dashboardDateKey(dashboardAddDays(today, -6));
-    if (el("lap-kpi-end")) el("lap-kpi-end").value = todayStr();
-
-    function updatePeriodInputs() {
-      const mode = el("lap-kpi-mode")?.value || "date";
-      if (el("lap-kpi-date-wrap")) el("lap-kpi-date-wrap").hidden = mode !== "date";
-      if (el("lap-kpi-month-wrap")) el("lap-kpi-month-wrap").hidden = mode !== "month";
-      if (el("lap-kpi-year-wrap")) el("lap-kpi-year-wrap").hidden = mode !== "year";
-      if (el("lap-kpi-start-wrap")) el("lap-kpi-start-wrap").hidden = mode !== "range";
-      if (el("lap-kpi-end-wrap")) el("lap-kpi-end-wrap").hidden = mode !== "range";
+    let previewTimer = null;
+    const currentMonth = todayStr().slice(0, 7);
+    if (el("lap-kpi-month") && !el("lap-kpi-month").value) {
+      el("lap-kpi-month").value = currentMonth;
     }
 
-    el("lap-kpi-mode")?.addEventListener("change", updatePeriodInputs);
-    updatePeriodInputs();
+    updateKpiLaporanTypeUi(el("lap-kpi-type")?.value || "filling");
 
-    generate.addEventListener("click", () => {
-      if (!can("accessReports")) return toast("Anda tidak memiliki akses Laporan.", true);
-      const period = kpiReportPeriodFromInputs();
-      const operator = el("lap-kpi-operator")?.value || "";
-      const rows = buildEmployeeKpiRows(period, operator);
-      const result = el("lap-kpi-result");
+    function showError(message = "") {
+      const errorEl = el("lap-kpi-error");
+      if (!errorEl) return;
+      errorEl.textContent = message;
+      errorEl.hidden = !message;
+    }
 
-      if (!rows.length) {
-        if (result) result.hidden = true;
-        state.lastKpiLaporan = null;
-        toast("Tidak ada data KPI yang cocok dengan periode/karyawan tersebut.", true);
+    function refreshAutoPreview() {
+      if (!can("accessReports")) return;
+      const { reports, period, selectedOperator, type, error } =
+        collectKpiLaporanData({ finalize: false });
+      updateKpiLaporanTypeUi(type);
+      if (error || !period) {
+        showError(error);
+        showKpiLaporan([], period || { label: "—" }, "", false, type);
         return;
       }
+      showError("");
+      showKpiLaporan(reports, period, selectedOperator, false, type);
+    }
 
-      const id = genLaporanId().replace(/^LAP-/, "KPI-");
-      state.lastKpiLaporan = { id, rows, period, operator };
-      state.pages.kpiLaporan = 1;
+    function scheduleAutoPreview(delay = 120) {
+      clearTimeout(previewTimer);
+      previewTimer = setTimeout(refreshAutoPreview, delay);
+    }
 
-      dashboardSetText("lap-kpi-id", id);
-      dashboardSetText("lap-kpi-created", fmtDateTime(nowIso()));
-      dashboardSetText("lap-kpi-by", `${state.currentUser.name} (${state.currentUser.role === "superuser" ? "Super User" : "User"})`);
-      dashboardSetText("lap-kpi-period", `${period.label} · ${period.averagingLabel}`);
-      dashboardSetText("lap-kpi-total-employees", rows.length.toLocaleString("id-ID"));
-      dashboardSetText("lap-kpi-avg-result", kpiReportDisplay(averageKpiValues(rows.map(row => row.kpiResult))));
-      dashboardSetText("lap-kpi-avg-broken", kpiReportDisplay(averageKpiValues(rows.map(row => row.kpiBroken))));
-      dashboardSetText("lap-kpi-avg-apd", kpiReportDisplay(averageKpiValues(rows.map(row => row.kpiApd))));
+    window.refreshKpiLaporanAutoPreview = () => scheduleAutoPreview(0);
 
-      renderKpiLaporanRows();
-      if (result) result.hidden = false;
+    el("lap-kpi-type")?.addEventListener("change", () => {
+      const input = el("lap-kpi-operator");
+      if (input) input.value = "";
+      setKpiReportExportState(false);
+      updateKpiLaporanTypeUi(el("lap-kpi-type")?.value || "filling");
+      scheduleAutoPreview(0);
+    });
+    el("lap-kpi-operator")?.addEventListener("input", () =>
+      scheduleAutoPreview(180),
+    );
+    el("lap-kpi-operator")?.addEventListener("change", () =>
+      scheduleAutoPreview(0),
+    );
+    el("lap-kpi-month")?.addEventListener("input", () =>
+      scheduleAutoPreview(120),
+    );
+    el("lap-kpi-month")?.addEventListener("change", () =>
+      scheduleAutoPreview(0),
+    );
+
+    el("lap-kpi-cards")?.addEventListener("click", (event) => {
+      const toggle = event.target.closest(".kpi-card-toggle");
+      if (!toggle) return;
+      const detail = el(`kpi-employee-detail-${toggle.dataset.kpiIndex}`);
+      if (!detail) return;
+      const willExpand = detail.hidden;
+      detail.hidden = !willExpand;
+      const card = toggle.closest(".kpi-employee-card");
+      if (card) card.classList.toggle("is-expanded", willExpand);
+      toggle.setAttribute("aria-expanded", willExpand ? "true" : "false");
+      const icon = qs("i", toggle);
+      const label = qs("span", toggle);
+      if (icon)
+        icon.className = `fa-solid ${willExpand ? "fa-chevron-up" : "fa-chevron-down"}`;
+      if (label) label.textContent = willExpand ? "Collapse" : "Expand";
+      syncKpiToggleAllButton();
+    });
+
+    function syncKpiToggleAllButton() {
+      const container = el("lap-kpi-cards");
+      const button = el("lap-kpi-toggle-all");
+      if (!container || !button) return;
+
+      const details = qsa(".kpi-employee-detail", container);
+      const hasCards = details.length > 0;
+      const allExpanded = hasCards && details.every((detail) => !detail.hidden);
+      const icon = qs("i", button);
+      const label = qs("span", button);
+
+      button.disabled = !hasCards;
+      button.setAttribute("aria-expanded", allExpanded ? "true" : "false");
+      if (icon)
+        icon.className = `fa-solid ${allExpanded ? "fa-angles-up" : "fa-angles-down"}`;
+      if (label) label.textContent = allExpanded ? "Collapse" : "Expand";
+    }
+
+    function setAllKpiCardsExpanded(expanded) {
+      const container = el("lap-kpi-cards");
+      if (!container) return;
+
+      qsa(".kpi-employee-card", container).forEach((card) =>
+        card.classList.toggle("is-expanded", expanded),
+      );
+      qsa(".kpi-employee-detail", container).forEach((detail) => {
+        detail.hidden = !expanded;
+      });
+      qsa(".kpi-card-toggle", container).forEach((toggle) => {
+        toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+        const icon = qs("i", toggle);
+        const label = qs("span", toggle);
+        if (icon)
+          icon.className = `fa-solid ${expanded ? "fa-chevron-up" : "fa-chevron-down"}`;
+        if (label) label.textContent = expanded ? "Collapse" : "Expand";
+      });
+      syncKpiToggleAllButton();
+    }
+
+    const kpiToggleAllButton = el("lap-kpi-toggle-all");
+    if (kpiToggleAllButton && kpiToggleAllButton.dataset.bound !== "1") {
+      kpiToggleAllButton.dataset.bound = "1";
+      kpiToggleAllButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        const container = el("lap-kpi-cards");
+        if (!container) return;
+
+        const cards = qsa(".kpi-employee-card", container);
+        const details = qsa(".kpi-employee-detail", container);
+        if (!cards.length || !details.length) return;
+
+        const allExpanded = cards.every((card) =>
+          card.classList.contains("is-expanded"),
+        );
+        setAllKpiCardsExpanded(!allExpanded);
+      });
+    }
+
+    generate.addEventListener("click", () => {
+      if (!can("accessReports"))
+        return toast("Anda tidak memiliki akses Laporan.", true);
+
+      const { reports, period, selectedOperator, type, error } =
+        collectKpiLaporanData({ finalize: true });
+      const lineLabel = kpiTypeLabel(type);
+      if (error || !period) {
+        showError(error || `Data KPI ${lineLabel} tidak dapat dihitung.`);
+        return;
+      }
+      if (!reports.length) {
+        showError("");
+        showKpiLaporan([], period, selectedOperator, false, type);
+        return toast(
+          `Tidak ada karyawan ${lineLabel} yang cocok dengan filter KPI.`,
+          true,
+        );
+      }
+
+      showError("");
+      showKpiLaporan(reports, period, selectedOperator, true, type);
+      toast(`Laporan KPI ${lineLabel} berhasil dibuat dari preview saat ini.`);
     });
 
     el("lap-kpi-export")?.addEventListener("click", () => {
-      if (!state.lastKpiLaporan) return toast("Buat Laporan KPI terlebih dahulu.", true);
-      const report = state.lastKpiLaporan;
+      const reportSet = state.lastKpiLaporan;
+      if (!reportSet || reportSet.isPreview) {
+        return toast(
+          "Klik Buat Laporan KPI terlebih dahulu sebelum Export CSV.",
+          true,
+        );
+      }
+
+      const rows = [];
+      reportSet.reports.forEach((report) => {
+        report.rows.forEach((row) => {
+          rows.push([
+            reportSet.id,
+            `KPI ${reportSet.lineLabel}`,
+            report.operator,
+            report.period.label,
+            row.no,
+            row.field,
+            row.indicator,
+            row.weight,
+            row.targetText,
+            row.targetPercent,
+            row.actualText,
+            Number(row.achievement || 0).toFixed(2),
+            Number(report.totalAchievement || 0).toFixed(2),
+          ]);
+        });
+      });
+
       const csv = toCSV(
-        ["ID Laporan KPI", "Periode", "Metode", "Karyawan", "KPI Hasil", "KPI Botol Rusak", "KPI APD"],
-        report.rows.map(row => [
-          report.id,
-          report.period.label,
-          report.period.averagingLabel,
-          row.operator,
-          row.kpiResult === null ? "" : row.kpiResult,
-          row.kpiBroken === null ? "" : row.kpiBroken,
-          row.kpiApd === null ? "" : row.kpiApd
-        ])
+        [
+          "ID Laporan KPI",
+          "Jenis KPI",
+          "Karyawan",
+          "Periode",
+          "No",
+          "Bidang",
+          "Indikator",
+          "Bobot",
+          "Target",
+          "Target (%)",
+          "Aktual",
+          "Capaian Indikator (%)",
+          "Total Capaian Karyawan (%)",
+        ],
+        rows,
       );
-      downloadText(`${report.id}.csv`, csv);
+      downloadText(`${reportSet.id}.csv`, csv);
     });
 
     el("lap-kpi-pdf")?.addEventListener("click", openKpiLaporanPrintDialog);
+
+    scheduleAutoPreview(0);
   }
 
   function initLaporan() {
@@ -4483,7 +6532,9 @@
 
     function collectLaporanData() {
       const line = el("lap-line")?.value || "all";
-      const operatorQuery = String(el("lap-operator")?.value || "").trim().toLowerCase();
+      const operatorQuery = String(el("lap-operator")?.value || "")
+        .trim()
+        .toLowerCase();
       const periodMode = String(el("lap-period-mode")?.value || "").trim();
       let period = kpiReportPeriodFromInputs();
 
@@ -4499,47 +6550,90 @@
             start: systemDate,
             end: systemDate,
             label: dashboardDateKey(systemDate),
-            averagingLabel: "KPI tanggal sistem"
+            averagingLabel: "KPI tanggal sistem",
           };
         }
       }
 
       // Laporan hanya memakai data yang sudah benar-benar dikonfirmasi Spreadsheet.
-      let rows = state.entries.filter(e => !e._syncState);
-      if (line !== "all") rows = rows.filter(e => e.tab === line);
-      if (operatorQuery) rows = rows.filter(e => String(e.operator || "").toLowerCase().includes(operatorQuery));
-      rows = rows.filter(e => dashboardDateInPeriod(e.tanggal, period));
+      let rows = state.entries.filter((e) => !e._syncState);
+      if (line !== "all") rows = rows.filter((e) => e.tab === line);
+      if (operatorQuery)
+        rows = rows.filter((e) =>
+          String(e.operator || "")
+            .toLowerCase()
+            .includes(operatorQuery),
+        );
+      rows = rows.filter((e) => dashboardDateInPeriod(e.tanggal, period));
       rows.sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)));
 
-      if (!rows.length) return { rows: [], period };
+      if (!rows.length) return { rows: [], period, line };
 
-      // KPI ditempel sebagai kolom di sisi kanan Laporan Produksi.
-      // Hasil dan Botol Rusak mengambil data Press; KPI APD mengambil data APD.
-      const kpiByOperator = new Map(
-        buildEmployeeKpiRows(period).map(item => [String(item.operator || "").trim().toLowerCase(), item])
-      );
+      // KPI pada Laporan Hasil Pengerjaan dihitung PER BARIS INPUT, bukan lagi
+      // mengulang KPI agregat operator/periode ke setiap baris. Dengan demikian
+      // setiap pengerjaan menunjukkan kontribusinya sendiri terhadap indikator KPI.
+      //
+      // KPI Hasil = Qty baris / target bulanan line × bobot OUTPUT (40).
+      // Jika seluruh baris operator pada satu bulan dijumlahkan, hasilnya sama
+      // dengan CAPAIAN (%) indikator OUTPUT pada Laporan KPI bulanan.
+      //
+      // KPI Kardus Basah = persentase tumpahan dari baris Filling tersebut.
+      // KPI Botol Rusak = Qty Pecah baris Press / Total Qty baris × 100%.
+      // KPI APD = rata-rata penilaian APD operator pada tanggal pengerjaan baris.
+      const apdByOperatorDate = new Map();
+      (state.apdEntries || []).forEach((item) => {
+        if (!item) return;
+        const operatorKey = kpiOperatorKey(item.operator);
+        const dateKey = String(item.tanggal || "").trim();
+        if (!operatorKey || !dateKey) return;
+        const key = `${operatorKey}||${dateKey}`;
+        if (!apdByOperatorDate.has(key)) apdByOperatorDate.set(key, []);
+        const value = Number(item.percentage);
+        if (Number.isFinite(value)) apdByOperatorDate.get(key).push(value);
+      });
 
-      rows = rows.map(entry => {
-        const kpi = kpiByOperator.get(String(entry.operator || "").trim().toLowerCase()) || null;
+      rows = rows.map((entry) => {
+        const isFilling = entry.tab === "filling";
+        const totalQty = Math.max(0, Number(entry.totalQty) || 0);
+        const qtyBroken = Math.max(0, Number(entry.qtyBotolPecah) || 0);
+
+        const outputTarget = Math.max(
+          1,
+          Number(
+            isFilling ? getKpiFillingOutputTarget() : getKpiPressOutputTarget(),
+          ) || 0,
+        );
+        const outputWeight = isFilling
+          ? KPI_FILLING_DEFAULTS.weights.output
+          : KPI_PRESS_DEFAULTS.weights.output;
+
+        const apdKey = `${kpiOperatorKey(entry.operator)}||${String(entry.tanggal || "").trim()}`;
+        const apdValues = apdByOperatorDate.get(apdKey) || [];
+
         return {
           ...entry,
-          _kpiResult: kpi ? kpi.kpiResult : null,
-          _kpiBroken: kpi ? kpi.kpiBroken : null,
-          _kpiApd: kpi ? kpi.kpiApd : null
+          _kpiResult:
+            totalQty > 0 ? (totalQty / outputTarget) * outputWeight : null,
+          _kpiWetCarton: isFilling
+            ? kpiFillingSpillPercent(entry.qtyKardusBasah, entry.qtyKardus)
+            : null,
+          _kpiBroken:
+            !isFilling && totalQty > 0 ? (qtyBroken / totalQty) * 100 : null,
+          _kpiApd: averageKpiValues(apdValues),
         };
       });
 
-      return { rows, period };
+      return { rows, period, line };
     }
 
     function setReportExportState(enabled) {
-      ["lap-export", "lap-pdf", "lap-print"].forEach(id => {
+      ["lap-export", "lap-pdf", "lap-print"].forEach((id) => {
         const button = el(id);
         if (button) button.disabled = !enabled;
       });
     }
 
-    function showLaporan(rows, period, finalize = false) {
+    function showLaporan(rows, period, line = "all", finalize = false) {
       const result = el("lap-result");
       if (!result) return false;
 
@@ -4551,17 +6645,60 @@
       }
 
       const id = finalize ? genLaporanId() : "PREVIEW";
-      state.lastLaporan = { id, rows, period, isPreview: !finalize };
+      state.lastLaporan = { id, rows, period, line, isPreview: !finalize };
       state.pages.laporan = 1;
 
       el("lap-id").textContent = finalize ? id : "PREVIEW OTOMATIS";
-      el("lap-created").textContent = finalize ? fmtDateTime(nowIso()) : "Belum dibuat";
-      el("lap-by").textContent = `${state.currentUser?.name || state.currentUser?.username || "—"} (${state.currentUser?.role === "superuser" ? "Super User" : "User"})`;
+      el("lap-created").textContent = finalize
+        ? fmtDateTime(nowIso())
+        : "Belum dibuat";
+      el("lap-by").textContent =
+        `${state.currentUser?.name || state.currentUser?.username || "—"} (${state.currentUser?.role === "superuser" ? "Super User" : "User"})`;
       el("lap-period").textContent = period.label;
       el("lap-total-entries").textContent = rows.length;
-      el("lap-total-kardus").textContent = rows.reduce((sum, e) => sum + (Number(e.qtyKardus) || 0), 0).toLocaleString("id-ID");
-      el("lap-total-qty").textContent = rows.reduce((sum, e) => sum + (Number(e.totalQty) || 0), 0).toLocaleString("id-ID");
-      el("lap-total-pecah").textContent = rows.reduce((sum, e) => sum + (Number(e.qtyBotolPecah) || 0), 0).toLocaleString("id-ID");
+      el("lap-total-kardus").textContent = rows
+        .reduce((sum, e) => sum + (Number(e.qtyKardus) || 0), 0)
+        .toLocaleString("id-ID");
+      el("lap-total-qty").textContent = rows
+        .reduce((sum, e) => sum + (Number(e.totalQty) || 0), 0)
+        .toLocaleString("id-ID");
+
+      // Kartu ringkasan ke-4 mengikuti line yang dipilih:
+      // Filling = Total Kardus Basah, Press = Total Botol Pecah.
+      // Pada Semua Line kartu ke-4 disembunyikan agar tidak menampilkan total
+      // Botol Pecah yang hanya relevan untuk line Press.
+      // ID value lama dipertahankan agar fitur lain tidak terganggu.
+      const fourthStatValue = el("lap-total-pecah");
+      const fourthStatLabel = el("lap-total-fourth-label");
+      const fourthStatCard =
+        el("lap-total-fourth-stat") || fourthStatValue?.closest(".stat");
+      const reportStats = fourthStatCard?.closest(".report-stats");
+
+      if (fourthStatCard) fourthStatCard.hidden = line === "all";
+      if (reportStats)
+        reportStats.dataset.statCount = line === "all" ? "3" : "4";
+
+      if (line === "filling") {
+        const totalKardusBasah = rows.reduce(
+          (sum, e) => sum + (Number(e.qtyKardusBasah) || 0),
+          0,
+        );
+        if (fourthStatValue)
+          fourthStatValue.textContent =
+            totalKardusBasah.toLocaleString("id-ID");
+        if (fourthStatLabel) fourthStatLabel.textContent = "Total Kardus Basah";
+      } else if (line === "press") {
+        const totalPecah = rows.reduce(
+          (sum, e) => sum + (Number(e.qtyBotolPecah) || 0),
+          0,
+        );
+        if (fourthStatValue)
+          fourthStatValue.textContent = totalPecah.toLocaleString("id-ID");
+        if (fourthStatLabel) fourthStatLabel.textContent = "Total Botol Pecah";
+      } else {
+        if (fourthStatValue) fourthStatValue.textContent = "0";
+        if (fourthStatLabel) fourthStatLabel.textContent = "Total Botol Pecah";
+      }
 
       renderLaporanRows();
       result.hidden = false;
@@ -4572,8 +6709,8 @@
 
     function refreshAutoPreview() {
       if (!can("accessReports")) return;
-      const { rows, period } = collectLaporanData();
-      showLaporan(rows, period, false);
+      const { rows, period, line } = collectLaporanData();
+      showLaporan(rows, period, line, false);
     }
 
     function scheduleAutoPreview(delay = 120) {
@@ -4594,52 +6731,89 @@
     // Semua perubahan filter langsung memperbarui preview. Nama karyawan memakai
     // event input (debounce) dan change agar klik suggestion autocomplete juga terbaca.
     el("lap-line")?.addEventListener("change", () => scheduleAutoPreview(0));
-    el("lap-operator")?.addEventListener("input", () => scheduleAutoPreview(180));
-    el("lap-operator")?.addEventListener("change", () => scheduleAutoPreview(0));
-    ["lap-date", "lap-month", "lap-year", "lap-start", "lap-end"].forEach(id => {
-      el(id)?.addEventListener("input", () => scheduleAutoPreview(120));
-      el(id)?.addEventListener("change", () => scheduleAutoPreview(0));
-    });
+    el("lap-operator")?.addEventListener("input", () =>
+      scheduleAutoPreview(180),
+    );
+    el("lap-operator")?.addEventListener("change", () =>
+      scheduleAutoPreview(0),
+    );
+    ["lap-date", "lap-month", "lap-year", "lap-start", "lap-end"].forEach(
+      (id) => {
+        el(id)?.addEventListener("input", () => scheduleAutoPreview(120));
+        el(id)?.addEventListener("change", () => scheduleAutoPreview(0));
+      },
+    );
 
     // Preview awal akan muncul otomatis jika cache/data sudah tersedia.
     scheduleAutoPreview(0);
 
     generate.addEventListener("click", () => {
-      if (!can("accessReports")) return toast("Anda tidak memiliki akses Laporan.", true);
-      const { rows, period } = collectLaporanData();
+      if (!can("accessReports"))
+        return toast("Anda tidak memiliki akses Laporan.", true);
+      const { rows, period, line } = collectLaporanData();
       if (!rows.length) {
-        showLaporan([], period, false);
+        showLaporan([], period, line, false);
         toast("Tidak ada data yang cocok dengan filter laporan.", true);
         return;
       }
-      showLaporan(rows, period, true);
+      showLaporan(rows, period, line, true);
       toast("Laporan berhasil dibuat dari preview saat ini.");
     });
 
     el("lap-export")?.addEventListener("click", () => {
       if (!state.lastLaporan || state.lastLaporan.isPreview) {
-        return toast("Klik Buat Laporan terlebih dahulu sebelum Export CSV.", true);
+        return toast(
+          "Klik Buat Laporan terlebih dahulu sebelum Export CSV.",
+          true,
+        );
       }
+      const metricColumns = laporanMetricColumns(state.lastLaporan.line);
       const csv = toCSV(
-        ["ID Laporan", "ID Pengerjaan", "Line", "Tanggal", "Operator", "Produk", "Botol", "Qty Kardus", "Total Qty", "Qty Pecah", "KPI Hasil", "KPI Botol Rusak", "KPI APD"],
-        state.lastLaporan.rows.map(e => [
-          state.lastLaporan.id, e.reportId, LINE_LABEL[e.tab], e.tanggal, e.operator, e.produk, e.botol,
-          e.qtyKardus, e.totalQty, e.qtyBotolPecah,
-          kpiReportDisplay(e._kpiResult), kpiReportDisplay(e._kpiBroken), kpiReportDisplay(e._kpiApd)
-        ])
+        [
+          "ID Laporan",
+          "ID Pengerjaan",
+          "Line",
+          "Tanggal",
+          "Operator",
+          "Produk",
+          "Botol",
+          "Qty Kardus",
+          "Total Qty",
+          "Qty Pecah",
+          ...metricColumns.map((column) => column.label),
+        ],
+        state.lastLaporan.rows.map((e) => [
+          state.lastLaporan.id,
+          e.reportId,
+          LINE_LABEL[e.tab],
+          e.tanggal,
+          e.operator,
+          e.produk,
+          e.botol,
+          e.qtyKardus,
+          e.totalQty,
+          e.qtyBotolPecah,
+          ...metricColumns.map((column) => kpiReportDisplay(e[column.key])),
+        ]),
       );
       downloadText(`${state.lastLaporan.id}.csv`, csv);
     });
 
     el("lap-pdf")?.addEventListener("click", () => {
       if (!state.lastLaporan || state.lastLaporan.isPreview) {
-        return toast("Klik Buat Laporan terlebih dahulu sebelum Export PDF.", true);
+        return toast(
+          "Klik Buat Laporan terlebih dahulu sebelum Export PDF.",
+          true,
+        );
       }
       openLaporanPrintDialog("pdf");
     });
     el("lap-print")?.addEventListener("click", () => {
       if (!state.lastLaporan || state.lastLaporan.isPreview) {
-        return toast("Klik Buat Laporan terlebih dahulu sebelum mencetak.", true);
+        return toast(
+          "Klik Buat Laporan terlebih dahulu sebelum mencetak.",
+          true,
+        );
       }
       openLaporanPrintDialog("print");
     });
@@ -4652,11 +6826,8 @@
    Hanya untuk Operator dan Produk
    ========================================================= */
   function updateMasterSeeMore(category, wrap) {
-
     // Hanya Operator dan Produk yang dibatasi
-    const isLimited =
-      category === "operator" ||
-      category === "produk";
+    const isLimited = category === "operator" || category === "produk";
 
     if (!isLimited) {
       wrap.classList.remove("limit-6", "show-all");
@@ -4671,12 +6842,11 @@
 
     // Cari tombol jika sebelumnya sudah pernah dibuat
     let button = parent.querySelector(
-      `.see-more-btn[data-see-more="${category}"]`
+      `.see-more-btn[data-see-more="${category}"]`,
     );
 
     // Kalau belum ada, buat otomatis
     if (!button) {
-
       button = document.createElement("button");
 
       button.type = "button";
@@ -4687,7 +6857,6 @@
       wrap.insertAdjacentElement("afterend", button);
 
       button.addEventListener("click", () => {
-
         const isOpen = wrap.classList.toggle("show-all");
 
         const total = wrap.querySelectorAll(".chip").length;
@@ -4703,18 +6872,14 @@
     const total = wrap.querySelectorAll(".chip").length;
 
     if (total > 6) {
-
       button.hidden = false;
 
       const remaining = total - 6;
 
-      button.textContent =
-        wrap.classList.contains("show-all")
-          ? "Sembunyikan"
-          : `Lihat lainnya (${remaining})`;
-
+      button.textContent = wrap.classList.contains("show-all")
+        ? "Sembunyikan"
+        : `Lihat lainnya (${remaining})`;
     } else {
-
       // Kalau data <= 6, tombol tidak perlu ditampilkan
       wrap.classList.remove("show-all");
       button.hidden = true;
@@ -4722,21 +6887,19 @@
   }
 
   function renderMasterChips() {
+    ["operator", "produk", "botol", "botolpecah"].forEach((category) => {
+      const wrap = qs(`.chip-list[data-cat="${category}"]`);
 
-  ["operator", "produk", "botol", "botolpecah"].forEach(category => {
+      if (!wrap) return;
 
-    const wrap = qs(`.chip-list[data-cat="${category}"]`);
+      const values = state.master[category] || [];
 
-    if (!wrap) return;
+      wrap.innerHTML = values.length
+        ? values
+            .map((value) => {
+              const readonly = category === "botolpecah";
 
-    const values = state.master[category] || [];
-
-    wrap.innerHTML = values.length
-      ? values.map(value => {
-
-          const readonly = category === "botolpecah";
-
-          return `
+              return `
             <span class="chip">
               ${esc(value)}
               ${
@@ -4755,10 +6918,9 @@
               }
             </span>
           `;
-
-        }).join("")
-
-      : `
+            })
+            .join("")
+        : `
         <span style="
           color:var(--ink-faint);
           font-size:12px;
@@ -4767,35 +6929,42 @@
         </span>
       `;
 
-
-    /* =========================================
+      /* =========================================
        UPDATE SEE MORE
        ========================================= */
-    updateMasterSeeMore(category, wrap);
+      updateMasterSeeMore(category, wrap);
+    });
 
-  });
-
-  renderDashboard();
-}
+    renderDashboard();
+  }
 
   function initMasterData() {
-    qsa(".chip-list").forEach(wrap => {
-      wrap.addEventListener("click", async event => {
+    qsa(".chip-list").forEach((wrap) => {
+      wrap.addEventListener("click", async (event) => {
         const btn = event.target.closest("button[data-cat]");
         if (!btn) return;
-        if (!can("accessMaster")) return toast("Anda tidak memiliki akses Setting / Master Data.", true);
+        if (!can("accessMaster"))
+          return toast(
+            "Anda tidak memiliki akses Setting / Master Data.",
+            true,
+          );
         if (!confirm(`Hapus "${btn.dataset.value}" dari master?`)) return;
         try {
-          const data = await apiPost("master.remove", { category: btn.dataset.cat, value: btn.dataset.value });
+          const data = await apiPost("master.remove", {
+            category: btn.dataset.cat,
+            value: btn.dataset.value,
+          });
           state.master = data.master;
           renderMasterChips();
           refreshAllDropdowns();
           toast("Master data berhasil dihapus.");
-        } catch (err) { toast(err.message, true); }
+        } catch (err) {
+          toast(err.message, true);
+        }
       });
     });
 
-    qsa(".chip-add").forEach(wrap => {
+    qsa(".chip-add").forEach((wrap) => {
       const category = wrap.dataset.cat;
       if (category === "botolpecah") return;
       const input = qs("input", wrap);
@@ -4803,7 +6972,11 @@
       if (!input || !btn) return;
 
       async function addMaster() {
-        if (!can("accessMaster")) return toast("Anda tidak memiliki akses Setting / Master Data.", true);
+        if (!can("accessMaster"))
+          return toast(
+            "Anda tidak memiliki akses Setting / Master Data.",
+            true,
+          );
         const value = input.value.trim();
         if (!value) return;
         btn.disabled = true;
@@ -4814,33 +6987,54 @@
           renderMasterChips();
           refreshAllDropdowns();
           toast("Master data berhasil ditambahkan.");
-        } catch (err) { toast(err.message, true); }
-        finally { btn.disabled = false; }
+        } catch (err) {
+          toast(err.message, true);
+        } finally {
+          btn.disabled = false;
+        }
       }
 
       btn.addEventListener("click", addMaster);
-      input.addEventListener("keydown", event => {
-        if (event.key === "Enter") { event.preventDefault(); addMaster(); }
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          addMaster();
+        }
       });
     });
 
-    el("masterReload")?.addEventListener("click", async event => {
-      if (!can("accessMaster")) return toast("Anda tidak memiliki akses Setting / Master Data.", true);
+    el("masterReload")?.addEventListener("click", async (event) => {
+      if (!can("accessMaster"))
+        return toast("Anda tidak memiliki akses Setting / Master Data.", true);
       const btn = event.currentTarget;
       btn.disabled = true;
-      try { await loadBootstrap(); await loadAppData(); toast("Data terbaru sudah dimuat dari Spreadsheet."); }
-      catch (err) { toast(err.message, true); }
-      finally { btn.disabled = false; }
+      try {
+        await loadBootstrap();
+        await loadAppData();
+        toast("Data terbaru sudah dimuat dari Spreadsheet.");
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        btn.disabled = false;
+      }
     });
 
     el("masterCsvExport")?.addEventListener("click", () => {
-      if (!can("accessMaster")) return toast("Anda tidak memiliki akses Setting / Master Data.", true);
+      if (!can("accessMaster"))
+        return toast("Anda tidak memiliki akses Setting / Master Data.", true);
       const op = state.master.operator || [];
       const produk = state.master.produk || [];
       const botol = state.master.botol || [];
       const max = Math.max(op.length, produk.length, botol.length);
-      const rows = Array.from({ length: max }, (_, i) => [op[i] || "", produk[i] || "", botol[i] || ""]);
-      downloadText(`master-data-${todayStr()}.csv`, toCSV(["Nama Operator", "Nama Produk", "Nama Botol"], rows));
+      const rows = Array.from({ length: max }, (_, i) => [
+        op[i] || "",
+        produk[i] || "",
+        botol[i] || "",
+      ]);
+      downloadText(
+        `master-data-${todayStr()}.csv`,
+        toCSV(["Nama Operator", "Nama Produk", "Nama Botol"], rows),
+      );
     });
   }
 
@@ -4852,7 +7046,9 @@
       tbody.innerHTML = "";
       return;
     }
-    tbody.innerHTML = state.users.map(user => `
+    tbody.innerHTML = state.users
+      .map(
+        (user) => `
       <tr>
         <td>${esc(user.name)}</td>
         <td class="mono">${esc(user.username)}</td>
@@ -4861,7 +7057,9 @@
           ${user.role === "user" ? `<button type="button" class="btn btn-ghost btn-access-user" data-username="${esc(user.username)}">Atur Akses</button>` : '<span class="permission-full">Akses penuh</span>'}
           ${user.username === state.currentUser.username ? "" : `<button type="button" class="btn btn-danger btn-del-user" data-username="${esc(user.username)}">Hapus</button>`}
         </td>
-      </tr>`).join("");
+      </tr>`,
+      )
+      .join("");
   }
 
   function initUserManagement() {
@@ -4880,31 +7078,52 @@
     function openPermissionModal(user) {
       if (!modal || !permissionGrid || !user || user.role !== "user") return;
       permissionUsername = user.username;
-      el("permissionUserLabel").textContent = `${user.name} (@${user.username})`;
-      const perms = { ...DEFAULT_USER_PERMISSIONS, ...(user.permissions || {}) };
-      qsa("input[data-permission]", permissionGrid).forEach(input => { input.checked = perms[input.dataset.permission] === true; });
+      el("permissionUserLabel").textContent =
+        `${user.name} (@${user.username})`;
+      const perms = {
+        ...DEFAULT_USER_PERMISSIONS,
+        ...(user.permissions || {}),
+      };
+      qsa("input[data-permission]", permissionGrid).forEach((input) => {
+        input.checked = perms[input.dataset.permission] === true;
+      });
       modal.hidden = false;
     }
 
     el("permissionClose")?.addEventListener("click", closePermissionModal);
-    modal?.addEventListener("click", event => { if (event.target === modal) closePermissionModal(); });
+    modal?.addEventListener("click", (event) => {
+      if (event.target === modal) closePermissionModal();
+    });
     el("permissionSave")?.addEventListener("click", async () => {
-      if (!permissionUsername || !state.currentUser || state.currentUser.role !== "superuser") return;
+      if (
+        !permissionUsername ||
+        !state.currentUser ||
+        state.currentUser.role !== "superuser"
+      )
+        return;
       const btn = el("permissionSave");
       btn.disabled = true;
       try {
         const permissions = {};
-        qsa("input[data-permission]", permissionGrid).forEach(input => { permissions[input.dataset.permission] = input.checked; });
-        const data = await apiPost("user.permissions.set", { username: permissionUsername, permissions });
+        qsa("input[data-permission]", permissionGrid).forEach((input) => {
+          permissions[input.dataset.permission] = input.checked;
+        });
+        const data = await apiPost("user.permissions.set", {
+          username: permissionUsername,
+          permissions,
+        });
         state.users = data.users || [];
         renderUsers();
         closePermissionModal();
         toast("Hak akses user berhasil disimpan.");
-      } catch (err) { toast(err.message, true); }
-      finally { btn.disabled = false; }
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        btn.disabled = false;
+      }
     });
 
-    form.addEventListener("submit", async event => {
+    form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const submit = qs('button[type="submit"]', form);
       submit.disabled = true;
@@ -4913,20 +7132,25 @@
           name: el("newUserName").value.trim(),
           username: el("newUserUsername").value.trim(),
           password: el("newUserPassword").value,
-          role: el("newUserRole").value
+          role: el("newUserRole").value,
         });
         state.users = data.users || [];
         form.reset();
         renderUsers();
         toast("User berhasil ditambahkan.");
-      } catch (err) { toast(err.message, true); }
-      finally { submit.disabled = false; }
+      } catch (err) {
+        toast(err.message, true);
+      } finally {
+        submit.disabled = false;
+      }
     });
 
-    tbody.addEventListener("click", async event => {
+    tbody.addEventListener("click", async (event) => {
       const accessBtn = event.target.closest(".btn-access-user");
       if (accessBtn) {
-        const user = state.users.find(item => item.username === accessBtn.dataset.username);
+        const user = state.users.find(
+          (item) => item.username === accessBtn.dataset.username,
+        );
         openPermissionModal(user);
         return;
       }
@@ -4934,17 +7158,23 @@
       if (!btn) return;
       if (!confirm(`Hapus user "${btn.dataset.username}"?`)) return;
       try {
-        const data = await apiPost("user.remove", { username: btn.dataset.username });
+        const data = await apiPost("user.remove", {
+          username: btn.dataset.username,
+        });
         state.users = data.users || [];
         renderUsers();
         toast("User berhasil dihapus.");
-      } catch (err) { toast(err.message, true); }
+      } catch (err) {
+        toast(err.message, true);
+      }
     });
   }
 
   function initLogout() {
     el("logoutBtn")?.addEventListener("click", async () => {
-      try { if (state.token) await apiPost("logout"); } catch (_) {}
+      try {
+        if (state.token) await apiPost("logout");
+      } catch (_) {}
       state.token = "";
       localStorage.removeItem(CONFIG.TOKEN_KEY);
       localStorage.removeItem(CONFIG.USER_KEY);
@@ -4964,7 +7194,10 @@
     initApd();
     initTabs();
     initDashboard();
+    initLaporanSubmenu();
     initLaporan();
+    initKpiLaporan();
+    initKpiSettings();
     initMasterData();
     initUserManagement();
     initLogout();
@@ -4972,8 +7205,12 @@
     // Tampilkan aplikasi langsung memakai profil + master cache terakhir.
     // Validasi server tetap berjalan segera setelahnya.
     try {
-      const cachedUser = JSON.parse(localStorage.getItem(CONFIG.USER_KEY) || "null");
-      const cachedMaster = JSON.parse(localStorage.getItem(CONFIG.MASTER_KEY) || "null");
+      const cachedUser = JSON.parse(
+        localStorage.getItem(CONFIG.USER_KEY) || "null",
+      );
+      const cachedMaster = JSON.parse(
+        localStorage.getItem(CONFIG.MASTER_KEY) || "null",
+      );
       if (cachedUser && cachedUser.username) {
         state.currentUser = cachedUser;
         if (cachedMaster) state.master = cachedMaster;
@@ -5010,11 +7247,11 @@
       // Pada HP setiap panel dipisahkan menjadi satu slide. Slide mobile yang
       // tidak aktif benar-benar disembunyikan agar TIDAK ikut menentukan tinggi
       // container. Ini menghindari ruang kosong dari panel lain yang lebih tinggi.
-      const desktopSlides = Array.from(track.children).filter(node =>
-        node.classList && node.classList.contains("dashboard-slide")
+      const desktopSlides = Array.from(track.children).filter(
+        (node) => node.classList && node.classList.contains("dashboard-slide"),
       );
-      const desktopGroups = desktopSlides.map(slide =>
-        slide.querySelector(".dashboard-grid-main")
+      const desktopGroups = desktopSlides.map((slide) =>
+        slide.querySelector(".dashboard-grid-main"),
       );
       const panelRecords = [];
       desktopGroups.forEach((group, groupIndex) => {
@@ -5072,7 +7309,7 @@
       }
 
       function showDesktopSlide(options = {}) {
-        desktopSlides.forEach(slide => {
+        desktopSlides.forEach((slide) => {
           slide.hidden = false;
           slide.removeAttribute("aria-hidden");
         });
@@ -5107,7 +7344,7 @@
       function buildMobileSlides() {
         if (mobileSlides.length) return;
 
-        desktopSlides.forEach(slide => {
+        desktopSlides.forEach((slide) => {
           slide.hidden = true;
           slide.setAttribute("aria-hidden", "true");
         });
@@ -5118,7 +7355,8 @@
           slide.dataset.mobileSlideIndex = String(index);
 
           const grid = document.createElement("div");
-          grid.className = "dashboard-grid dashboard-grid-main dashboard-mobile-one-grid";
+          grid.className =
+            "dashboard-grid dashboard-grid-main dashboard-mobile-one-grid";
           grid.appendChild(panel);
           slide.appendChild(grid);
           slide.hidden = true;
@@ -5130,12 +7368,15 @@
       function restoreDesktopSlides() {
         panelRecords
           .slice()
-          .sort((a, b) => a.groupIndex - b.groupIndex || a.panelIndex - b.panelIndex)
+          .sort(
+            (a, b) =>
+              a.groupIndex - b.groupIndex || a.panelIndex - b.panelIndex,
+          )
           .forEach(({ panel, group }) => group?.appendChild(panel));
 
-        mobileSlides.forEach(slide => slide.remove());
+        mobileSlides.forEach((slide) => slide.remove());
         mobileSlides = [];
-        desktopSlides.forEach(slide => {
+        desktopSlides.forEach((slide) => {
           slide.hidden = false;
           slide.removeAttribute("aria-hidden");
         });
@@ -5148,7 +7389,10 @@
           const previousDesktopSlide = currentSlide;
           buildMobileSlides();
           mobileMode = true;
-          currentSlide = Math.min(previousDesktopSlide * 2, mobileSlides.length - 1);
+          currentSlide = Math.min(
+            previousDesktopSlide * 2,
+            mobileSlides.length - 1,
+          );
           updateSlider({ instant: true });
           return;
         }
@@ -5157,7 +7401,10 @@
           const previousMobileSlide = currentSlide;
           restoreDesktopSlides();
           mobileMode = false;
-          currentSlide = Math.min(Math.floor(previousMobileSlide / 2), desktopSlides.length - 1);
+          currentSlide = Math.min(
+            Math.floor(previousMobileSlide / 2),
+            desktopSlides.length - 1,
+          );
           updateSlider({ instant: true });
           return;
         }
@@ -5186,7 +7433,7 @@
         sliderResizeObserver = new ResizeObserver(() => {
           if (!mobileMode) requestAnimationFrame(syncDesktopViewportHeight);
         });
-        desktopSlides.forEach(slide => sliderResizeObserver.observe(slide));
+        desktopSlides.forEach((slide) => sliderResizeObserver.observe(slide));
       }
 
       window.addEventListener("resize", applyResponsiveMode);
@@ -5199,19 +7446,22 @@
       applyResponsiveMode();
     }
 
-  document.addEventListener("DOMContentLoaded", () => {
-  initDashboardSlider();
-  });
+    document.addEventListener("DOMContentLoaded", () => {
+      initDashboardSlider();
+    });
     try {
       // Bootstrap sekarang ringan: hanya validasi user + master dropdown.
       await loadBootstrap();
       if (state.currentUser) {
-        localStorage.setItem(CONFIG.USER_KEY, JSON.stringify(state.currentUser));
+        localStorage.setItem(
+          CONFIG.USER_KEY,
+          JSON.stringify(state.currentUser),
+        );
       }
       el("appScreen").hidden = false;
 
       // Daftar pengerjaan/users dimuat setelah halaman sudah bisa dipakai.
-      loadAppData().catch(err => {
+      loadAppData().catch((err) => {
         setConnection("error", "Daftar data gagal dimuat");
         toast(err.message, true);
       });

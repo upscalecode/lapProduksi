@@ -328,10 +328,11 @@ button{font-family:inherit;}
 .report-head{display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap; margin-bottom:18px;}
 .report-meta{font-size:12.5px; color:var(--ink-soft); text-align:right; line-height:1.7;}
 .report-stats{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:18px;}
+.report-stats[data-stat-count="3"]{grid-template-columns:repeat(3,1fr);}
 .stat{background:var(--surface-2); border:1px solid var(--line); border-radius:var(--radius-sm); padding:12px 14px; text-align:center;}
 .stat-value{display:block; font-family:var(--font-display); font-size:22px; font-weight:700;}
 .stat-label{display:block; font-size:10.5px; color:var(--ink-soft); text-transform:uppercase; letter-spacing:.05em; margin-top:2px;}
-@media(max-width:700px){.report-stats{grid-template-columns:1fr 1fr;}}
+@media(max-width:700px){.report-stats,.report-stats[data-stat-count="3"]{grid-template-columns:1fr 1fr;}}
 
 /* ---------- master data ---------- */
 .hint-text{font-size:12.5px; color:var(--ink-soft); margin:0 0 12px; line-height:1.6;}
@@ -943,6 +944,7 @@ body[data-page="login"] .login-screen{
   padding:5px 9px;border-radius:999px;font-size:11px;font-weight:800;
 }
 .dashboard-kpi-percent.result{background:var(--dash-teal-soft);color:var(--dash-teal);}
+.dashboard-kpi-percent.wet{background:var(--dash-blue-soft);color:var(--dash-blue);}
 .dashboard-kpi-percent.reject{background:var(--dash-red-soft);color:var(--dash-red);}
 .dashboard-kpi-percent.apd{background:var(--dash-purple-soft);color:var(--dash-purple);}
 .dashboard-kpi-info-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;}
@@ -2317,3 +2319,844 @@ input,select,textarea,button{max-width:100%;}
   text-align:center;
   white-space:nowrap;
 }
+
+/* ===========================================================
+   LAPORAN — SUB MENU + KPI PRESS
+   Tambahan 2026-09-14. Fitur laporan lama tetap dipertahankan.
+   =========================================================== */
+.laporan-subnav{
+  display:flex;
+  align-items:center;
+  gap:6px;
+  width:fit-content;
+  max-width:100%;
+  margin:0 0 14px;
+  padding:5px;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:10px;
+  box-shadow:var(--shadow);
+  overflow-x:auto;
+}
+.laporan-subnav-btn{
+  appearance:none;
+  border:0;
+  background:transparent;
+  color:var(--ink-soft);
+  border-radius:7px;
+  padding:9px 14px;
+  font:700 12.5px var(--font-display);
+  cursor:pointer;
+  white-space:nowrap;
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+}
+.laporan-subnav-btn:hover:not(.active){background:var(--surface-2);color:var(--ink);}
+.laporan-subnav-btn.active{background:var(--ink);color:#fff;}
+.laporan-subview[hidden]{display:none !important;}
+
+.kpi-press-report-panel{overflow:visible;}
+.kpi-press-report-heading{align-items:flex-start;}
+.kpi-press-intro{margin:6px 0 0;max-width:760px;}
+.kpi-press-badge{
+  display:inline-flex;
+  align-items:center;
+  gap:7px;
+  padding:7px 11px;
+  border-radius:999px;
+  background:var(--accent-2-soft);
+  color:var(--accent-2);
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:.04em;
+  white-space:nowrap;
+}
+.kpi-press-filters{align-items:flex-end;}
+.kpi-press-filters > .field{flex:1 1 170px;}
+.kpi-press-filters .kpi-press-employee-filter{min-width:240px;}
+.kpi-press-filters .kpi-target-output-field{max-width:210px;}
+.kpi-press-filters select:disabled{
+  opacity:1;
+  color:var(--ink);
+  background:var(--surface-2);
+}
+.kpi-press-result{margin-top:18px;}
+.kpi-press-employee-name{margin:9px 0 0;color:var(--ink-soft);font-size:13px;}
+.kpi-press-employee-name strong{color:var(--ink);}
+.kpi-press-stats .stat:nth-child(1) .stat-value{color:var(--accent-2);}
+.kpi-press-stats .stat:nth-child(2) .stat-value{color:var(--danger);}
+.kpi-press-stats .stat:nth-child(3) .stat-value{color:#7654d6;}
+.kpi-press-stats .stat:nth-child(4) .stat-value{color:var(--success);}
+
+.kpi-press-table{min-width:940px;}
+.kpi-press-table th,
+.kpi-press-table td{vertical-align:middle;}
+.kpi-press-table th{background:#dbe5f1;color:#111827;text-align:center;}
+.kpi-press-table th:nth-child(2),
+.kpi-press-table th:nth-child(3),
+.kpi-press-table td:nth-child(2),
+.kpi-press-table td:nth-child(3),
+.kpi-press-table th:nth-child(5),
+.kpi-press-table td:nth-child(5){text-align:left;}
+.kpi-press-table td:nth-child(2){font-weight:800;}
+.kpi-center{text-align:center !important;white-space:nowrap;}
+.kpi-press-score{
+  display:inline-flex;
+  min-width:72px;
+  justify-content:center;
+  padding:5px 9px;
+  border-radius:999px;
+  background:var(--accent-2-soft);
+  color:var(--accent-2);
+  font-weight:800;
+}
+.kpi-press-row-quality .kpi-press-score{background:var(--success-soft);color:var(--success);}
+.kpi-press-row-apd .kpi-press-score{background:#eee9ff;color:#7654d6;}
+.kpi-press-row-attendance .kpi-press-score{background:var(--accent-soft);color:var(--accent-ink);}
+.kpi-press-total-row td{
+  background:#fff200 !important;
+  color:#111827;
+  border-color:#b9b300;
+  text-align:center;
+}
+.kpi-press-total-row td:first-child{text-align:center;}
+
+.kpi-press-legend{
+  margin-top:14px;
+  padding:13px 15px;
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:var(--surface-2);
+  color:var(--ink-soft);
+  font-size:12px;
+  line-height:1.5;
+}
+.kpi-press-legend h3{font-size:13px;color:var(--ink);margin:0 0 7px;}
+.kpi-press-legend p{margin:3px 0;}
+.kpi-press-legend strong{color:var(--ink);}
+.kpi-press-footer{align-items:center;}
+.kpi-press-actions{margin:0 0 0 auto;}
+
+@media(max-width:768px){
+  .laporan-subnav{width:100%;}
+  .laporan-subnav-btn{flex:1 0 auto;justify-content:center;}
+  .kpi-press-report-heading{display:block;}
+  .kpi-press-badge{margin-top:10px;}
+  .kpi-press-filters .kpi-press-employee-filter,
+  .kpi-press-filters .kpi-target-output-field{min-width:220px;max-width:none;}
+}
+
+@media(max-width:560px){
+  .laporan-subnav{padding:4px;}
+  .laporan-subnav-btn{font-size:11.5px;padding:9px 11px;}
+  .kpi-press-filters > .field,
+  .kpi-press-filters .kpi-press-employee-filter,
+  .kpi-press-filters .kpi-target-output-field{
+    width:100%;
+    min-width:0;
+    max-width:none;
+    flex:1 1 100%;
+  }
+  .kpi-press-stats{grid-template-columns:1fr 1fr;}
+  .kpi-press-footer{align-items:flex-start;}
+  .kpi-press-actions{width:100%;margin-left:0;}
+  .kpi-press-actions .btn{flex:1 1 100%;justify-content:center;}
+}
+
+@media print{
+  .laporan-subnav{display:none !important;}
+}
+
+
+/* ===========================================================
+   LAPORAN KPI PRESS — PREVIEW PER KARYAWAN + SETTING TARGET
+   Update 2026-09-14
+   =========================================================== */
+
+.kpi-preview-toolbar{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+  flex-wrap:wrap;
+  margin:0 0 14px;
+  padding:10px 12px;
+  border:1px solid var(--line);
+  border-radius:9px;
+  background:var(--surface-2);
+}
+.kpi-preview-toolbar .table-summary{margin:0;}
+.kpi-preview-toolbar-actions{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+}
+
+.kpi-employee-cards{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+.kpi-employee-card{
+  border:1px solid var(--line);
+  border-radius:11px;
+  background:var(--surface);
+  overflow:hidden;
+  box-shadow:0 1px 2px rgba(27,37,48,.04);
+}
+.kpi-employee-card-head{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:18px;
+  padding:14px 16px;
+  background:linear-gradient(180deg,#fff,var(--surface-2));
+}
+.kpi-employee-identity{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  min-width:0;
+}
+.kpi-employee-index{
+  width:34px;
+  height:34px;
+  border-radius:50%;
+  flex:0 0 34px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--accent-2-soft);
+  color:var(--accent-2);
+  font:800 12px var(--font-mono);
+}
+.kpi-employee-identity h3{
+  font-size:16px;
+  margin:1px 0 0;
+}
+.kpi-employee-identity p:not(.eyebrow){
+  margin:4px 0 0;
+  color:var(--ink-soft);
+  font-size:11.5px;
+}
+.kpi-employee-card-actions{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  flex:0 0 auto;
+}
+.kpi-achievement-card{
+  min-width:138px;
+  padding:9px 13px;
+  border:1px solid #bdd0e1;
+  border-radius:9px;
+  background:#edf6ff;
+  text-align:center;
+}
+.kpi-achievement-card span{
+  display:block;
+  font-size:9.5px;
+  font-weight:800;
+  color:var(--accent-2);
+  text-transform:uppercase;
+  letter-spacing:.07em;
+}
+.kpi-achievement-card strong{
+  display:block;
+  margin-top:3px;
+  font:800 21px var(--font-display);
+  color:var(--accent-2);
+  line-height:1.1;
+}
+.kpi-card-toggle{
+  min-width:104px;
+  justify-content:center;
+}
+.kpi-employee-detail{
+  padding:14px 16px 16px;
+  border-top:1px solid var(--line);
+}
+.kpi-employee-detail[hidden]{display:none !important;}
+.kpi-employee-detail-summary{
+  display:flex;
+  align-items:center;
+  gap:7px;
+  flex-wrap:wrap;
+  margin-top:10px;
+}
+.kpi-employee-detail-summary span{
+  display:inline-flex;
+  align-items:center;
+  gap:5px;
+  padding:6px 9px;
+  border-radius:999px;
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  color:var(--ink-soft);
+  font-size:10.5px;
+}
+.kpi-employee-detail-summary strong{color:var(--ink);}
+.kpi-press-result[data-preview="true"] .kpi-achievement-card{
+  background:#f7fafc;
+  border-style:dashed;
+}
+.kpi-press-result[data-preview="true"] .kpi-achievement-card strong{
+  color:var(--ink-soft);
+}
+
+/* Hanya satu ringkasan utama per karyawan: Capaian. */
+.kpi-press-stats{display:none !important;}
+
+.kpi-setting-panel{
+  overflow:visible;
+}
+.kpi-setting-section-title{
+  margin:16px 0 0;
+  padding:14px 16px;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:var(--surface-2);
+}
+.kpi-setting-section-title h3{
+  margin:0;
+  font-size:16px;
+}
+.kpi-setting-section-title .hint-text{
+  margin:4px 0 0;
+}
+.kpi-setting-groups{
+  display:grid;
+  grid-template-columns:repeat(2, minmax(280px, 1fr));
+  gap:16px;
+  margin-top:16px;
+}
+.kpi-setting-group{
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:linear-gradient(180deg,#fff,var(--surface));
+  padding:16px;
+}
+.kpi-setting-group-head{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:12px;
+  margin-bottom:14px;
+}
+.kpi-setting-group-title h3{
+  margin:0;
+  font-size:16px;
+}
+.kpi-setting-group-title p{
+  margin:4px 0 0;
+  color:var(--ink-soft);
+  font-size:12px;
+}
+.kpi-setting-save-all{
+  display:flex;
+  justify-content:flex-end;
+  margin-top:16px;
+  padding-top:16px;
+  border-top:1px solid var(--line);
+}
+.kpi-setting-save-all .btn{
+  min-width:190px;
+  justify-content:center;
+}
+.kpi-setting-row{
+  display:flex;
+  align-items:flex-end;
+  gap:12px;
+  flex-wrap:wrap;
+}
+.kpi-setting-field{
+  flex:1 1 300px;
+  max-width:420px;
+}
+.kpi-setting-field input{
+  width:100%;
+  font-size:16px;
+  font-weight:700;
+}
+.kpi-setting-current{
+  margin:12px 0 0;
+  color:var(--ink-soft);
+  font-size:12px;
+}
+.kpi-setting-current strong{
+  color:var(--accent-2);
+  font-family:var(--font-mono);
+}
+
+@media(max-width:700px){
+  .kpi-setting-groups{
+    grid-template-columns:1fr;
+  }
+  .kpi-setting-group-head{
+    flex-direction:column;
+    align-items:flex-start;
+  }
+  .kpi-employee-card-head{
+    align-items:flex-start;
+    flex-direction:column;
+    gap:12px;
+  }
+  .kpi-employee-card-actions{
+    width:100%;
+  }
+  .kpi-achievement-card{
+    flex:1 1 auto;
+  }
+  .kpi-card-toggle{
+    flex:0 0 auto;
+  }
+  .kpi-preview-toolbar{
+    align-items:flex-start;
+  }
+}
+
+@media(max-width:560px){
+  .kpi-preview-toolbar-actions{
+    width:100%;
+    display:grid;
+    grid-template-columns:1fr 1fr;
+  }
+  .kpi-preview-toolbar-actions .btn{
+    width:100%;
+    justify-content:center;
+  }
+  .kpi-employee-card-head,
+  .kpi-employee-detail{
+    padding:12px;
+  }
+  .kpi-employee-card-actions{
+    display:grid;
+    grid-template-columns:1fr;
+  }
+  .kpi-achievement-card,
+  .kpi-card-toggle{
+    width:100%;
+  }
+  .kpi-setting-group{
+    padding:14px;
+  }
+  .kpi-setting-section-title{
+    padding:12px 14px;
+  }
+  .kpi-setting-row{
+    align-items:stretch;
+  }
+  .kpi-setting-field{
+    width:100%;
+    max-width:none;
+  }
+  .kpi-setting-row .btn{
+    width:100%;
+    justify-content:center;
+  }
+  .kpi-setting-save-all{
+    justify-content:stretch;
+  }
+  .kpi-setting-save-all .btn{
+    width:100%;
+  }
+}
+
+/* ===========================================================
+   LAPORAN KPI PRESS — COMPACT EMPLOYEE CARD V4
+   Referensi: kartu katalog horizontal, tanpa foto; fokus pada nama.
+   =========================================================== */
+
+/* Kartu karyawan tampil berjajar seperti katalog. */
+.kpi-employee-cards{
+  display:grid;
+  grid-template-columns:repeat(4,minmax(0,1fr));
+  gap:14px;
+  align-items:start;
+}
+
+.kpi-employee-card{
+  min-width:0;
+  border:1px solid var(--line);
+  border-radius:12px;
+  background:var(--surface);
+  overflow:hidden;
+  box-shadow:0 2px 8px rgba(27,37,48,.07);
+  transition:box-shadow .18s ease, transform .18s ease;
+}
+.kpi-employee-card:hover{
+  transform:translateY(-1px);
+  box-shadow:0 7px 18px rgba(27,37,48,.10);
+}
+
+/* Saat detail dibuka, kartu memakai lebar penuh supaya tabel tetap nyaman. */
+.kpi-employee-card.is-expanded{
+  grid-column:1 / -1;
+  transform:none;
+}
+
+.kpi-employee-card-head{
+  display:flex;
+  flex-direction:column;
+  align-items:stretch;
+  justify-content:space-between;
+  gap:12px;
+  min-height:156px;
+  padding:0;
+  background:#fff;
+}
+
+/* Area pengganti foto: hanya menampilkan nama karyawan. */
+.kpi-employee-name-tile{
+  min-height:92px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:18px 14px 12px;
+  text-align:center;
+  background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);
+  border-bottom:1px solid var(--line);
+}
+.kpi-employee-name-tile h3{
+  margin:0;
+  max-width:100%;
+  font-size:17px;
+  line-height:1.3;
+  font-weight:700;
+  color:var(--ink);
+  overflow-wrap:anywhere;
+}
+
+.kpi-employee-card-actions{
+  width:100%;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:8px;
+  padding:0 12px 12px;
+}
+
+.kpi-achievement-card{
+  min-width:0;
+  padding:7px 9px;
+  border:0;
+  border-radius:8px;
+  background:var(--surface-2);
+  text-align:left;
+}
+.kpi-achievement-card span{
+  display:block;
+  font-size:9px;
+  font-weight:800;
+  color:var(--ink-faint);
+  text-transform:uppercase;
+  letter-spacing:.06em;
+}
+.kpi-achievement-card strong{
+  display:block;
+  margin-top:2px;
+  font:800 18px var(--font-display);
+  color:var(--ink);
+  line-height:1.1;
+}
+
+.kpi-card-toggle{
+  min-width:94px;
+  justify-content:center;
+  padding:8px 11px;
+  border-color:var(--accent-2);
+}
+
+.kpi-employee-detail{
+  padding:14px 16px 16px;
+  border-top:1px solid var(--line);
+  background:#fff;
+}
+.kpi-employee-detail-meta{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  flex-wrap:wrap;
+  margin:0 0 10px;
+}
+.kpi-employee-detail-meta span{
+  display:inline-flex;
+  align-items:center;
+  min-height:28px;
+  padding:5px 9px;
+  border-radius:999px;
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  color:var(--ink-soft);
+  font-size:10.5px;
+  font-weight:600;
+}
+
+/* Total Capaian disamakan dengan warna tombol Collapse / btn-ghost. */
+.kpi-press-total-row td{
+  background:#fff1dc !important;
+  color:var(--ink) !important;
+  border-color:#f0d3aa !important;
+}
+
+/* Preview tidak mengubah warna card capaian agar tetap konsisten. */
+.kpi-press-result[data-preview="true"] .kpi-achievement-card{
+  background:var(--surface-2);
+  border-style:solid;
+}
+.kpi-press-result[data-preview="true"] .kpi-achievement-card strong{
+  color:var(--ink);
+}
+
+@media(max-width:1050px){
+  .kpi-employee-cards{grid-template-columns:repeat(3,minmax(0,1fr));}
+}
+@media(max-width:780px){
+  .kpi-employee-cards{grid-template-columns:repeat(2,minmax(0,1fr));}
+}
+@media(max-width:560px){
+  .kpi-employee-cards{grid-template-columns:1fr;}
+  .kpi-employee-card-head{min-height:0;}
+  .kpi-employee-name-tile{min-height:78px;}
+  .kpi-employee-card-actions{grid-template-columns:1fr;}
+  .kpi-card-toggle{width:100%;}
+}
+
+/* ===========================================================
+   LAPORAN KPI PRESS — V6
+   Nama dipindah ke kiri Capaian, tombol collapse tanpa border biru.
+   =========================================================== */
+.kpi-employee-card-head{
+  min-height:0;
+  padding:14px 16px;
+  background:#fff;
+}
+
+.kpi-employee-card-actions{
+  width:100%;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto auto;
+  align-items:center;
+  gap:10px;
+  padding:0;
+}
+
+.kpi-employee-name-tile{
+  min-height:0;
+  display:flex;
+  align-items:center;
+  justify-content:flex-start;
+  padding:0;
+  text-align:left;
+  background:transparent;
+  border-bottom:0;
+}
+.kpi-employee-name-tile h3{
+  font-size:20px;
+  line-height:1.25;
+  font-weight:700;
+  text-align:left;
+}
+
+.kpi-achievement-card{
+  min-width:150px;
+  padding:9px 12px;
+  border:0;
+  border-radius:8px;
+  background:var(--surface-2);
+  text-align:left;
+}
+
+.kpi-card-toggle{
+  min-width:94px;
+  justify-content:center;
+  padding:8px 11px;
+  border-color:transparent !important;
+}
+
+@media(max-width:780px){
+  .kpi-employee-card-actions{
+    grid-template-columns:1fr;
+    align-items:stretch;
+  }
+  .kpi-achievement-card,
+  .kpi-card-toggle{
+    width:100%;
+  }
+  .kpi-employee-name-tile h3{
+    font-size:18px;
+  }
+}
+
+/* ===========================================================
+   LAPORAN KPI PRESS — V7
+   Collapsed: nama kembali di tengah seperti card lama.
+   Expanded: nama pindah ke kiri Capaian + Collapse.
+   =========================================================== */
+
+/* COLLAPSED / kondisi awal card */
+.kpi-employee-card:not(.is-expanded) .kpi-employee-card-head{
+  min-height:156px;
+  padding:0;
+  background:#fff;
+}
+
+.kpi-employee-card:not(.is-expanded) .kpi-employee-card-actions{
+  width:100%;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  grid-template-areas:
+    "name name"
+    "achievement toggle";
+  align-items:center;
+  gap:12px 8px;
+  padding:0 12px 12px;
+}
+
+.kpi-employee-card:not(.is-expanded) .kpi-employee-name-tile{
+  grid-area:name;
+  min-height:92px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:18px 14px 12px;
+  text-align:center;
+  background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);
+  border-bottom:1px solid var(--line);
+  margin:0 -12px;
+}
+
+.kpi-employee-card:not(.is-expanded) .kpi-employee-name-tile h3{
+  margin:0;
+  max-width:100%;
+  font-size:17px;
+  line-height:1.3;
+  font-weight:700;
+  text-align:center;
+  overflow-wrap:anywhere;
+}
+
+.kpi-employee-card:not(.is-expanded) .kpi-achievement-card{
+  grid-area:achievement;
+}
+
+.kpi-employee-card:not(.is-expanded) .kpi-card-toggle{
+  grid-area:toggle;
+}
+
+/* EXPANDED: nama satu baris di kiri Capaian dan tombol Collapse */
+.kpi-employee-card.is-expanded .kpi-employee-card-head{
+  min-height:0;
+  padding:14px 16px;
+  background:#fff;
+}
+
+.kpi-employee-card.is-expanded .kpi-employee-card-actions{
+  width:100%;
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto auto;
+  grid-template-areas:"name achievement toggle";
+  align-items:center;
+  gap:10px;
+  padding:0;
+}
+
+.kpi-employee-card.is-expanded .kpi-employee-name-tile{
+  grid-area:name;
+  min-height:0;
+  display:flex;
+  align-items:center;
+  justify-content:flex-start;
+  padding:0;
+  margin:0;
+  text-align:left;
+  background:transparent;
+  border-bottom:0;
+}
+
+.kpi-employee-card.is-expanded .kpi-employee-name-tile h3{
+  margin:0;
+  font-size:20px;
+  line-height:1.25;
+  font-weight:700;
+  text-align:left;
+}
+
+.kpi-employee-card.is-expanded .kpi-achievement-card{
+  grid-area:achievement;
+}
+
+.kpi-employee-card.is-expanded .kpi-card-toggle{
+  grid-area:toggle;
+}
+
+/* Tombol Expand/Collapse tetap tanpa border biru. */
+.kpi-card-toggle{
+  border-color:transparent !important;
+}
+
+@media(max-width:780px){
+  .kpi-employee-card.is-expanded .kpi-employee-card-actions{
+    grid-template-columns:1fr;
+    grid-template-areas:
+      "name"
+      "achievement"
+      "toggle";
+    align-items:stretch;
+  }
+
+  .kpi-employee-card.is-expanded .kpi-employee-name-tile{
+    justify-content:flex-start;
+  }
+
+  .kpi-employee-card.is-expanded .kpi-achievement-card,
+  .kpi-employee-card.is-expanded .kpi-card-toggle{
+    width:100%;
+  }
+}
+
+/* ===========================================================
+   LAPORAN KPI PRESS — V8
+   Expand Semua + Collapse Semua digabung menjadi satu tombol toggle.
+   =========================================================== */
+#lap-kpi-toggle-all{
+  min-width:132px;
+  justify-content:center;
+}
+
+@media(max-width:560px){
+  .kpi-preview-toolbar-actions{
+    display:flex;
+    width:100%;
+    justify-content:flex-end;
+  }
+  .kpi-preview-toolbar-actions #lap-kpi-toggle-all{
+    width:auto;
+    min-width:132px;
+  }
+}
+
+/* ---------- Update Count visibility ----------
+   Counter update tetap disimpan oleh sistem, tetapi kolomnya disembunyikan
+   pada section Daftar Pengerjaan Filling dan Daftar Pengerjaan Press. */
+#view-filling .update-count-col,
+#view-press .update-count-col{display:none;}
+
+/* ===========================================================
+   LAPORAN KPI — Jenis KPI Filling / Press
+   Update 2026-09-19
+   =========================================================== */
+.kpi-press-badge[data-kpi-type="filling"]{
+  background:#e4f1ff;
+  color:#1672d8;
+}
+.kpi-press-badge[data-kpi-type="press"]{
+  background:var(--accent-2-soft);
+  color:var(--accent-2);
+}
+#lap-kpi-type{
+  cursor:pointer;
+}
+
