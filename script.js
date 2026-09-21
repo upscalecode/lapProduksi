@@ -733,6 +733,28 @@
   }
 
   /* ------------------------- APP COMMON ------------------------- */
+  let pressFormTrigger = null;
+
+  function openPressFormPopup(trigger) {
+    const popup = el("pressFormPopup");
+    if (!popup) return;
+    pressFormTrigger = trigger || document.activeElement;
+    popup.hidden = false;
+    document.body.classList.add("press-popup-open");
+    updatePressAvailabilityHint(qs(".form-panel", popup));
+    qs(".f-operator", popup)?.focus();
+  }
+
+  function closePressFormPopup() {
+    const popup = el("pressFormPopup");
+    if (!popup || popup.hidden) return;
+    document.activeElement?.blur();
+    popup.hidden = true;
+    document.body.classList.remove("press-popup-open");
+    if (pressFormTrigger?.isConnected) pressFormTrigger.focus();
+    pressFormTrigger = null;
+  }
+
   function buildPressView() {
     const filling = el("view-filling");
     const oldPress = el("view-press");
@@ -811,6 +833,46 @@
       const error = qs(".f-error", form);
       if (error) error.insertAdjacentElement("beforebegin", hint);
       else form.appendChild(hint);
+
+      const popup = document.createElement("div");
+      popup.id = "pressFormPopup";
+      popup.className = "press-form-popup";
+      popup.hidden = true;
+      popup.setAttribute("role", "dialog");
+      popup.setAttribute("aria-modal", "true");
+      popup.setAttribute("aria-labelledby", "pressFormPopupTitle");
+      const title = qs("h2", form);
+      if (title) title.id = "pressFormPopupTitle";
+      const closeButton = document.createElement("button");
+      closeButton.type = "button";
+      closeButton.className = "btn btn-ghost press-popup-close";
+      closeButton.textContent = "Tutup";
+      closeButton.setAttribute("aria-label", "Tutup Form Pengerjaan Press");
+      qs(".panel-head", form)?.appendChild(closeButton);
+      form.before(popup);
+      popup.appendChild(form);
+      closeButton.addEventListener("click", closePressFormPopup);
+      popup.addEventListener("click", (event) => {
+        if (event.target === popup) closePressFormPopup();
+      });
+      popup.addEventListener("keydown", (event) => {
+        if (event.key === "Escape") {
+          event.preventDefault();
+          closePressFormPopup();
+        }
+        if (event.key !== "Tab") return;
+        const controls = qsa("button, input, select, textarea, [tabindex]", popup)
+          .filter((node) => !node.disabled && node.tabIndex >= 0 && node.getClientRects().length);
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first?.focus();
+        }
+      });
     }
 
     clone.addEventListener("click", async (event) => {
@@ -874,6 +936,8 @@
 
       const pressForm = qs(".form-panel", clone);
       if (!pressForm) return;
+      // Gunakan selalu membuat Preview baru, bukan mengubah entry yang sedang diedit.
+      if (qs(".f-editing-id", pressForm)?.value) qs(".f-cancel-btn", pressForm)?.click();
       const produk = qs(".f-produk", pressForm);
       const botol = qs(".f-botol", pressForm);
       const perKardusInput = qs(".f-qty-botol", pressForm);
@@ -897,7 +961,7 @@
 
       updatePressAvailabilityHint(pressForm);
       saveFormDraft("press", pressForm);
-      pressForm.scrollIntoView({ behavior: "smooth", block: "start" });
+      openPressFormPopup(useBtn);
     });
 
     const balanceSearch = qs(".press-balance-search", clone);
@@ -2140,6 +2204,7 @@
       });
       clearFormDraft(line);
       if (line === "press") updatePressAvailabilityHint(form);
+      if (line === "press") closePressFormPopup();
     }
 
     botol.addEventListener("change", () => {
@@ -2581,7 +2646,8 @@
         submitBtn.textContent = "Simpan Perubahan";
         cancelBtn.hidden = false;
         stamp.textContent = "EDIT DATA";
-        form.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (line === "press") openPressFormPopup(savedEditBtn);
+        else form.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
 
@@ -2637,7 +2703,8 @@
         stamp.textContent = "EDIT PREVIEW";
         saveFormDraft(line, form);
         if (line === "press") updatePressAvailabilityHint(form);
-        form.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (line === "press") openPressFormPopup(previewEditBtn);
+        else form.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
 
@@ -4531,6 +4598,7 @@
       qsa(".tab-btn", tabbar).forEach((node) => {
         node.classList.toggle("active", node === btn);
       });
+      if (view !== "press") closePressFormPopup();
       qsa(".content > .view").forEach((node) => {
         node.hidden = node.id !== "view-" + view;
       });

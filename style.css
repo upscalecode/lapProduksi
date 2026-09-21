@@ -985,6 +985,23 @@ body[data-page="login"] .login-screen{
 /* ===========================================================
    APD — form + preview menjadi satu lembar
    =========================================================== */
+body.press-popup-open{overflow:hidden;}
+.press-form-popup{
+  position:fixed;inset:0;z-index:9000;
+  display:flex;align-items:center;justify-content:center;
+  padding:24px;background:rgba(15,23,42,.5);
+}
+.press-form-popup[hidden]{display:none;}
+.press-form-popup > .form-panel{
+  width:100%;max-width:980px;max-height:calc(100dvh - 48px);
+  overflow-y:auto;margin:0;box-shadow:0 20px 60px rgba(15,23,42,.25);
+}
+.press-form-popup .panel-head{flex-wrap:wrap;gap:12px;}
+.press-form-popup .press-popup-close{margin-left:auto;}
+@media(max-width:640px){
+  .press-form-popup{padding:12px;}
+  .press-form-popup > .form-panel{max-height:calc(100dvh - 24px);}
+}
 .apd-stack{display:flex;flex-direction:column;gap:18px;}
 .apd-unified-panel{padding:0;overflow:hidden;}
 
