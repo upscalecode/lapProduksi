@@ -783,6 +783,10 @@
     const stack = qs(".line-stack", clone);
     const form = qs(".form-panel", clone);
     if (stack && form) {
+      // Identitas Filling dan isi kardus mengikuti baris yang dipilih.
+      qsa(".f-produk, .f-botol, .f-qty-botol", form).forEach((input) => {
+        input.readOnly = true;
+      });
       const balancePanel = document.createElement("section");
       balancePanel.className = "panel table-panel press-balance-panel";
       balancePanel.innerHTML = `
@@ -1126,7 +1130,7 @@
   }
 
   function attachMasterSearch(input) {
-    if (!input || input.dataset.masterSearchReady === "1") return;
+    if (!input || input.readOnly || input.dataset.masterSearchReady === "1") return;
     input.dataset.masterSearchReady = "1";
 
     const field = input.closest(".field") || input.parentElement;
@@ -2953,7 +2957,7 @@
       if (totalPoints) totalPoints.value = "0 / 30";
       if (percentage) percentage.value = "0%";
       if (addBtn) {
-        addBtn.innerHTML = '<i class="fa-solid fa-circle-plus"></i> Tambah';
+        addBtn.innerHTML = '<i class="fa-solid fa-plus" aria-hidden="true"></i> Simpan Penilaian';
         addBtn.disabled = false;
       }
       if (cancelBtn) cancelBtn.hidden = false;
@@ -4672,7 +4676,7 @@
         <td>${esc(e.operator)}</td>
         <td>${esc(e.produk)}</td>
         <td>${esc(e.botol)}</td>
-        <td>${Number(e.qtyKardus) || 0}</td>
+        <td>${(Number(e.qtyKardus) || 0).toLocaleString("id-ID")} ${laporanQtyUnit(e)}</td>
         <td><strong>${Number(e.totalQty) || 0}</strong></td>
         <td>${Number(e.qtyBotolPecah) || 0}</td>
         ${metricColumns.map((column) => laporanMetricCellHtml(e, column)).join("")}
@@ -4688,6 +4692,18 @@
       state.pages.laporan = nextPage;
       renderLaporanRows();
     });
+  }
+
+  function laporanQtyUnit(entry) {
+    return Number(entry.qtyBotolPerKardus) === 1 ? "Pcs" : "Kardus";
+  }
+
+  function laporanQtyTotals(rows) {
+    return rows.reduce((totals, entry) => {
+      const key = laporanQtyUnit(entry) === "Pcs" ? "pcs" : "kardus";
+      totals[key] += Number(entry.qtyKardus) || 0;
+      return totals;
+    }, { kardus: 0, pcs: 0 });
   }
 
   function buildLaporanPrintHtml(options = {}) {
@@ -4707,10 +4723,7 @@
     const period = el("lap-period")?.textContent || "Semua tanggal";
     const metricColumns = laporanMetricColumns(state.lastLaporan.line);
 
-    const totalKardus = rows.reduce(
-      (sum, e) => sum + (Number(e.qtyKardus) || 0),
-      0,
-    );
+    const { kardus: totalKardus, pcs: totalPcs } = laporanQtyTotals(rows);
     const totalQty = rows.reduce(
       (sum, e) => sum + (Number(e.totalQty) || 0),
       0,
@@ -4729,7 +4742,7 @@
     const fourthStatLabel =
       reportLine === "filling" ? "Total Kardus Basah" : "Total Botol Pecah";
     const showFourthStat = reportLine !== "all";
-    const printStatColumns = showFourthStat ? 4 : 3;
+    const printStatColumns = showFourthStat ? 5 : 4;
     const fourthStatHtml = showFourthStat
       ? `<div class="stat"><strong>${fourthStatTotal.toLocaleString("id-ID")}</strong><span>${esc(fourthStatLabel)}</span></div>`
       : "";
@@ -4744,7 +4757,7 @@
         <td>${esc(e.operator)}</td>
         <td class="wrap">${esc(e.produk)}</td>
         <td class="wrap">${esc(e.botol)}</td>
-        <td class="num">${(Number(e.qtyKardus) || 0).toLocaleString("id-ID")}</td>
+        <td class="num">${(Number(e.qtyKardus) || 0).toLocaleString("id-ID")} ${laporanQtyUnit(e)}</td>
         <td class="num">${(Number(e.totalQty) || 0).toLocaleString("id-ID")}</td>
         <td class="num">${(Number(e.qtyBotolPecah) || 0).toLocaleString("id-ID")}</td>
         ${metricColumns.map((column) => `<td class="num">${esc(kpiReportDisplay(e[column.key]))}</td>`).join("")}
@@ -4812,6 +4825,7 @@
     <section class="stats">
       <div class="stat"><strong>${rows.length.toLocaleString("id-ID")}</strong><span>Total Entri</span></div>
       <div class="stat"><strong>${totalKardus.toLocaleString("id-ID")}</strong><span>Total Kardus</span></div>
+      <div class="stat"><strong>${totalPcs.toLocaleString("id-ID")}</strong><span>Total Pcs</span></div>
       <div class="stat"><strong>${totalQty.toLocaleString("id-ID")}</strong><span>Total Qty Botol</span></div>
       ${fourthStatHtml}
     </section>
@@ -4819,7 +4833,7 @@
     <table>
       <thead>
         <tr>
-          <th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th>${metricColumns.map((column) => `<th>${esc(column.label)}</th>`).join("")}
+          <th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Qty (Kardus / Pcs)</th><th>Total Qty</th><th>Qty Pecah</th>${metricColumns.map((column) => `<th>${esc(column.label)}</th>`).join("")}
         </tr>
       </thead>
       <tbody>${bodyRows}</tbody>
@@ -6600,6 +6614,14 @@
     scheduleAutoPreview(0);
   }
 
+  function matchesLaporanSearch(entry, query) {
+    const keyword = String(query || "").trim().toLowerCase();
+    if (!keyword) return true;
+    return [entry.operator, entry.produk, entry.botol].some((value) =>
+      String(value || "").toLowerCase().includes(keyword),
+    ) || Number(entry.qtyBotolPerKardus) === Number(keyword);
+  }
+
   function initLaporan() {
     const generate = el("lap-generate");
     if (!generate) return;
@@ -6617,9 +6639,7 @@
 
     function collectLaporanData() {
       const line = el("lap-line")?.value || "all";
-      const operatorQuery = String(el("lap-operator")?.value || "")
-        .trim()
-        .toLowerCase();
+      const searchQuery = el("lap-search")?.value || "";
       const periodMode = String(el("lap-period-mode")?.value || "").trim();
       let period = kpiReportPeriodFromInputs();
 
@@ -6642,13 +6662,8 @@
 
       // Laporan hanya memakai data yang sudah benar-benar dikonfirmasi Spreadsheet.
       let rows = state.entries.filter((e) => !e._syncState);
+      rows = rows.filter((entry) => matchesLaporanSearch(entry, searchQuery));
       if (line !== "all") rows = rows.filter((e) => e.tab === line);
-      if (operatorQuery)
-        rows = rows.filter((e) =>
-          String(e.operator || "")
-            .toLowerCase()
-            .includes(operatorQuery),
-        );
       rows = rows.filter((e) => dashboardDateInPeriod(e.tanggal, period));
       rows.sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)));
 
@@ -6741,9 +6756,9 @@
         `${state.currentUser?.name || state.currentUser?.username || "—"} (${state.currentUser?.role === "superuser" ? "Super User" : "User"})`;
       el("lap-period").textContent = period.label;
       el("lap-total-entries").textContent = rows.length;
-      el("lap-total-kardus").textContent = rows
-        .reduce((sum, e) => sum + (Number(e.qtyKardus) || 0), 0)
-        .toLocaleString("id-ID");
+      const quantityTotals = laporanQtyTotals(rows);
+      el("lap-total-kardus").textContent = quantityTotals.kardus.toLocaleString("id-ID");
+      el("lap-total-pcs").textContent = quantityTotals.pcs.toLocaleString("id-ID");
       el("lap-total-qty").textContent = rows
         .reduce((sum, e) => sum + (Number(e.totalQty) || 0), 0)
         .toLocaleString("id-ID");
@@ -6761,7 +6776,7 @@
 
       if (fourthStatCard) fourthStatCard.hidden = line === "all";
       if (reportStats)
-        reportStats.dataset.statCount = line === "all" ? "3" : "4";
+        reportStats.dataset.statCount = line === "all" ? "4" : "5";
 
       if (line === "filling") {
         const totalKardusBasah = rows.reduce(
@@ -6813,13 +6828,12 @@
     });
     updatePeriodInputs();
 
-    // Semua perubahan filter langsung memperbarui preview. Nama karyawan memakai
-    // event input (debounce) dan change agar klik suggestion autocomplete juga terbaca.
+    // Semua perubahan filter langsung memperbarui preview.
     el("lap-line")?.addEventListener("change", () => scheduleAutoPreview(0));
-    el("lap-operator")?.addEventListener("input", () =>
+    el("lap-search")?.addEventListener("input", () =>
       scheduleAutoPreview(180),
     );
-    el("lap-operator")?.addEventListener("change", () =>
+    el("lap-search")?.addEventListener("change", () =>
       scheduleAutoPreview(0),
     );
     ["lap-date", "lap-month", "lap-year", "lap-start", "lap-end"].forEach(
@@ -6862,7 +6876,8 @@
           "Operator",
           "Produk",
           "Botol",
-          "Qty Kardus",
+          "Qty Pengerjaan",
+          "Satuan",
           "Total Qty",
           "Qty Pecah",
           ...metricColumns.map((column) => column.label),
@@ -6876,6 +6891,7 @@
           e.produk,
           e.botol,
           e.qtyKardus,
+          laporanQtyUnit(e),
           e.totalQty,
           e.qtyBotolPecah,
           ...metricColumns.map((column) => kpiReportDisplay(e[column.key])),
