@@ -36,7 +36,7 @@ const APP = {
   ],
   USER_HEADERS: ['username', 'passwordHash', 'name', 'role', 'active', 'createdAt', 'permissionsJson'],
   SESSION_HEADERS: ['token', 'username', 'expiresAt', 'createdAt'],
-  PRESS_ADJUSTMENT_HEADERS: ['id', 'tanggal', 'produk', 'botol', 'qtyDitutup', 'alasan', 'closedBy', 'closedByName', 'createdAt'],
+  PRESS_ADJUSTMENT_HEADERS: ['id', 'tanggal', 'produk', 'botol', 'qtyDitutup', 'alasan', 'closedBy', 'closedByName', 'createdAt', 'qtyBotolPerKardus'],
   PRESS_REMAINDER_HEADERS: ['id', 'tanggalAsal', 'produk', 'botol', 'qtyFilling', 'qtyPressTerpakai', 'qtyDitutup', 'sisaQty', 'status', 'updatedAt'],
   SETTINGS_HEADERS: ['key', 'value', 'updatedAt', 'updatedBy'],
   APD_HEADERS: [
@@ -1397,6 +1397,7 @@ function buildPressAllocationModel_(entries, adjustments) {
         produk: String(entry.produk || '').trim(),
         botol: String(entry.botol || '').trim(),
         qtyFilling: number_(entry.totalQty),
+        qtyBotolPerKardus: number_(entry.qtyBotolPerKardus),
         qtyPressTerpakai: 0,
         qtyDitutup: 0,
         remaining: number_(entry.totalQty),
@@ -1431,6 +1432,7 @@ function buildPressAllocationModel_(entries, adjustments) {
       tanggal: String(adjustment.tanggal || ''),
       produk: String(adjustment.produk || '').trim(),
       botol: String(adjustment.botol || '').trim(),
+      qtyBotolPerKardus: number_(adjustment.qtyBotolPerKardus),
       qty: number_(adjustment.qtyDitutup),
       createdAt: String(adjustment.createdAt || '')
     });
@@ -1454,6 +1456,7 @@ function buildPressAllocationModel_(entries, adjustments) {
       // Hapus/Tutup Sisa harus hanya mengurangi kombinasi Produk + Botol yang dipilih.
       // Proses Press biasa tetap mempertahankan logika lama: alokasi FIFO berdasarkan Nama Produk.
       if (event.type === 'closed' && balanceKey_(lot.produk, lot.botol) !== balanceKey_(event.produk, event.botol)) continue;
+      if (event.type === 'closed' && event.qtyBotolPerKardus > 0 && lot.qtyBotolPerKardus !== event.qtyBotolPerKardus) continue;
 
       const used = Math.min(needed, lot.remaining);
       lot.remaining -= used;
@@ -1501,6 +1504,7 @@ function buildPressAllocationModel_(entries, adjustments) {
         produk: lot.produk,
         botol: lot.botol,
         qtyFilling: lot.qtyFilling,
+        qtyBotolPerKardus: lot.qtyBotolPerKardus,
         qtyPressTerpakai: lot.qtyPressTerpakai,
         qtyDitutup: lot.qtyDitutup,
         sisaQty: lot.remaining,
@@ -1509,65 +1513,40 @@ function buildPressAllocationModel_(entries, adjustments) {
       };
     });
 
-  return { remainders: remainders, pressMeta: pressMeta, overflow: overflow };
+  return { remainders: remainders, pressMeta: pressMeta, overflow: overflow, fillingLots: fillingLots };
 }
 
 function decoratePressRemainders_(remainders, entries, adjustments) {
   const rows = Array.isArray(remainders) ? remainders : [];
+  const model = buildPressAllocationModel_(entries || [], adjustments || []);
   const statsByKey = {};
-
-  function statsFor_(produk, botol) {
-    const key = balanceKey_(produk, botol);
-    if (!statsByKey[key]) {
-      statsByKey[key] = {
-        qtyFilling: 0,
-        qtyPressTerpakai: 0,
-        qtyDitutup: 0,
-        remaining: 0,
-        qtyBotolPerKardusValues: {}
-      };
-    }
-    return statsByKey[key];
+  const lotsById = {};
+  function groupKey_(item) {
+    return balanceKey_(item.produk, item.botol) + '|' + number_(item.qtyBotolPerKardus);
   }
-
-  // Total Filling harus memakai seluruh histori lot, termasuk lot yang sudah
-  // habis di-Press dan karenanya tidak lagi tersimpan sebagai baris aktif di
-  // Sheet "Sisa Press".
-  (entries || []).forEach(function (entry) {
-    if (entry.tab !== 'filling' || number_(entry.totalQty) <= 0) return;
-    const stats = statsFor_(entry.produk, entry.botol);
-    stats.qtyFilling += number_(entry.totalQty);
-    const perKardus = number_(entry.qtyBotolPerKardus);
-    if (perKardus > 0) stats.qtyBotolPerKardusValues[String(perKardus)] = perKardus;
-  });
-
-  (adjustments || []).forEach(function (adjustment) {
-    if (number_(adjustment.qtyDitutup) <= 0) return;
-    statsFor_(adjustment.produk, adjustment.botol).qtyDitutup += number_(adjustment.qtyDitutup);
-  });
-
-  // Sisa aktif tetap berasal dari Sheet/model Sisa Press.
-  rows.forEach(function (item) {
-    statsFor_(item.produk, item.botol).remaining += number_(item.sisaQty);
-  });
-
-  // Untuk setiap kombinasi Produk + Botol:
-  // Filling = Press terpakai + Ditutup + Sisa.
-  Object.keys(statsByKey).forEach(function (key) {
+  // Hitung histori dan penutupan dari alokasi setiap lot, termasuk lot yang habis.
+  model.fillingLots.forEach(function (lot) {
+    lotsById[lot.id] = lot;
+    const key = groupKey_(lot);
+    if (!statsByKey[key]) statsByKey[key] = { filling: 0, press: 0, closed: 0, remaining: 0 };
     const stats = statsByKey[key];
-    stats.qtyPressTerpakai = Math.max(0, stats.qtyFilling - stats.qtyDitutup - stats.remaining);
+    stats.filling += lot.qtyFilling;
+    stats.press += lot.qtyPressTerpakai;
+    stats.closed += lot.qtyDitutup;
+    stats.remaining += lot.remaining;
   });
-
   return rows.map(function (item) {
-    const stats = statsFor_(item.produk, item.botol);
+    const lot = lotsById[String(item.id)];
+    const perKardus = lot ? lot.qtyBotolPerKardus : number_(item.qtyBotolPerKardus);
+    const stats = statsByKey[groupKey_(Object.assign({}, item, { qtyBotolPerKardus: perKardus }))] ||
+      { filling: number_(item.qtyFilling), press: number_(item.qtyPressTerpakai), closed: number_(item.qtyDitutup), remaining: number_(item.sisaQty) };
     return Object.assign({}, item, {
-      groupQtyFilling: stats.qtyFilling,
-      groupQtyPressTerpakai: stats.qtyPressTerpakai,
-      groupQtyDitutup: stats.qtyDitutup,
+      qtyBotolPerKardus: perKardus,
+      groupQtyFilling: stats.filling,
+      groupQtyPressTerpakai: stats.press,
+      groupQtyDitutup: stats.closed,
       groupSisaQty: stats.remaining,
-      groupQtyBotolPerKardusValues: Object.keys(stats.qtyBotolPerKardusValues)
-        .map(function (key) { return stats.qtyBotolPerKardusValues[key]; })
-        .sort(function (a, b) { return a - b; })
+      groupQtyBotolPerKardusValues: perKardus > 0 ? [perKardus] : []
     });
   });
 }
@@ -1709,7 +1688,8 @@ function getPressAdjustments_() {
       alasan: String(values[i][5] || ''),
       closedBy: String(values[i][6] || ''),
       closedByName: String(values[i][7] || ''),
-      createdAt: isoCell_(values[i][8])
+      createdAt: isoCell_(values[i][8]),
+      qtyBotolPerKardus: number_(values[i][9])
     });
   }
   return result;
@@ -1789,7 +1769,14 @@ function closePressRemainder_(user, data) {
   if (alasan.length < 5) throw new Error('Alasan Tutup Sisa wajib diisi minimal 5 karakter.');
   if (alasan.length > 500) throw new Error('Alasan Tutup Sisa maksimal 500 karakter.');
 
-  const balance = pressBalanceForKey_(produk, botol);
+  const perKardus = Number(data.qtyBotolPerKardus);
+  if (!isFinite(perKardus) || perKardus <= 0) throw new Error('Qty Botol per Kardus untuk penutupan wajib diisi.');
+  const model = buildPressAllocationModel_(getEntries_(), getPressAdjustments_());
+  const remaining = model.remainders.filter(function (item) {
+    return balanceKey_(item.produk, item.botol) === balanceKey_(produk, botol) &&
+      item.qtyBotolPerKardus === perKardus;
+  }).reduce(function (sum, item) { return sum + number_(item.sisaQty); }, 0);
+  const balance = { remaining: remaining };
   if (balance.remaining <= 0) {
     throw new Error('Sisa Press untuk ' + produk + ' / ' + botol + ' sudah tidak tersedia.');
   }
@@ -1801,6 +1788,7 @@ function closePressRemainder_(user, data) {
     produk: produk,
     botol: botol,
     qtyDitutup: balance.remaining,
+    qtyBotolPerKardus: perKardus,
     alasan: alasan,
     closedBy: user.username,
     closedByName: user.name,
@@ -1808,10 +1796,11 @@ function closePressRemainder_(user, data) {
   };
 
   const sh = pressAdjustmentSheet_(true);
+  sh.getRange(1, 10).setValue('qtyBotolPerKardus');
   sh.appendRow([
     adjustment.id, adjustment.tanggal, adjustment.produk, adjustment.botol,
     adjustment.qtyDitutup, adjustment.alasan, adjustment.closedBy,
-    adjustment.closedByName, adjustment.createdAt
+    adjustment.closedByName, adjustment.createdAt, adjustment.qtyBotolPerKardus
   ]);
   return adjustment;
 }

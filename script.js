@@ -824,7 +824,9 @@
         const row = getPressBalanceRows().find(
           (item) =>
             balanceKey(item.produk, item.botol) ===
-            balanceKey(produkValue, botolValue),
+              balanceKey(produkValue, botolValue) &&
+            Number(item.qtyBotolPerKardus[0]) ===
+              Number(deleteBtn.dataset.perKardus),
         );
         if (!row) return toast("Data sisa Press tidak ditemukan.", true);
         if (row.hasPreview) {
@@ -843,7 +845,12 @@
         try {
           const response = await enqueueWrite(() =>
             apiPost("press.adjustment.close", {
-              data: { produk: row.produk, botol: row.botol, alasan },
+              data: {
+                produk: row.produk,
+                botol: row.botol,
+                qtyBotolPerKardus: row.qtyBotolPerKardus[0],
+                alasan,
+              },
             }),
           );
           if (response.adjustment) upsertAdjustment(response.adjustment);
@@ -869,6 +876,11 @@
       if (!pressForm) return;
       const produk = qs(".f-produk", pressForm);
       const botol = qs(".f-botol", pressForm);
+      const perKardusInput = qs(".f-qty-botol", pressForm);
+      if (perKardusInput && Number(useBtn.dataset.perKardus) > 0) {
+        perKardusInput.value = useBtn.dataset.perKardus;
+        perKardusInput.dispatchEvent(new Event("input", { bubbles: true }));
+      }
 
       if (produk) {
         produk.value = useBtn.dataset.produk || "";
@@ -1487,6 +1499,10 @@
       const remaining = Number(item.sisaQty ?? item.remaining) || 0;
       if (remaining <= 0) return;
       const hasGroupStats =
+        Number(item.qtyBotolPerKardus) > 0 &&
+        Array.isArray(item.groupQtyBotolPerKardusValues) &&
+        item.groupQtyBotolPerKardusValues.length === 1 &&
+        Number(item.groupQtyBotolPerKardusValues[0]) === Number(item.qtyBotolPerKardus) &&
         item.groupQtyFilling !== undefined &&
         item.groupQtyPressTerpakai !== undefined;
       lots.push({
@@ -1495,13 +1511,12 @@
         produk: String(item.produk || "").trim(),
         botol: String(item.botol || "").trim(),
         qtyBotolPerKardus: getQtyBotolPerKardusFromRemainder(item),
-        qtyBotolPerKardusValues: Array.isArray(
-          item.groupQtyBotolPerKardusValues,
-        )
-          ? item.groupQtyBotolPerKardusValues
-              .map(Number)
-              .filter((value) => value > 0)
-          : [],
+        qtyBotolPerKardusValues:
+          hasGroupStats && Array.isArray(item.groupQtyBotolPerKardusValues)
+            ? item.groupQtyBotolPerKardusValues
+                .map(Number)
+                .filter((value) => value > 0)
+            : [],
         qtyFilling: Number(item.qtyFilling) || remaining,
         qtyPressTerpakai: Number(item.qtyPressTerpakai) || 0,
         groupQtyFilling: hasGroupStats
@@ -1580,7 +1595,7 @@
         });
     });
 
-    // Gabungkan tampilan berdasarkan Nama Produk + Botol. Semua lot ikut
+    // Gabungkan berdasarkan Produk + Botol + Qty Botol per Kardus. Semua lot ikut
     // dihitung, termasuk lot yang menjadi 0 karena Preview Press. Baris baru
     // disembunyikan setelah total Sisa kombinasi benar-benar 0.
     //
@@ -1590,7 +1605,10 @@
     lots.forEach((lot) => {
       // Filter per lot agar Filling masa depan tidak ikut saldo tanggal Press.
       if (options.pressDate && lot.tanggalAsal > options.pressDate) return;
-      const key = balanceKey(lot.produk, lot.botol);
+      const key =
+        balanceKey(lot.produk, lot.botol) +
+        "|" +
+        (Number(lot.qtyBotolPerKardus) || 0);
       if (!grouped.has(key)) {
         grouped.set(key, {
           id: `balance-${key}`,
@@ -1644,13 +1662,7 @@
 
       group.remaining += Number(lot.remaining) || 0;
 
-      const backendPerKardus = Array.isArray(lot.qtyBotolPerKardusValues)
-        ? lot.qtyBotolPerKardusValues
-        : [];
-      backendPerKardus.forEach((value) => {
-        const qty = Number(value) || 0;
-        if (qty > 0) group.qtyBotolPerKardusValues.add(qty);
-      });
+      // Satu baris hanya memakai ukuran lot asal, bukan daftar gabungan API lama.
       const qtyPerKardus = Number(lot.qtyBotolPerKardus) || 0;
       if (qtyPerKardus > 0) group.qtyBotolPerKardusValues.add(qtyPerKardus);
       group.sources.add(lot.source || "spreadsheet");
@@ -1777,12 +1789,14 @@
           <div class="press-balance-actions">
             <button type="button" class="btn btn-ghost press-balance-use"
               data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}"
+              data-per-kardus="${Number(row.qtyBotolPerKardus[0]) || 0}"
               ${!produkAktif ? 'disabled title="Produk sudah tidak ada di Master."' : ""}>Gunakan</button>
             ${
               deleteAllowed
                 ? `
             <button type="button" class="btn btn-danger press-balance-delete"
             data-produk="${esc(row.produk)}"
+            data-per-kardus="${Number(row.qtyBotolPerKardus[0]) || 0}"
             data-botol="${esc(row.botol)}" ${deleteDisabled ? "disabled" : ""}
             title="${esc(deleteTitle)}"> Hapus </button>
               `
@@ -1804,7 +1818,7 @@
     if (summary) {
       const previewCount = rows.filter((row) => row.hasPreview).length;
       summary.textContent =
-        `${from}–${to} dari ${rows.length} kombinasi Produk + Botol · Sisa ${remainingTotal.toLocaleString("id-ID")} botol` +
+        `${from}–${to} dari ${rows.length} kombinasi Produk + Botol + Botol/Kardus · Sisa ${remainingTotal.toLocaleString("id-ID")} botol` +
         (query ? ` · Pencarian: ${state.pressBalance.search}` : "") +
         (previewCount
           ? ` · ${previewCount} kombinasi memuat Preview Filling`
@@ -1836,8 +1850,8 @@
     const pressDate = qs(".f-tanggal", form)?.value || todayStr();
     const savedEdit = editingId && editingSource === "saved";
     const available = getPressAvailable(produk, editingId, pressDate);
-    const blocked = !savedEdit &&
-      (!isMasterValue("produk", produk) || available <= 0);
+    const blocked =
+      !savedEdit && (!isMasterValue("produk", produk) || available <= 0);
     if (submitBtn) {
       submitBtn.disabled = blocked;
       submitBtn.title = blocked
@@ -1870,12 +1884,15 @@
       return;
     }
 
-    const lots = getPressBalanceRows({ excludePreviewId: editingId, pressDate }).filter(
+    const lots = getPressBalanceRows({
+      excludePreviewId: editingId,
+      pressDate,
+    }).filter(
       (row) =>
         String(row.produk || "")
           .trim()
           .toLowerCase() === String(produk).trim().toLowerCase() &&
-          (!row.tanggalAsal || row.tanggalAsal <= pressDate),
+        (!row.tanggalAsal || row.tanggalAsal <= pressDate),
     );
     const oldest = lots.length ? lots[0].tanggalAsal : "";
 
