@@ -2872,7 +2872,7 @@
         addBtn.innerHTML = '<i class="fa-solid fa-circle-plus"></i> Tambah';
         addBtn.disabled = false;
       }
-      if (cancelBtn) cancelBtn.hidden = true;
+      if (cancelBtn) cancelBtn.hidden = false;
       if (stamp) stamp.textContent = "Preview APD";
       if (errorEl) errorEl.hidden = true;
       if (operator) {

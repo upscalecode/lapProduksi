@@ -827,9 +827,8 @@
                   <p class="eyebrow">Penilaian Kepatuhan</p>
                   <h2>Input Penilaian APD</h2>
                   <p class="apd-unified-hint">
-                    Data yang sudah ditambahkan tetap berada pada lembar yang
-                    sama. Baris input kosong selalu tersedia di bagian paling
-                    bawah.
+                    Isi penilaian operator, lalu klik Tambah. Data akan tampil
+                    pada preview di bawah sebelum disimpan.
                   </p>
                 </div>
 
@@ -852,6 +851,163 @@
               <span class="stamp apd-edit-stamp" id="apdStamp"
                 >Preview APD</span
               >
+
+                <form
+                  id="apdForm"
+                  class="apd-unified-form apd-input-layout"
+                  autocomplete="off"
+                >
+                  <input type="hidden" id="apdEditingId" value="" />
+
+                  <label class="apd-unified-cell apd-operator-cell">
+                    <span class="apd-input-label">Nama Operator</span>
+                    <input
+                      type="text"
+                      id="apdOperator"
+                      class="master-search-input master-search-floating apd-operator-search"
+                      data-master="operator"
+                      placeholder="Cari operator…"
+                      autocomplete="off"
+                      required
+                    />
+                  </label>
+
+                  <label class="apd-unified-cell apd-score-cell">
+                    <span class="apd-input-label">Masker Tidak Sesuai</span>
+                    <input
+                      type="number"
+                      class="apd-score mono"
+                      data-apd-key="maskerTidakSesuai"
+                      min="0"
+                      max="5"
+                      step="1"
+                      placeholder="0–5"
+                      required
+                    />
+                  </label>
+
+                  <label class="apd-unified-cell apd-score-cell">
+                    <span class="apd-input-label">Lengan Ditarik ke Atas</span>
+                    <input
+                      type="number"
+                      class="apd-score mono"
+                      data-apd-key="lenganDitarik"
+                      min="0"
+                      max="5"
+                      step="1"
+                      placeholder="0–5"
+                      required
+                    />
+                  </label>
+
+                  <label class="apd-unified-cell apd-score-cell">
+                    <span class="apd-input-label">Sepatu Diinjak</span>
+                    <input
+                      type="number"
+                      class="apd-score mono"
+                      data-apd-key="sepatuDiinjak"
+                      min="0"
+                      max="5"
+                      step="1"
+                      placeholder="0–5"
+                      required
+                    />
+                  </label>
+
+                  <label class="apd-unified-cell apd-score-cell">
+                    <span class="apd-input-label">Rambut Kelihatan</span>
+                    <input
+                      type="number"
+                      class="apd-score mono"
+                      data-apd-key="rambutKelihatan"
+                      min="0"
+                      max="5"
+                      step="1"
+                      placeholder="0–5"
+                      required
+                    />
+                  </label>
+
+                  <label class="apd-unified-cell apd-score-cell">
+                    <span class="apd-input-label">APD Tidak diresleting</span>
+                    <input
+                      type="number"
+                      class="apd-score mono"
+                      data-apd-key="resletingTidakPenuh"
+                      min="0"
+                      max="5"
+                      step="1"
+                      placeholder="0–5"
+                      required
+                    />
+                  </label>
+
+                  <label class="apd-unified-cell apd-score-cell">
+                    <span class="apd-input-label">Memakai Aksesoris</span>
+                    <input
+                      type="number"
+                      class="apd-score mono"
+                      data-apd-key="memakaiAksesoris"
+                      min="0"
+                      max="5"
+                      step="1"
+                      placeholder="0–5"
+                      required
+                    />
+                  </label>
+
+                  <label class="apd-unified-cell apd-result-cell">
+                    <span class="apd-input-label">Total Poin</span>
+                    <input
+                      type="text"
+                      id="apdTotalPoints"
+                      class="mono"
+                      readonly
+                      value="0 / 30"
+                      aria-label="Total Poin diperoleh"
+                    />
+                  </label>
+
+                  <label class="apd-unified-cell apd-result-cell">
+                    <span class="apd-input-label">Total Presentase</span>
+                    <input
+                      type="text"
+                      id="apdPercentage"
+                      class="mono"
+                      readonly
+                      value="0%"
+                      aria-label="Total Prosentase"
+                    />
+                  </label>
+
+                  <label class="apd-unified-cell apd-reason-cell-input">
+                    <span class="apd-input-label">Keterangan</span>
+                    <textarea
+                      id="apdReason"
+                      placeholder="Isi alasan atau keterangan…"
+                    ></textarea>
+                    <span id="apdReasonWordCount" class="apd-word-count"
+                      >0 / 300 kata</span
+                    >
+                  </label>
+
+                  <div class="apd-unified-cell apd-inline-actions">
+                    <button
+                      type="submit"
+                      class="btn btn-primary"
+                      id="apdAddBtn"
+                    >
+                      <i class="fa-solid fa-circle-plus"></i> Tambah
+                    </button>
+                    <button
+                      type="button"
+                      class="btn btn-ghost"
+                      id="apdCancelEdit"
+                    >
+                      <i class="fa-solid fa-ban"></i> Batal
+                    </button>
+                  </div>
+                </form>
 
               <div class="apd-entry-scroll apd-unified-scroll">
                 <div
@@ -904,157 +1060,9 @@
                   </div>
                 </div>
 
-                <!-- Baris yang sudah ditambahkan dirender di sini. -->
+                <!-- Preview penilaian yang sudah ditambahkan. -->
                 <div id="apdPreviewBody" class="apd-unified-records"></div>
 
-                <!-- Baris input kosong selalu tetap ada di bawah preview. -->
-                <form
-                  id="apdForm"
-                  class="apd-unified-grid apd-unified-form"
-                  autocomplete="off"
-                >
-                  <input type="hidden" id="apdEditingId" value="" />
-
-                  <label class="apd-unified-cell apd-operator-cell">
-                    <input
-                      type="text"
-                      id="apdOperator"
-                      class="master-search-input master-search-floating apd-operator-search"
-                      data-master="operator"
-                      placeholder="Cari operator…"
-                      autocomplete="off"
-                      required
-                    />
-                  </label>
-
-                  <label class="apd-unified-cell apd-score-cell">
-                    <input
-                      type="number"
-                      class="apd-score mono"
-                      data-apd-key="maskerTidakSesuai"
-                      min="0"
-                      max="5"
-                      step="1"
-                      placeholder="0–5"
-                      required
-                    />
-                  </label>
-
-                  <label class="apd-unified-cell apd-score-cell">
-                    <input
-                      type="number"
-                      class="apd-score mono"
-                      data-apd-key="lenganDitarik"
-                      min="0"
-                      max="5"
-                      step="1"
-                      placeholder="0–5"
-                      required
-                    />
-                  </label>
-
-                  <label class="apd-unified-cell apd-score-cell">
-                    <input
-                      type="number"
-                      class="apd-score mono"
-                      data-apd-key="sepatuDiinjak"
-                      min="0"
-                      max="5"
-                      step="1"
-                      placeholder="0–5"
-                      required
-                    />
-                  </label>
-
-                  <label class="apd-unified-cell apd-score-cell">
-                    <input
-                      type="number"
-                      class="apd-score mono"
-                      data-apd-key="rambutKelihatan"
-                      min="0"
-                      max="5"
-                      step="1"
-                      placeholder="0–5"
-                      required
-                    />
-                  </label>
-
-                  <label class="apd-unified-cell apd-score-cell">
-                    <input
-                      type="number"
-                      class="apd-score mono"
-                      data-apd-key="resletingTidakPenuh"
-                      min="0"
-                      max="5"
-                      step="1"
-                      placeholder="0–5"
-                      required
-                    />
-                  </label>
-
-                  <label class="apd-unified-cell apd-score-cell">
-                    <input
-                      type="number"
-                      class="apd-score mono"
-                      data-apd-key="memakaiAksesoris"
-                      min="0"
-                      max="5"
-                      step="1"
-                      placeholder="0–5"
-                      required
-                    />
-                  </label>
-
-                  <label class="apd-unified-cell apd-result-cell">
-                    <input
-                      type="text"
-                      id="apdTotalPoints"
-                      class="mono"
-                      readonly
-                      value="0 / 30"
-                      aria-label="Total Poin diperoleh"
-                    />
-                  </label>
-
-                  <label class="apd-unified-cell apd-result-cell">
-                    <input
-                      type="text"
-                      id="apdPercentage"
-                      class="mono"
-                      readonly
-                      value="0%"
-                      aria-label="Total Prosentase"
-                    />
-                  </label>
-
-                  <label class="apd-unified-cell apd-reason-cell-input">
-                    <textarea
-                      id="apdReason"
-                      placeholder="Isi alasan atau keterangan…"
-                    ></textarea>
-                    <span id="apdReasonWordCount" class="apd-word-count"
-                      >0 / 300 kata</span
-                    >
-                  </label>
-
-                  <div class="apd-unified-cell apd-inline-actions">
-                    <button
-                      type="submit"
-                      class="btn btn-primary"
-                      id="apdAddBtn"
-                    >
-                      <i class="fa-solid fa-circle-plus"></i> Tambah
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-ghost"
-                      id="apdCancelEdit"
-                      hidden
-                    >
-                      <i class="fa-solid fa-ban"></i> Batal
-                    </button>
-                  </div>
-                </form>
               </div>
 
               <p class="form-error apd-unified-error" id="apdError" hidden></p>
