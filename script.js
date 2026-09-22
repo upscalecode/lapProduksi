@@ -5305,11 +5305,13 @@
   });
 
   function normalizeKpiType(value) {
-    return String(value || "").toLowerCase() === "press" ? "press" : "filling";
+    const type = String(value || "").toLowerCase();
+    return type === "press" || type === "shift" ? type : "filling";
   }
 
   function kpiTypeLabel(type) {
-    return normalizeKpiType(type) === "press" ? "Press" : "Filling";
+    const normalized = normalizeKpiType(type);
+    return normalized === "shift" ? "Ka. Shift" : normalized === "press" ? "Press" : "Filling";
   }
 
   function getKpiPressOutputTarget() {
@@ -5912,7 +5914,7 @@
         (item) =>
           item &&
           !item._syncState &&
-          item.tab === line &&
+          (line === "shift" ? item.tab === "filling" || item.tab === "press" : item.tab === line) &&
           dashboardDateInPeriod(item.tanggal, period),
       )
       .forEach((item) => {
@@ -5923,6 +5925,66 @@
       });
 
     return Array.from(names.values()).sort((a, b) => a.localeCompare(b, "id"));
+  }
+
+  function buildShiftKpiReport(monthValue) {
+    const period = kpiPressMonthPeriod(monthValue);
+    if (!period) return null;
+    const entries = (state.entries || []).filter((entry) =>
+      entry && !entry._syncState &&
+      (entry.tab === "filling" || entry.tab === "press") &&
+      dashboardDateInPeriod(entry.tanggal, period));
+    if (!entries.length) return null;
+
+    const workersByLine = { filling: new Set(), press: new Set() };
+    let totalQty = 0;
+    let broken = 0;
+    let wet = 0;
+    let updateTotal = 0;
+    entries.forEach((entry) => {
+      const worker = String(entry.operator || "").trim().toLowerCase();
+      if (worker) workersByLine[entry.tab].add(worker);
+      totalQty += Math.max(0, Number(entry.totalQty) || 0);
+      if (entry.tab === "press") broken += Math.max(0, Number(entry.qtyBotolPecah) || 0);
+      if (entry.tab === "filling") wet += Math.max(0, Number(entry.qtyKardusBasah) || 0);
+      updateTotal += Math.max(0, Number(entry.updateCount) || 0);
+    });
+    const outputTarget = workersByLine.filling.size * getKpiFillingOutputTarget() +
+      workersByLine.press.size * getKpiPressOutputTarget();
+    const outputPercent = outputTarget > 0 ? totalQty / outputTarget * 100 : 0;
+    const rejectPercent = totalQty > 0 ? (broken + wet) / totalQty * 100 : null;
+    const updateAverage = updateTotal / entries.length;
+    const workerKeys = new Set([...workersByLine.filling, ...workersByLine.press]);
+    const apdByWorker = new Map();
+    (state.apdEntries || []).forEach((item) => {
+      const worker = String(item?.operator || "").trim().toLowerCase();
+      const value = Number(item?.percentage);
+      if (!workerKeys.has(worker) || !dashboardDateInPeriod(item.tanggal, period) ||
+          !Number.isFinite(value)) return;
+      if (!apdByWorker.has(worker)) apdByWorker.set(worker, []);
+      apdByWorker.get(worker).push(value);
+    });
+    const apdActual = averageKpiValues(Array.from(apdByWorker.values()).map(averageKpiValues));
+    const rows = [
+      { no: 1, field: "TARGET", indicator: "PRESENTASE CAPAI TARGET HARIAN", weight: 40,
+        targetText: "> 90% DARI SPK", targetPercent: 100, actualText: kpiPressPercentText(outputPercent),
+        achievement: Math.min(40, outputPercent / 90 * 40), tone: "output" },
+      { no: 2, field: "QC", indicator: "KERUSAKAN HASIL (REJECT YANG SUDAH DI PRESS)", weight: 30,
+        targetText: "RATA-RATA 0,5%", targetPercent: 100, actualText: kpiPressPercentText(rejectPercent),
+        achievement: rejectPercent === null ? 0 : rejectPercent <= 0.5 ? 30 : 0.5 / rejectPercent * 30, tone: "quality" },
+      { no: 3, field: "AKURASI DATA", indicator: "AKURASI DATA HASIL OPERATOR", weight: 20,
+        targetText: "AVERAGE < 3 KESALAHAN PENCATATAN", targetPercent: 100,
+        actualText: updateAverage.toLocaleString("id-ID", { maximumFractionDigits: 2 }),
+        achievement: updateAverage <= 3 ? 20 : 3 / updateAverage * 20, tone: "attendance" },
+      { no: 4, field: "KEPATUHAN", indicator: "KEDISIPLINAN PEMAKAIAN APD", weight: 10,
+        targetText: "> 95%", targetPercent: 100, actualText: kpiPressPercentText(apdActual),
+        achievement: apdActual === null ? 0 : Math.min(10, apdActual / 95 * 10), tone: "apd" },
+    ];
+    return { kpiType: "shift", lineLabel: "Ka. Shift", operator: "Ka. Shift", period,
+      outputTarget, outputActual: totalQty, rejectActual: rejectPercent, apdActual,
+      updateAverage, broken, wet, productionDays: new Set(entries.map((entry) => entry.tanggal)).size,
+      presentDays: workerKeys.size, lineDays: entries.length, rows,
+      totalAchievement: rows.reduce((sum, row) => sum + row.achievement, 0) };
   }
 
   function kpiResolveExactOperator(rawOperator, allowedOperators = []) {
@@ -5943,6 +6005,9 @@
     const normalized = normalizeKpiType(type);
     const label = kpiTypeLabel(normalized);
     const isPress = normalized === "press";
+    const isShift = normalized === "shift";
+    const operatorFilter = qs(".kpi-press-employee-filter");
+    if (operatorFilter) operatorFilter.hidden = isShift;
 
     const panel = el("lap-kpi-panel");
     const result = el("lap-kpi-result");
@@ -5955,14 +6020,18 @@
 
     const intro = el("lap-kpi-intro");
     if (intro) {
-      intro.textContent = isPress
+      intro.textContent = isShift
+        ? "KPI Ka. Shift merangkum seluruh pengerjaan Filling dan Press serta penilaian APD karyawan pada bulan terpilih."
+        : isPress
         ? "Preview KPI Press akan tampil otomatis. Karyawan yang ditampilkan hanya karyawan yang mempunyai pengerjaan Press pada bulan terpilih. Target output KPI Press tetap mengikuti menu Setting."
         : `Preview KPI Filling akan tampil otomatis. Karyawan yang ditampilkan hanya karyawan yang mempunyai pengerjaan Filling pada bulan terpilih. Target output KPI Filling mengikuti menu Setting (${kpiPressQtyText(getKpiFillingOutputTarget())} botol/bulan).`;
     }
 
     if (badge) {
       badge.dataset.kpiType = normalized;
-      badge.innerHTML = isPress
+      badge.innerHTML = isShift
+        ? '<i class="fa-solid fa-users"></i> KPI KA. SHIFT'
+        : isPress
         ? '<i class="fa-solid fa-circle-down"></i> KPI PRESS'
         : '<i class="fa-solid fa-droplet"></i> KPI FILLING';
     }
@@ -6035,9 +6104,9 @@
           </div>
 
           <div class="kpi-employee-detail-summary">
-            <span>Hari Produksi <strong>${report.productionDays}</strong></span>
-            <span>Hari Hadir <strong>${report.presentDays}</strong></span>
-            <span>Hari ${esc(report.lineLabel || "Produksi")} <strong>${report.lineDays || 0}</strong></span>
+            ${report.kpiType === "shift"
+              ? `<span>Hari Produksi <strong>${report.productionDays}</strong></span><span>Karyawan Aktif <strong>${report.presentDays}</strong></span><span>Entri Produksi <strong>${report.lineDays}</strong></span>`
+              : `<span>Hari Produksi <strong>${report.productionDays}</strong></span><span>Hari Hadir <strong>${report.presentDays}</strong></span><span>Hari ${esc(report.lineLabel || "Produksi")} <strong>${report.lineDays || 0}</strong></span>`}
           </div>
         </div>
       </article>`;
@@ -6080,7 +6149,9 @@
       const selectedLabel = reportSet.selectedOperator
         ? "1 karyawan"
         : `${reports.length} karyawan`;
-      summary.textContent = `${selectedLabel} KPI ${reportSet.lineLabel} · Periode ${reportSet.period.label} · Target output ${kpiPressQtyText(reportSet.outputTarget)} botol/bulan`;
+      summary.textContent = reportSet.kpiType === "shift"
+        ? `KPI Ka. Shift · Periode ${reportSet.period.label} · Target gabungan ${kpiPressQtyText(reportSet.outputTarget)} botol/bulan`
+        : `${selectedLabel} KPI ${reportSet.lineLabel} · Periode ${reportSet.period.label} · Target output ${kpiPressQtyText(reportSet.outputTarget)} botol/bulan`;
     }
   }
 
@@ -6115,7 +6186,7 @@
     const id = finalize
       ? genLaporanId().replace(/^LAP-/, `KPI-${lineLabel.toUpperCase()}-`)
       : "PREVIEW";
-    const outputTarget = getKpiOutputTarget(kpiType);
+    const outputTarget = kpiType === "shift" ? reports[0].outputTarget : getKpiOutputTarget(kpiType);
     state.lastKpiLaporan = {
       id,
       reports,
@@ -6166,6 +6237,11 @@
       };
     }
 
+    if (type === "shift") {
+      const report = buildShiftKpiReport(monthValue);
+      return { reports: report ? [report] : [], period, selectedOperator: "Ka. Shift", type, error: "" };
+    }
+
     // Hanya operator yang benar-benar memiliki pengerjaan pada line KPI terpilih.
     // Master operator, data APD, atau line lain tidak lagi membuat card KPI ikut tampil.
     const allOperators = kpiOperatorsForPeriod(period, type);
@@ -6214,6 +6290,7 @@
     const created = el("lap-kpi-created")?.textContent || fmtDateTime(nowIso());
     const by = el("lap-kpi-by")?.textContent || "—";
     const isPress = reportSet.kpiType === "press";
+    const isShift = reportSet.kpiType === "shift";
 
     const sections = reportSet.reports
       .map((report, index) => {
@@ -6233,7 +6310,9 @@
           )
           .join("");
 
-        const qualitySummary = isPress
+        const qualitySummary = isShift
+          ? `Reject ${esc(kpiPressPercentText(report.rejectActual, 2))} · Rata-rata update ${esc(String(report.updateAverage.toLocaleString("id-ID", { maximumFractionDigits: 2 })))}`
+          : isPress
           ? `Kerusakan ${esc(report.outputActual > 0 ? kpiPressPercentText(report.rejectActual || 0, 2) : "—")}`
           : `Kardus Basah ${esc(kpiPressQtyText(report.wetCartonsActual || 0))} dus · Tumpahan ${esc(kpiPressPercentText(report.spillActual, 2))}`;
 
@@ -6253,14 +6332,19 @@
           </table>
           <div class="compact">
             Output ${esc(kpiPressQtyText(report.outputActual))} · ${qualitySummary} ·
-            APD ${esc(kpiPressPercentText(report.apdActual, 2))} · Kehadiran ${esc(kpiPressPercentText(report.attendanceActual, 2))} ·
-            Hari produksi ${report.productionDays} · Hari hadir ${report.presentDays} · Hari ${esc(report.lineLabel)} ${report.lineDays || 0}
+            APD ${esc(kpiPressPercentText(report.apdActual, 2))} ${isShift ? "" : `· Kehadiran ${esc(kpiPressPercentText(report.attendanceActual, 2))}`} ·
+            Hari produksi ${report.productionDays} · ${isShift
+              ? `Karyawan aktif ${report.presentDays} · Entri produksi ${report.lineDays}`
+              : `Hari hadir ${report.presentDays} · Hari ${esc(report.lineLabel)} ${report.lineDays || 0}`}
           </div>
         </section>`;
       })
       .join("");
 
-    const notes = isPress
+    const notes = isShift
+      ? `<p><strong>Keterangan:</strong> Target gabungan memakai target bulanan Filling dan Press di Setting, dikalikan jumlah karyawan aktif pada masing-masing bagian. Capaian target penuh saat hasil mencapai 90% target gabungan.</p>
+         <p>Reject = (botol rusak Press + kardus basah Filling) ÷ total pengerjaan pcs. Rata-rata update dihitung per entri Filling dan Press; update APD tidak dihitung.</p>`
+      : isPress
       ? `
         <p><strong>Keterangan:</strong> Target output KPI Press diatur melalui menu Setting.</p>
         <p>Kerusakan botol dihitung dari rata-rata persentase kerusakan harian pada data Press. Target &lt; 1%.</p>`
@@ -6318,8 +6402,8 @@
   ${sections}
   <div class="notes">
     ${notes}
-    <p>APD menggunakan rata-rata nilai APD operator pada bulan yang sama. Target ≥ 95%.</p>
-    <p>Kehadiran mempertahankan logic sebelumnya: menggunakan tanggal produksi aktif perusahaan; operator hadir bila memiliki data Filling atau Press pada tanggal tersebut.</p>
+    <p>${isShift ? "APD menggunakan rata-rata nilai tiap karyawan aktif pada bulan yang sama. Target > 95%." : "APD menggunakan rata-rata nilai APD operator pada bulan yang sama. Target ≥ 95%."}</p>
+    ${isShift ? "" : "<p>Kehadiran mempertahankan logic sebelumnya: menggunakan tanggal produksi aktif perusahaan; operator hadir bila memiliki data Filling atau Press pada tanggal tersebut.</p>"}
   </div>
 </body>
 </html>`;
