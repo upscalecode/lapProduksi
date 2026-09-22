@@ -28,6 +28,7 @@
 
   const CONFIG = {
     URL_KEY: "ppr_apps_script_url_v4",
+    URL_OVERRIDE_KEY: "ppr_apps_script_url_override_v1",
     TOKEN_KEY: "ppr_session_token_v3",
     USER_KEY: "ppr_session_user_v3",
     MASTER_KEY: "ppr_master_cache_v3",
@@ -41,7 +42,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbzPA3QRFo2OlvpOtI6gQ1WqLd5IxMFd2vQ98Y28UIy19kxlsWZT9EYWVix9jTE9_wCDaw/exec",
+      "https://script.google.com/macros/s/AKfycbyhJoMeIYFSUHKgvCpzrXrED3tEnrkG78mMsgBvAMj9Fc05ZhtUVzztMUJ_mrXrlPalTw/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -499,7 +500,10 @@
 
   function getWebhookUrl() {
     return normalizeWebAppUrl(
-      localStorage.getItem(CONFIG.URL_KEY) || CONFIG.WEB_APP_URL || "",
+      localStorage.getItem(CONFIG.URL_OVERRIDE_KEY) ||
+        CONFIG.WEB_APP_URL ||
+        localStorage.getItem(CONFIG.URL_KEY) ||
+        "",
     );
   }
 
@@ -510,12 +514,13 @@
         "URL tidak valid. Gunakan URL Web App Apps Script yang berakhir /exec.",
       );
     }
-    localStorage.setItem(CONFIG.URL_KEY, clean);
+    localStorage.setItem(CONFIG.URL_OVERRIDE_KEY, clean);
     setConnection("idle", "URL Apps Script tersimpan");
     return clean;
   }
 
   function clearWebhookUrl() {
+    localStorage.removeItem(CONFIG.URL_OVERRIDE_KEY);
     localStorage.removeItem(CONFIG.URL_KEY);
   }
 
@@ -569,9 +574,11 @@
     }
 
     if (!data || data.ok !== true) {
-      throw new Error(
+      const error = new Error(
         (data && data.message) || "Permintaan ke Apps Script gagal.",
       );
+      error.isApiError = true;
+      throw error;
     }
     return data;
   }
@@ -624,7 +631,7 @@
       setConnection("online", "Aktif");
       return data;
     } catch (err) {
-      setConnection("error", "Koneksi gagal");
+      setConnection(err?.isApiError ? "online" : "error", err?.isApiError ? "Aktif" : "Koneksi gagal");
       throw normalizeApiError(err);
     }
   }
@@ -662,7 +669,7 @@
       setConnection("online", "Aktif");
       return data;
     } catch (err) {
-      setConnection("error", "Koneksi gagal");
+      setConnection(err?.isApiError ? "online" : "error", err?.isApiError ? "Aktif" : "Koneksi gagal");
       throw normalizeApiError(err);
     }
   }
@@ -1785,7 +1792,7 @@
       });
     });
 
-    // FIFO per Nama Produk: preview Press mengurangi lot tertua terlebih dahulu.
+    // Preview Press memakai kombinasi Produk + Botol + Botol/Kardus yang sama.
     const previewPress = (state.preview.press || [])
       .filter((item) => item.id !== excludePreviewId)
       .slice()
@@ -1801,6 +1808,8 @@
       const key = String(press.produk || "")
         .trim()
         .toLowerCase();
+      const botolKey = balanceKey(press.produk, press.botol);
+      const perKardus = Number(press.qtyBotolPerKardus) || 0;
       const pressDate = String(press.tanggal || todayStr());
 
       lots
@@ -1810,6 +1819,8 @@
             String(lot.produk || "")
               .trim()
               .toLowerCase() === key &&
+            balanceKey(lot.produk, lot.botol) === botolKey &&
+            Number(lot.qtyBotolPerKardus) === perKardus &&
             (!lot.tanggalAsal || lot.tanggalAsal <= pressDate),
         )
         .sort(
@@ -1927,6 +1938,8 @@
     produk,
     excludePreviewId = "",
     pressDate = todayStr(),
+    botol = "",
+    perKardus = 0,
   ) {
     const key = String(produk || "")
       .trim()
@@ -1938,6 +1951,8 @@
           String(row.produk || "")
             .trim()
             .toLowerCase() === key &&
+          balanceKey(row.produk, row.botol) === balanceKey(produk, botol) &&
+          Number(row.qtyBotolPerKardus[0]) === Number(perKardus) &&
           (!row.tanggalAsal || row.tanggalAsal <= pressDate),
       )
       .reduce((sum, row) => sum + (Number(row.remaining) || 0), 0);
@@ -2076,6 +2091,8 @@
   function updatePressAvailabilityHint(form) {
     if (!form || form.dataset.line !== "press") return;
     const produk = qs(".f-produk", form)?.value || "";
+    const botol = qs(".f-botol", form)?.value || "";
+    const perKardus = Number(qs(".f-qty-botol", form)?.value) || 0;
     const editingNode = qs(".f-editing-id", form);
     const editingId = editingNode?.value || "";
     const editingSource = editingNode?.dataset.source || "";
@@ -2083,21 +2100,35 @@
     const submitBtn = qs(".f-submit-btn", form);
     const pressDate = qs(".f-tanggal", form)?.value || todayStr();
     const savedEdit = editingId && editingSource === "saved";
-    const available = getPressAvailable(produk, editingId, pressDate);
+    const available = getPressAvailable(
+      produk,
+      editingId,
+      pressDate,
+      botol,
+      perKardus,
+    );
     const blocked =
-      !savedEdit && (!isMasterValue("produk", produk) || available <= 0);
+      !savedEdit &&
+      (!isMasterValue("produk", produk) ||
+        !isMasterValue("botol", botol) ||
+        perKardus <= 0 ||
+        available <= 0);
     if (submitBtn) {
       submitBtn.disabled = blocked;
       submitBtn.title = blocked
-        ? "Press tidak dapat ditambahkan: pilih produk yang memiliki sisa Filling pada Pengerjaan belum di Press."
+        ? "Press tidak dapat ditambahkan: pilih kombinasi Produk, Botol, dan Botol/Kardus yang memiliki sisa Filling."
         : "";
     }
     if (!hint) return;
 
-    if (!isMasterValue("produk", produk)) {
+    if (
+      !isMasterValue("produk", produk) ||
+      !isMasterValue("botol", botol) ||
+      perKardus <= 0
+    ) {
       hint.dataset.state = "empty";
       hint.textContent =
-        "Pilih Nama Produk dari data master untuk melihat sisa Qty Filling.";
+        "Pilih Nama Produk, Botol, dan Qty Botol per Kardus untuk melihat sisa Qty Filling.";
       return;
     }
 
@@ -2126,6 +2157,8 @@
         String(row.produk || "")
           .trim()
           .toLowerCase() === String(produk).trim().toLowerCase() &&
+        balanceKey(row.produk, row.botol) === balanceKey(produk, botol) &&
+        Number(row.qtyBotolPerKardus[0]) === perKardus &&
         (!row.tanggalAsal || row.tanggalAsal <= pressDate),
     );
     const oldest = lots.length ? lots[0].tanggalAsal : "";
@@ -2133,12 +2166,12 @@
     hint.dataset.state = available > 0 ? "ok" : "empty";
     hint.textContent =
       available > 0
-        ? `Sisa Qty Filling untuk ${produk}: ${available.toLocaleString("id-ID")} botol` +
+        ? `Sisa Qty Filling untuk ${produk} / ${botol} (${perKardus.toLocaleString("id-ID")} botol/kardus): ${available.toLocaleString("id-ID")} botol` +
           (oldest && oldest < todayStr()
             ? ` · termasuk tinggalan sejak ${oldest}`
             : "") +
           "."
-        : `Press tidak dapat ditambahkan. Tidak ada sisa Filling untuk produk ${produk} pada tanggal ${pressDate} di Pengerjaan belum di Press. Buat data Filling terlebih dahulu jika belum pernah dibuat.`;
+        : `Press tidak dapat ditambahkan. Tidak ada sisa Filling untuk ${produk} / ${botol} (${perKardus.toLocaleString("id-ID")} botol/kardus) pada tanggal ${pressDate}.`;
   }
 
   function validatePressPayload(payload, editingId = "", editingSource = "") {
@@ -2158,12 +2191,14 @@
       payload.produk,
       editingId,
       payload.tanggal || todayStr(),
+      payload.botol,
+      payload.qtyBotolPerKardus,
     );
     if (available <= 0) {
-      return `Press tidak dapat ditambahkan karena tidak ada sisa Filling untuk produk ${payload.produk} pada tanggal pengerjaan. Buat data Filling terlebih dahulu jika belum pernah dibuat.`;
+      return `Press tidak dapat ditambahkan karena tidak ada sisa Filling untuk ${payload.produk} / ${payload.botol} (${payload.qtyBotolPerKardus} botol/kardus) pada tanggal pengerjaan.`;
     }
     if (requested > available) {
-      return `Qty Press ${requested.toLocaleString("id-ID")} botol melebihi sisa Filling ${Math.max(0, available).toLocaleString("id-ID")} botol untuk produk ${payload.produk}. Balance Press dihitung berdasarkan Nama Produk.`;
+      return `Qty Press ${requested.toLocaleString("id-ID")} botol melebihi sisa Filling ${Math.max(0, available).toLocaleString("id-ID")} botol untuk ${payload.produk} / ${payload.botol} (${payload.qtyBotolPerKardus} botol/kardus).`;
     }
     return "";
   }
@@ -2926,6 +2961,74 @@
     return { totalPoints, percentage: Math.round(percentage * 100) / 100 };
   }
 
+  async function compressApdPhoto(file) {
+    if (!file?.type?.startsWith("image/"))
+      throw new Error("Pilih file gambar untuk bukti APD.");
+    if (file.size > 15000000)
+      throw new Error("Foto asli terlalu besar. Pilih gambar di bawah 15 MB.");
+    const url = URL.createObjectURL(file);
+    try {
+      const photo = new Image();
+      await new Promise((resolve, reject) => {
+        photo.onload = resolve;
+        photo.onerror = () => reject(new Error("Foto tidak dapat dibuka."));
+        photo.src = url;
+      });
+      const canvas = document.createElement("canvas");
+      const context = canvas.getContext("2d");
+      if (!context) throw new Error("Browser tidak dapat memproses foto.");
+      for (const maxSide of [1600, 1400, 1200, 1000, 800]) {
+        const scale = Math.min(
+          1,
+          maxSide / Math.max(photo.naturalWidth, photo.naturalHeight),
+        );
+        canvas.width = Math.max(1, Math.round(photo.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(photo.naturalHeight * scale));
+        context.drawImage(photo, 0, 0, canvas.width, canvas.height);
+        for (const quality of [0.78, 0.7, 0.62]) {
+          const dataUrl = canvas.toDataURL("image/jpeg", quality);
+          const bytes = Math.ceil(
+            (dataUrl.length - dataUrl.indexOf(",") - 1) * 0.75,
+          );
+          if (bytes <= 300000)
+            return {
+              dataUrl,
+              bytes,
+              width: canvas.width,
+              height: canvas.height,
+            };
+        }
+      }
+      throw new Error(
+        "Foto masih terlalu besar setelah dikompres. Pilih foto lain.",
+      );
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  async function viewApdPhoto(item, source) {
+    const response = await apiGet(
+      source === "saved" ? "apd.photo.get" : "apd.photo.preview",
+      source === "saved" ? { id: item.id } : { photoFileId: item.photoFileId },
+    );
+    const overlay = document.createElement("div");
+    overlay.className = "apd-photo-overlay";
+    overlay.innerHTML =
+      '<div class="apd-photo-dialog" role="dialog" aria-modal="true" aria-label="Foto bukti APD"><button type="button" class="btn btn-ghost apd-photo-close">Tutup</button><img alt="Foto bukti APD" /></div>';
+    qs("img", overlay).src = response.dataUrl;
+    const close = () => overlay.remove();
+    qs(".apd-photo-close", overlay).addEventListener("click", close);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) close();
+    });
+    overlay.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") close();
+    });
+    document.body.appendChild(overlay);
+    qs(".apd-photo-close", overlay).focus();
+  }
+
   function apdRecordHtml(item, source, activeEditingId, activeEditingSource) {
     const isSaved = source === "saved";
     const canChange =
@@ -2951,7 +3054,7 @@
         <div class="apd-record-cell apd-record-score">${Number(item.scores?.memakaiAksesoris) || 0}</div>
         <div class="apd-record-cell apd-record-result"><strong>${Number(item.totalPoints) || 0} / 30</strong></div>
         <div class="apd-record-cell"><span class="apd-percent-badge">${dashboardPercent(item.percentage)}</span></div>
-        <div class="apd-record-cell apd-record-reason">${esc(item.alasan || "—")}</div>
+        <div class="apd-record-cell apd-record-reason"><span>${esc(item.alasan || "—")}</span>${item.photoFileId ? `<button type="button" class="btn btn-ghost apd-photo-view" data-id="${esc(item.id)}">Lihat Bukti</button>` : ""}</div>
         <div class="apd-record-cell apd-record-actions" ${canChange ? "" : "hidden"}>
           <button type="button" class="btn btn-ghost ${isSaved ? "apd-saved-edit" : "apd-edit"}" data-id="${esc(item.id)}">Edit</button>
           <button type="button" class="btn btn-danger ${isSaved ? "apd-saved-delete" : "apd-delete"}" data-id="${esc(item.id)}">Hapus</button>
@@ -3089,6 +3192,13 @@
     const previewBody = el("apdPreviewBody");
     const savedBody = el("apdSavedBody");
     const scoreInputs = qsa(".apd-score", form);
+    const photoField = el("apdPhotoField");
+    const photoInput = el("apdPhotoInput");
+    const photoCameraInput = el("apdPhotoCameraInput");
+    const photoPreview = el("apdPhotoPreview");
+    const photoInfo = el("apdPhotoInfo");
+    let pendingPhotoDataUrl = "";
+    let currentPhotoFileId = "";
 
     if (tanggal) tanggal.value = todayStr();
 
@@ -3105,6 +3215,11 @@
       const result = calculateApd(scores);
       if (totalPoints) totalPoints.value = `${result.totalPoints} / 30`;
       if (percentage) percentage.value = dashboardPercent(result.percentage);
+      if (photoField)
+        photoField.hidden =
+          result.percentage >= 100 &&
+          !currentPhotoFileId &&
+          !pendingPhotoDataUrl;
       return result;
     }
 
@@ -3125,6 +3240,13 @@
 
     function resetForm() {
       form.reset();
+      pendingPhotoDataUrl = "";
+      currentPhotoFileId = "";
+      if (photoPreview) {
+        photoPreview.src = "";
+        photoPreview.hidden = true;
+      }
+      if (photoInfo) photoInfo.textContent = "";
       if (tanggal) tanggal.value = todayStr();
       if (editingId) {
         editingId.value = "";
@@ -3160,6 +3282,18 @@
         input.value = item.scores?.[input.dataset.apdKey] ?? "";
       });
       if (reason) reason.value = item.alasan || "";
+      pendingPhotoDataUrl = "";
+      currentPhotoFileId = item.photoFileId || "";
+      if (photoInput) photoInput.value = "";
+      if (photoCameraInput) photoCameraInput.value = "";
+      if (photoPreview) {
+        photoPreview.src = "";
+        photoPreview.hidden = true;
+      }
+      if (photoInfo)
+        photoInfo.textContent = currentPhotoFileId
+          ? "Foto bukti tersimpan. Pilih gambar baru untuk mengganti."
+          : "";
       refreshCalculation();
       refreshReasonCounter();
       if (addBtn) addBtn.textContent = "Simpan Perubahan";
@@ -3176,6 +3310,36 @@
       input.addEventListener("input", refreshCalculation),
     );
     reason?.addEventListener("input", refreshReasonCounter);
+    async function handleApdPhotoChange(input) {
+      const file = input.files?.[0];
+      pendingPhotoDataUrl = "";
+      if (!file) return;
+      if (photoInfo) photoInfo.textContent = "Mengompres foto...";
+      try {
+        const compressed = await compressApdPhoto(file);
+        pendingPhotoDataUrl = compressed.dataUrl;
+        if (photoPreview) {
+          photoPreview.src = compressed.dataUrl;
+          photoPreview.hidden = false;
+        }
+        if (photoInfo)
+          photoInfo.textContent = `Hasil kompresi: ${Math.round(compressed.bytes / 1024)} KB · ${compressed.width} × ${compressed.height} piksel`;
+        refreshCalculation();
+      } catch (err) {
+        input.value = "";
+        if (photoPreview) {
+          photoPreview.src = "";
+          photoPreview.hidden = true;
+        }
+        if (photoInfo) photoInfo.textContent = err.message;
+      }
+    }
+    photoInput?.addEventListener("change", () =>
+      handleApdPhotoChange(photoInput),
+    );
+    photoCameraInput?.addEventListener("change", () =>
+      handleApdPhotoChange(photoCameraInput),
+    );
     cancelBtn?.addEventListener("click", () => {
       resetForm();
       renderApdPreview();
@@ -3184,6 +3348,7 @@
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (addBtn?.disabled) return;
       if (errorEl) errorEl.hidden = true;
 
       if (!canLevel("apd", "write")) {
@@ -3236,8 +3401,26 @@
       );
       const scores = scoresFromForm();
       const result = calculateApd(scores);
+      if (
+        result.percentage < 100 &&
+        !pendingPhotoDataUrl &&
+        !currentPhotoFileId
+      ) {
+        if (errorEl) {
+          errorEl.textContent =
+            "Foto bukti wajib untuk nilai APD kurang dari 100%.";
+          errorEl.hidden = false;
+        }
+        photoInput?.focus();
+        return;
+      }
       const id = editingId?.value || "";
       const source = editingId?.dataset.source || "";
+      const previousPreviewPhotoId =
+        source === "preview"
+          ? (state.preview.apd || []).find((row) => row.id === id)
+              ?.photoFileId || ""
+          : "";
       const formDate = tanggal?.value || todayStr();
 
       const duplicatePreview = (state.preview.apd || []).find(
@@ -3279,6 +3462,27 @@
         alasan: String(reason?.value || "").trim(),
       };
 
+      if (pendingPhotoDataUrl) {
+        if (addBtn) addBtn.disabled = true;
+        try {
+          const uploaded = await apiPost("apd.photo.upload", {
+            dataUrl: pendingPhotoDataUrl,
+          });
+          currentPhotoFileId = uploaded.photoFileId;
+          pendingPhotoDataUrl = "";
+          if (photoInfo)
+            photoInfo.textContent = "Foto bukti berhasil diunggah.";
+        } catch (err) {
+          if (errorEl) {
+            errorEl.textContent = `Gagal mengunggah foto: ${err.message}`;
+            errorEl.hidden = false;
+          }
+          if (addBtn) addBtn.disabled = false;
+          return;
+        }
+      }
+      payload.photoFileId = currentPhotoFileId;
+
       // Edit data yang SUDAH tersimpan selalu menggunakan endpoint update.
       // Baris lama dioverwrite berdasarkan ID yang sama sehingga tidak append/duplikat.
       if (id && source === "saved") {
@@ -3314,6 +3518,7 @@
         totalPoints: result.totalPoints,
         percentage: result.percentage,
         alasan: payload.alasan,
+        photoFileId: payload.photoFileId,
         createdAt: id
           ? (state.preview.apd || []).find((row) => row.id === id)?.createdAt ||
             nowIso()
@@ -3323,6 +3528,14 @@
       if (id && source === "preview") {
         const index = state.preview.apd.findIndex((row) => row.id === id);
         if (index >= 0) state.preview.apd[index] = item;
+        if (
+          previousPreviewPhotoId &&
+          previousPreviewPhotoId !== item.photoFileId
+        ) {
+          apiPost("apd.photo.discard", {
+            photoFileId: previousPreviewPhotoId,
+          }).catch(() => {});
+        }
         toast("Data APD di preview berhasil diperbarui.");
       } else {
         state.preview.apd.push(item);
@@ -3340,8 +3553,20 @@
     });
 
     previewBody?.addEventListener("click", (event) => {
+      const viewBtn = event.target.closest(".apd-photo-view");
       const editBtn = event.target.closest(".apd-edit");
       const deleteBtn = event.target.closest(".apd-delete");
+
+      if (viewBtn) {
+        const item = (state.preview.apd || []).find(
+          (row) => row.id === viewBtn.dataset.id,
+        );
+        if (item)
+          viewApdPhoto(item, "preview").catch((err) =>
+            toast(err.message, true),
+          );
+        return;
+      }
 
       if (editBtn) {
         const item = (state.preview.apd || []).find(
@@ -3353,6 +3578,9 @@
       }
 
       if (deleteBtn) {
+        const removed = (state.preview.apd || []).find(
+          (row) => row.id === deleteBtn.dataset.id,
+        );
         state.preview.apd = (state.preview.apd || []).filter(
           (row) => row.id !== deleteBtn.dataset.id,
         );
@@ -3365,13 +3593,27 @@
           resetForm();
         renderApdPreview();
         renderApdSavedToday();
+        if (removed?.photoFileId)
+          apiPost("apd.photo.discard", {
+            photoFileId: removed.photoFileId,
+          }).catch(() => {});
         toast("Data APD dihapus dari preview.");
       }
     });
 
     savedBody?.addEventListener("click", async (event) => {
+      const viewBtn = event.target.closest(".apd-photo-view");
       const editBtn = event.target.closest(".apd-saved-edit");
       const deleteBtn = event.target.closest(".apd-saved-delete");
+
+      if (viewBtn) {
+        const item = (state.apdEntries || []).find(
+          (row) => row.id === viewBtn.dataset.id,
+        );
+        if (item)
+          viewApdPhoto(item, "saved").catch((err) => toast(err.message, true));
+        return;
+      }
 
       if (editBtn) {
         const item = (state.apdEntries || []).find(
@@ -3443,6 +3685,7 @@
           operator: item.operator,
           scores: item.scores,
           alasan: item.alasan || "",
+          photoFileId: item.photoFileId || "",
           clientRequestId: item.id,
         }));
         const response = await enqueueWrite(() =>

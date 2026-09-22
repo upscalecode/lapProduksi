@@ -328,6 +328,16 @@ button{font-family:inherit;}
 .id-badge{font-family:var(--font-mono); font-size:11px; font-weight:700; color:var(--accent-ink);}
 .row-actions{display:auto; gap:6px;}
 .row-actions .btn{padding:5px 9px; font-size:11.5px;}
+#userManagementPanel .user-table{width:100%;}
+#userManagementPanel .user-table th:nth-child(4){width:50%;}
+#userManagementPanel .user-table .row-actions{white-space:nowrap;}
+#userManagementPanel .user-table .row-actions .btn{
+  min-width:100px;
+  margin:2px 18px 2px 0;
+  padding:7px 12px;
+  justify-content:center;
+}
+#userManagementPanel .user-table .permission-full{display:inline-block; min-width:100px; margin-right:18px;}
 .pecah-tag{color:var(--danger); font-weight:700;}
 .table-summary{margin:10px 2px 0; font-size:12px; color:var(--ink-soft); font-weight:600;}
 
@@ -1089,6 +1099,17 @@ body.press-popup-open{overflow:hidden;}
 .apd-record-score{font:700 13px var(--font-mono);}
 .apd-record-result{font:800 12.5px var(--font-mono);color:var(--accent-2);}
 .apd-record-reason{justify-content:flex-start;text-align:left;white-space:normal;overflow-wrap:anywhere;}
+.apd-record-reason{flex-direction:column;align-items:flex-start;gap:6px;}
+.apd-record-reason .apd-photo-view{padding:4px 7px;font-size:10px;}
+.apd-photo-field{display:grid;gap:8px;padding:14px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface-2);}
+.apd-photo-field[hidden]{display:none;}
+.apd-photo-field label{font-weight:700;font-size:13px;}
+.apd-photo-field input{max-width:100%;}
+.apd-photo-field img{display:block;max-width:min(320px,100%);max-height:240px;object-fit:contain;border-radius:8px;}
+.apd-photo-field img[hidden]{display:none;}
+.apd-photo-overlay{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:16px;background:rgba(15,23,42,.75);}
+.apd-photo-dialog{display:flex;flex-direction:column;align-items:flex-end;gap:10px;max-width:100%;max-height:100%;}
+.apd-photo-dialog img{display:block;max-width:min(900px,90vw);max-height:80vh;object-fit:contain;background:#fff;border-radius:8px;}
 .apd-record-actions{gap:6px;flex-wrap:wrap;align-content:center;}
 .apd-record-actions .btn{padding:6px 8px;font-size:10.5px;}
 

@@ -44,7 +44,7 @@ const APP = {
     'Masker tidak sesuai', 'Lengan ditarik ke atas', 'Sepatu diinjak',
     'Rambut kelihatan', 'APD tidak diresleting penuh', 'Memakai aksesoris',
     'Total Poin', 'Nilai Prosentase APD', 'Alasan',
-    'apdId', 'createdBy', 'createdAt', 'updatedAt'
+    'apdId', 'createdBy', 'createdAt', 'updatedAt', 'photoFileId'
   ]
 };
 
@@ -114,6 +114,22 @@ function doGet(e) {
         master: getMaster_(),
         settings: getSettings_()
       });
+    }
+
+    if (action === 'apd.photo.get') {
+      const session = requireSession_(param_(e, 'token'));
+      requireLevel_(session.user, 'apd', 'read');
+      return json_({ ok: true, dataUrl: getApdPhotoData_(param_(e, 'id')) });
+    }
+
+    if (action === 'apd.photo.preview') {
+      const session = requireSession_(param_(e, 'token'));
+      requireLevel_(session.user, 'apd', 'read');
+      const file = apdPhotoFile_(param_(e, 'photoFileId'));
+      if (file.getDescription() !== 'APD bukti; uploadedBy=' + session.user.username) {
+        throw new Error('Anda tidak dapat melihat foto preview ini.');
+      }
+      return json_({ ok: true, dataUrl: 'data:image/jpeg;base64,' + Utilities.base64Encode(file.getBlob().getBytes()) });
     }
 
     if (action === 'appdata') {
@@ -242,6 +258,15 @@ function doPost(e) {
           const deleted = deleteApdEntry_(session.user, param_(e, 'id'));
           return json_({ ok: true, deletedId: deleted.deletedId, apdEntries: deleted.apdEntries });
         });
+
+      case 'apd.photo.upload':
+        requireLevel_(session.user, 'apd', 'write');
+        return json_({ ok: true, photoFileId: uploadApdPhoto_(session.user, param_(e, 'dataUrl')) });
+
+      case 'apd.photo.discard':
+        requireLevel_(session.user, 'apd', 'write');
+        discardApdPhoto_(session.user, param_(e, 'photoFileId'));
+        return json_({ ok: true });
 
       case 'master.add':
         requireLevel_(session.user, 'master', 'write');
@@ -506,6 +531,66 @@ const APD_VARIABLES_ = [
   { key: 'memakaiAksesoris', label: 'Memakai aksesoris', weight: 20 }
 ];
 
+function apdPhotoFolder_() {
+  const properties = PropertiesService.getScriptProperties();
+  const cachedId = properties.getProperty('APD_PHOTO_FOLDER_ID');
+  if (cachedId) {
+    try { return DriveApp.getFolderById(cachedId); } catch (_) {}
+  }
+  const folder = DriveApp.createFolder('Laporan Produksi - Bukti APD');
+  properties.setProperty('APD_PHOTO_FOLDER_ID', folder.getId());
+  return folder;
+}
+
+function apdPhotoFile_(id) {
+  const fileId = String(id || '').trim();
+  if (!/^[A-Za-z0-9_-]{20,}$/.test(fileId)) throw new Error('Foto bukti APD tidak valid.');
+  const file = DriveApp.getFileById(fileId);
+  const parents = file.getParents();
+  const folderId = apdPhotoFolder_().getId();
+  let isOwnedFolder = false;
+  while (parents.hasNext()) {
+    if (parents.next().getId() === folderId) isOwnedFolder = true;
+  }
+  if (!isOwnedFolder) throw new Error('Foto bukti APD tidak ditemukan.');
+  return file;
+}
+
+function uploadApdPhoto_(user, dataUrl) {
+  const match = /^data:image\/jpeg;base64,([A-Za-z0-9+/=]+)$/.exec(String(dataUrl || ''));
+  if (!match) throw new Error('Foto bukti harus berformat JPEG.');
+  const bytes = Utilities.base64Decode(match[1]);
+  if (!bytes.length || bytes.length > 350000) throw new Error('Ukuran foto bukti maksimal 350 KB setelah kompresi.');
+  const file = apdPhotoFolder_().createFile(Utilities.newBlob(bytes, 'image/jpeg', 'apd-' + Utilities.getUuid() + '.jpg'));
+  file.setDescription('APD bukti; uploadedBy=' + user.username);
+  return file.getId();
+}
+
+function getApdPhotoData_(apdId) {
+  const sh = ensureApdSheet_(spreadsheet_());
+  const row = findApdRowById_(sh, apdId);
+  const id = String(sh.getRange(row, 16).getValue() || '');
+  if (!id) throw new Error('Data APD ini tidak memiliki foto bukti.');
+  const file = apdPhotoFile_(id);
+  return 'data:image/jpeg;base64,' + Utilities.base64Encode(file.getBlob().getBytes());
+}
+
+function discardApdPhoto_(user, photoFileId) {
+  const file = apdPhotoFile_(photoFileId);
+  if (file.getDescription() !== 'APD bukti; uploadedBy=' + user.username) {
+    throw new Error('Anda tidak dapat menghapus foto bukti ini.');
+  }
+  const sh = ensureApdSheet_(spreadsheet_());
+  const last = sh.getLastRow();
+  if (last >= 2) {
+    const ids = sh.getRange(2, 16, last - 1, 1).getDisplayValues();
+    if (ids.some(function (row) { return String(row[0] || '') === file.getId(); })) {
+      throw new Error('Foto bukti sudah terhubung dengan data APD.');
+    }
+  }
+  file.setTrashed(true);
+}
+
 function normalizeApdPoint_(value, label, index) {
   const point = Number(value);
   if (!isFinite(point) || Math.floor(point) !== point || point < 0 || point > 5) {
@@ -514,7 +599,7 @@ function normalizeApdPoint_(value, label, index) {
   return point;
 }
 
-function buildApdRecord_(raw, index) {
+function buildApdRecord_(raw, index, user, existingPhotoId) {
   const data = raw && typeof raw === 'object' ? raw : {};
   const tanggal = String(data.tanggal || '').trim();
   const operator = String(data.operator || '').trim();
@@ -542,6 +627,17 @@ function buildApdRecord_(raw, index) {
 
   const requestId = String(data.clientRequestId || '').trim();
   const validRequestId = /^[A-Za-z0-9-]{16,100}$/.test(requestId) ? requestId : '';
+  const photoFileId = String(data.photoFileId || '').trim();
+  if (percentage < 100 && !photoFileId) {
+    throw new Error('Data APD ke-' + (index + 1) + ': foto bukti wajib saat nilai kurang dari 100%.');
+  }
+  if (photoFileId) {
+    const file = apdPhotoFile_(photoFileId);
+    if (photoFileId !== String(existingPhotoId || '') &&
+        file.getDescription() !== 'APD bukti; uploadedBy=' + user.username) {
+      throw new Error('Data APD ke-' + (index + 1) + ': foto bukti bukan milik user ini.');
+    }
+  }
 
   return {
     tanggal: tanggal,
@@ -557,6 +653,7 @@ function buildApdRecord_(raw, index) {
     percentage: Math.round(percentage * 100) / 100,
     totalPoints: totalPoints,
     alasan: alasan,
+    photoFileId: photoFileId,
     clientRequestId: validRequestId
   };
 }
@@ -583,6 +680,7 @@ function apdRowToObject_(row, rowNumber) {
     totalPoints: number_(values[8]),
     percentage: number_(values[9]),
     alasan: String(values[10] || ''),
+    photoFileId: String(values[15] || ''),
     createdBy: String(values[12] || ''),
     createdAt: isoCell_(values[13]),
     updatedAt: isoCell_(values[14])
@@ -659,7 +757,7 @@ function createApdEntriesBatch_(user, dataList) {
   }
 
   const records = dataList.map(function (raw, index) {
-    return buildApdRecord_(raw, index);
+    return buildApdRecord_(raw, index, user, '');
   });
 
   const master = getMaster_();
@@ -729,7 +827,8 @@ function createApdEntriesBatch_(user, dataList) {
       id,
       user.username,
       now,
-      now
+      now,
+      record.photoFileId
     ]);
     savedIds.push(id);
     existingIds[id] = true;
@@ -756,7 +855,8 @@ function updateApdEntry_(user, id, rawData) {
   const rowNumber = findApdRowById_(sh, id);
   const createdBy = String(sh.getRange(rowNumber, 13).getValue() || '');
   requireManage_(user, 'apd', createdBy === user.username ? 'own' : 'others');
-  const record = buildApdRecord_(rawData, 0);
+  const existingPhotoId = String(sh.getRange(rowNumber, 16).getValue() || '');
+  const record = buildApdRecord_(rawData, 0, user, existingPhotoId);
   record.operator = canonicalMasterValue_(getMaster_().operator, record.operator, 'Operator');
   ensureNoApdDuplicate_(sh, record.tanggal, record.operator, id);
 
@@ -777,8 +877,13 @@ function updateApdEntry_(user, id, rawData) {
     String(id),
     String(oldMeta[1] || user.username),
     oldMeta[2] || now,
-    now
+    now,
+    record.photoFileId || String(sh.getRange(rowNumber, 16).getValue() || '')
   ]]);
+
+  if (existingPhotoId && record.photoFileId && existingPhotoId !== record.photoFileId) {
+    try { apdPhotoFile_(existingPhotoId).setTrashed(true); } catch (_) {}
+  }
 
   const updatedRow = sh.getRange(rowNumber, 1, 1, APP.APD_HEADERS.length).getValues()[0];
   return {
@@ -792,8 +897,12 @@ function deleteApdEntry_(user, id) {
   const rowNumber = findApdRowById_(sh, id);
   const createdBy = String(sh.getRange(rowNumber, 13).getValue() || '');
   requireManage_(user, 'apd', createdBy === user.username ? 'own' : 'others');
+  const photoFileId = String(sh.getRange(rowNumber, 16).getValue() || '');
   const tanggal = formatDateCell_(sh.getRange(rowNumber, 1).getValue());
   sh.deleteRow(rowNumber);
+  if (photoFileId) {
+    try { apdPhotoFile_(photoFileId).setTrashed(true); } catch (_) {}
+  }
   return {
     deletedId: String(id),
     apdEntries: getApdEntries_()
@@ -1103,9 +1212,11 @@ function deleteEntry_(user, id) {
   const isOwn = existing.createdBy === user.username;
   requireManage_(user, existing.tab, isOwn ? 'own' : 'others');
 
-  // Simulasikan kondisi setelah baris dihapus. Filling tidak boleh dihapus
-  // bila menyebabkan Qty Press historis menjadi lebih besar daripada Filling.
-  assertProjectedBalance_([existing], existing.id);
+  // Menghapus Press selalu mengembalikan saldo. Hanya penghapusan Filling yang
+  // dapat mengurangi persediaan dan perlu divalidasi terhadap Press historis.
+  if (existing.tab === 'filling') {
+    assertProjectedBalance_([existing], existing.id);
+  }
 
   entrySheet_().deleteRow(found.row);
   rebuildPressRemainders_();
@@ -1432,6 +1543,8 @@ function buildPressAllocationModel_(entries, adjustments) {
       id: String(entry.id),
       tanggal: String(entry.tanggal || ''),
       produk: String(entry.produk || '').trim(),
+      botol: String(entry.botol || '').trim(),
+      qtyBotolPerKardus: number_(entry.qtyBotolPerKardus),
       qty: number_(entry.totalQty),
       createdAt: String(entry.createdAt || '')
     });
@@ -1465,10 +1578,9 @@ function buildPressAllocationModel_(entries, adjustments) {
       // Press tanggal 20 tidak boleh memakai Filling tanggal 21.
       if (lot.tanggalAsal && event.tanggal && lot.tanggalAsal > event.tanggal) continue;
       if (lot.remaining <= 0) continue;
-      // Hapus/Tutup Sisa harus hanya mengurangi kombinasi Produk + Botol yang dipilih.
-      // Proses Press biasa tetap mempertahankan logika lama: alokasi FIFO berdasarkan Nama Produk.
-      if (event.type === 'closed' && balanceKey_(lot.produk, lot.botol) !== balanceKey_(event.produk, event.botol)) continue;
-      if (event.type === 'closed' && event.qtyBotolPerKardus > 0 && lot.qtyBotolPerKardus !== event.qtyBotolPerKardus) continue;
+      // Setiap Press dan penutupan sisa hanya memakai kombinasi pada baris asal.
+      if (balanceKey_(lot.produk, lot.botol) !== balanceKey_(event.produk, event.botol)) continue;
+      if (event.qtyBotolPerKardus > 0 && lot.qtyBotolPerKardus !== event.qtyBotolPerKardus) continue;
 
       const used = Math.min(needed, lot.remaining);
       lot.remaining -= used;
@@ -1669,9 +1781,9 @@ function assertProjectedBalance_(candidates, existingId) {
     : model.overflow[0];
 
   throw new Error(
-    'Qty Press melebihi Qty Filling yang tersedia untuk produk ' + overflow.produk +
+    'Qty Press melebihi Qty Filling yang tersedia untuk ' + overflow.produk + ' / ' + overflow.botol +
     ' pada tanggal ' + overflow.tanggal + '. Kekurangan ' +
-    number_(overflow.kurang) + ' botol. Balance dihitung berdasarkan Nama Produk dan FIFO tanggal Filling.'
+    number_(overflow.kurang) + ' botol. Saldo dihitung berdasarkan Produk, Botol, Qty Botol per Kardus, dan FIFO tanggal Filling.'
   );
 }
 
@@ -2442,9 +2554,9 @@ function ensureApdSheet_(ss) {
   styleHeader_(sh, APP.APD_HEADERS.length);
   sh.setFrozenRows(1);
 
-  // Kolom L:O adalah metadata teknis agar data APD memiliki ID stabil.
+  // Kolom L:P adalah metadata teknis, termasuk ID foto bukti.
   // Kolom ini disembunyikan sehingga tampilan Sheet APD lama (A:K) tidak berubah.
-  try { sh.hideColumns(12, 4); } catch (_) {}
+  try { sh.hideColumns(12, 5); } catch (_) {}
 
   // Migrasi data APD lama: beri ID stabil tanpa mengubah isi A:K.
   const lastRow = sh.getLastRow();
