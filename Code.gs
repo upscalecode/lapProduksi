@@ -1071,12 +1071,14 @@ function createEntriesBatch_(user, dataList) {
   const adjustments = getPressAdjustments_();
   const model = buildPressAllocationModel_(projectedEntries, adjustments);
 
-  if (model.overflow.length) {
+  const blockingOverflow = newOrWorsenedPressOverflow_(model, currentEntries, adjustments,
+    newEntries.filter(function (entry) { return entry.tab === 'press'; }).map(function (entry) { return String(entry.id); }));
+  if (blockingOverflow.length) {
     const newIdMap = {};
     newEntries.forEach(function (entry) { newIdMap[String(entry.id)] = true; });
-    const overflow = model.overflow.find(function (item) {
+    const overflow = blockingOverflow.find(function (item) {
       return newIdMap[String(item.id)];
-    }) || model.overflow[0];
+    }) || blockingOverflow[0];
 
     throw new Error(
       'Qty Press melebihi Qty Filling yang tersedia untuk produk ' + overflow.produk +
@@ -1793,8 +1795,24 @@ function getPressRemainders_(entriesInput, adjustmentsInput) {
  * existingId dilewati dari data sheet, lalu candidate terakhir (jika berbeda)
  * diproyeksikan sebagai nilai baru.
  */
+function newOrWorsenedPressOverflow_(model, currentEntries, adjustments, strictPressIds) {
+  if (!model.overflow.length) return [];
+  const baseline = buildPressAllocationModel_(currentEntries, adjustments);
+  const previous = {};
+  baseline.overflow.forEach(function (item) {
+    previous[item.type + '|' + item.id] = number_(item.kurang);
+  });
+  // Saldo historis yang sudah kurang tidak boleh menghalangi Filling baru.
+  // Kekurangan baru/bertambah tetap ditolak, begitu pula Press yang sedang disimpan.
+  return model.overflow.filter(function (item) {
+    return (item.type === 'press' && (strictPressIds || []).indexOf(String(item.id)) >= 0) ||
+      number_(item.kurang) > (previous[item.type + '|' + item.id] || 0);
+  });
+}
+
 function assertProjectedBalance_(candidates, existingId) {
-  let entries = getEntries_().filter(function (entry) {
+  const currentEntries = getEntries_();
+  let entries = currentEntries.filter(function (entry) {
     return !existingId || String(entry.id) !== String(existingId);
   });
 
@@ -1807,12 +1825,15 @@ function assertProjectedBalance_(candidates, existingId) {
     entries.push(projected);
   }
 
-  const model = buildPressAllocationModel_(entries, getPressAdjustments_());
-  if (!model.overflow.length) return;
+  const adjustments = getPressAdjustments_();
+  const model = buildPressAllocationModel_(entries, adjustments);
+  const blockingOverflow = newOrWorsenedPressOverflow_(model, currentEntries, adjustments,
+    projected && projected.tab === 'press' ? [String(projected.id)] : []);
+  if (!blockingOverflow.length) return;
 
   const overflow = projected && projected.tab === 'press'
-    ? model.overflow.find(function (item) { return String(item.id) === String(projected.id); }) || model.overflow[0]
-    : model.overflow[0];
+    ? blockingOverflow.find(function (item) { return String(item.id) === String(projected.id); }) || blockingOverflow[0]
+    : blockingOverflow[0];
 
   throw new Error(
     'Qty Press melebihi Qty Filling yang tersedia untuk ' + overflow.produk + ' / ' + overflow.botol +

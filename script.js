@@ -42,7 +42,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbw4JvxePJMRFqRuUJ9hPoFfLz_ts3gE0RZMt7B2P7ht1ycgq_vw0ni4aX4ovrqhGeDUQA/exec",
+      "https://script.google.com/macros/s/AKfycbw6iJ52TdPNHR-PgXyM1FsHqBqXAD3PJ8doxRCykl2H_WPuHsTZdYWHqteStm9vDSKY1A/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
