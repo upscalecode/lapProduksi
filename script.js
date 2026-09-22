@@ -42,7 +42,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbyhJoMeIYFSUHKgvCpzrXrED3tEnrkG78mMsgBvAMj9Fc05ZhtUVzztMUJ_mrXrlPalTw/exec",
+      "https://script.google.com/macros/s/AKfycbyk3oyUJpJ5eEGSs6Lvq1xp58r9lsfROdJc2lWPC_66XgcO2kSVIr6BxX2p3HcTV5MQqw/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -631,7 +631,10 @@
       setConnection("online", "Aktif");
       return data;
     } catch (err) {
-      setConnection(err?.isApiError ? "online" : "error", err?.isApiError ? "Aktif" : "Koneksi gagal");
+      setConnection(
+        err?.isApiError ? "online" : "error",
+        err?.isApiError ? "Aktif" : "Koneksi gagal",
+      );
       throw normalizeApiError(err);
     }
   }
@@ -669,7 +672,10 @@
       setConnection("online", "Aktif");
       return data;
     } catch (err) {
-      setConnection(err?.isApiError ? "online" : "error", err?.isApiError ? "Aktif" : "Koneksi gagal");
+      setConnection(
+        err?.isApiError ? "online" : "error",
+        err?.isApiError ? "Aktif" : "Koneksi gagal",
+      );
       throw normalizeApiError(err);
     }
   }
@@ -2941,7 +2947,13 @@
       weight: 10,
     },
     { key: "memakaiAksesoris", label: "Memakai aksesoris", weight: 20 },
+    { key: "kebersihanSepatu", label: "Kebersihan sepatu", weight: 10 },
   ]);
+  const APD_MAX_POINTS = APD_VARIABLES.length * 5;
+  const APD_TOTAL_WEIGHT = APD_VARIABLES.reduce(
+    (total, item) => total + item.weight,
+    0,
+  );
 
   const APD_REASON_MAX_WORDS = 300;
 
@@ -2958,7 +2970,10 @@
       totalPoints += point;
       percentage += point * (variable.weight / 5);
     });
-    return { totalPoints, percentage: Math.round(percentage * 100) / 100 };
+    return {
+      totalPoints,
+      percentage: Math.round((percentage / APD_TOTAL_WEIGHT) * 10000) / 100,
+    };
   }
 
   async function compressApdPhoto(file) {
@@ -3007,16 +3022,12 @@
     }
   }
 
-  async function viewApdPhoto(item, source) {
-    const response = await apiGet(
-      source === "saved" ? "apd.photo.get" : "apd.photo.preview",
-      source === "saved" ? { id: item.id } : { photoFileId: item.photoFileId },
-    );
+  function showApdPhotoPopup(dataUrl) {
     const overlay = document.createElement("div");
     overlay.className = "apd-photo-overlay";
     overlay.innerHTML =
-      '<div class="apd-photo-dialog" role="dialog" aria-modal="true" aria-label="Foto bukti APD"><button type="button" class="btn btn-ghost apd-photo-close">Tutup</button><img alt="Foto bukti APD" /></div>';
-    qs("img", overlay).src = response.dataUrl;
+      '<div class="apd-photo-dialog" role="dialog" aria-modal="true" aria-label="Foto bukti APD"><button type="button" class="btn btn-ghost apd-photo-close">x</button><img alt="Foto bukti APD" /></div>';
+    qs("img", overlay).src = dataUrl;
     const close = () => overlay.remove();
     qs(".apd-photo-close", overlay).addEventListener("click", close);
     overlay.addEventListener("click", (event) => {
@@ -3027,6 +3038,14 @@
     });
     document.body.appendChild(overlay);
     qs(".apd-photo-close", overlay).focus();
+  }
+
+  async function viewApdPhoto(item, source) {
+    const response = await apiGet(
+      source === "saved" ? "apd.photo.get" : "apd.photo.preview",
+      source === "saved" ? { id: item.id } : { photoFileId: item.photoFileId },
+    );
+    showApdPhotoPopup(response.dataUrl);
   }
 
   function apdRecordHtml(item, source, activeEditingId, activeEditingSource) {
@@ -3052,7 +3071,8 @@
         <div class="apd-record-cell apd-record-score">${Number(item.scores?.rambutKelihatan) || 0}</div>
         <div class="apd-record-cell apd-record-score">${Number(item.scores?.resletingTidakPenuh) || 0}</div>
         <div class="apd-record-cell apd-record-score">${Number(item.scores?.memakaiAksesoris) || 0}</div>
-        <div class="apd-record-cell apd-record-result"><strong>${Number(item.totalPoints) || 0} / 30</strong></div>
+        <div class="apd-record-cell apd-record-score">${Number(item.scores?.kebersihanSepatu) || 0}</div>
+        <div class="apd-record-cell apd-record-result"><strong>${Number(item.totalPoints) || 0} / ${APD_MAX_POINTS}</strong></div>
         <div class="apd-record-cell"><span class="apd-percent-badge">${dashboardPercent(item.percentage)}</span></div>
         <div class="apd-record-cell apd-record-reason"><span>${esc(item.alasan || "—")}</span>${item.photoFileId ? `<button type="button" class="btn btn-ghost apd-photo-view" data-id="${esc(item.id)}">Lihat Bukti</button>` : ""}</div>
         <div class="apd-record-cell apd-record-actions" ${canChange ? "" : "hidden"}>
@@ -3123,15 +3143,35 @@
     const activeEditingSource = editingNode?.dataset.source || "";
     if (!container) return;
 
-    const today = todayStr();
+    const date = el("apdHistoryDate")?.value ?? todayStr();
+    const name = (el("apdHistoryName")?.value || "")
+      .trim()
+      .toLocaleLowerCase("id-ID");
+    const period = !date
+      ? "Semua Tanggal"
+      : date === todayStr()
+        ? "Hari Ini"
+        : date;
+    const title = el("apdSavedTitle");
+    if (title) title.textContent = `Riwayat Penilaian APD — ${period}`;
     const allRows = (state.apdEntries || [])
-      .filter((item) => item && item.tanggal === today)
+      .filter(
+        (item) =>
+          item &&
+          (!date || item.tanggal === date) &&
+          (!name ||
+            String(item.operator || "")
+              .toLocaleLowerCase("id-ID")
+              .includes(name)),
+      )
       .slice()
       .sort(
         (a, b) =>
+          String(b.tanggal || "").localeCompare(String(a.tanggal || "")) ||
           String(b.updatedAt || b.createdAt || "").localeCompare(
             String(a.updatedAt || a.createdAt || ""),
-          ) || (Number(b.rowNumber) || 0) - (Number(a.rowNumber) || 0),
+          ) ||
+          (Number(b.rowNumber) || 0) - (Number(a.rowNumber) || 0),
       );
 
     const totalPages = Math.max(
@@ -3152,7 +3192,7 @@
             apdRecordHtml(item, "saved", activeEditingId, activeEditingSource),
           )
           .join("")
-      : '<div class="apd-saved-empty">Belum ada data APD yang tersimpan pada hari ini.</div>';
+      : '<div class="apd-saved-empty">Tidak ada riwayat APD yang sesuai dengan filter.</div>';
 
     const from = allRows.length ? start + 1 : 0;
     const to = Math.min(start + CONFIG.PAGE_SIZE, allRows.length);
@@ -3162,8 +3202,8 @@
       : 0;
     if (summary) {
       summary.textContent = allRows.length
-        ? `${from}–${to} dari ${allRows.length} data tersimpan hari ini · Rata-rata APD ${dashboardPercent(avg)}`
-        : `Belum ada data tersimpan untuk ${today}.`;
+        ? `${from}–${to} dari ${allRows.length} data sesuai filter · Rata-rata APD ${dashboardPercent(avg)}`
+        : "Tidak ada data sesuai filter nama dan tanggal.";
     }
 
     renderPagination(pagination, page, totalPages, (nextPage) => {
@@ -3191,14 +3231,32 @@
     const saveBtn = el("apdSaveBtn");
     const previewBody = el("apdPreviewBody");
     const savedBody = el("apdSavedBody");
+    const historyName = el("apdHistoryName");
+    const historyDate = el("apdHistoryDate");
+    if (historyDate) historyDate.value = todayStr();
+    const refreshHistory = () => {
+      state.pages.apdSaved = 1;
+      renderApdSavedToday();
+    };
+    historyName?.addEventListener("input", refreshHistory);
+    historyDate?.addEventListener("change", refreshHistory);
+    el("apdHistoryReset")?.addEventListener("click", () => {
+      if (historyName) historyName.value = "";
+      if (historyDate) historyDate.value = todayStr();
+      refreshHistory();
+    });
     const scoreInputs = qsa(".apd-score", form);
     const photoField = el("apdPhotoField");
     const photoInput = el("apdPhotoInput");
     const photoCameraInput = el("apdPhotoCameraInput");
+    const photoChooseBtn = el("apdPhotoChooseBtn");
+    const photoOptions = el("apdPhotoOptions");
     const photoPreview = el("apdPhotoPreview");
+    const photoPreviewBox = el("apdPhotoPreviewBox");
     const photoInfo = el("apdPhotoInfo");
     let pendingPhotoDataUrl = "";
     let currentPhotoFileId = "";
+    let photoChangeToken = 0;
 
     if (tanggal) tanggal.value = todayStr();
 
@@ -3213,13 +3271,10 @@
     function refreshCalculation() {
       const scores = scoresFromForm();
       const result = calculateApd(scores);
-      if (totalPoints) totalPoints.value = `${result.totalPoints} / 30`;
+      if (totalPoints)
+        totalPoints.value = `${result.totalPoints} / ${APD_MAX_POINTS}`;
       if (percentage) percentage.value = dashboardPercent(result.percentage);
-      if (photoField)
-        photoField.hidden =
-          result.percentage >= 100 &&
-          !currentPhotoFileId &&
-          !pendingPhotoDataUrl;
+      if (photoField) photoField.hidden = false;
       return result;
     }
 
@@ -3240,8 +3295,10 @@
 
     function resetForm() {
       form.reset();
+      photoChangeToken += 1;
       pendingPhotoDataUrl = "";
       currentPhotoFileId = "";
+      if (photoPreviewBox) photoPreviewBox.hidden = true;
       if (photoPreview) {
         photoPreview.src = "";
         photoPreview.hidden = true;
@@ -3252,7 +3309,7 @@
         editingId.value = "";
         delete editingId.dataset.source;
       }
-      if (totalPoints) totalPoints.value = "0 / 30";
+      if (totalPoints) totalPoints.value = `0 / ${APD_MAX_POINTS}`;
       if (percentage) percentage.value = "0%";
       if (addBtn) {
         addBtn.innerHTML =
@@ -3283,6 +3340,7 @@
       });
       if (reason) reason.value = item.alasan || "";
       pendingPhotoDataUrl = "";
+      photoChangeToken += 1;
       currentPhotoFileId = item.photoFileId || "";
       if (photoInput) photoInput.value = "";
       if (photoCameraInput) photoCameraInput.value = "";
@@ -3290,6 +3348,7 @@
         photoPreview.src = "";
         photoPreview.hidden = true;
       }
+      if (photoPreviewBox) photoPreviewBox.hidden = true;
       if (photoInfo)
         photoInfo.textContent = currentPhotoFileId
           ? "Foto bukti tersimpan. Pilih gambar baru untuk mengganti."
@@ -3312,34 +3371,88 @@
     reason?.addEventListener("input", refreshReasonCounter);
     async function handleApdPhotoChange(input) {
       const file = input.files?.[0];
-      pendingPhotoDataUrl = "";
       if (!file) return;
+      const changeToken = ++photoChangeToken;
       if (photoInfo) photoInfo.textContent = "Mengompres foto...";
       try {
         const compressed = await compressApdPhoto(file);
+        if (changeToken !== photoChangeToken) return;
         pendingPhotoDataUrl = compressed.dataUrl;
         if (photoPreview) {
           photoPreview.src = compressed.dataUrl;
           photoPreview.hidden = false;
         }
-        if (photoInfo)
-          photoInfo.textContent = `Hasil kompresi: ${Math.round(compressed.bytes / 1024)} KB · ${compressed.width} × ${compressed.height} piksel`;
+        if (photoPreviewBox) photoPreviewBox.hidden = false;
+        if (photoInfo) photoInfo.textContent = "";
         refreshCalculation();
       } catch (err) {
+        if (changeToken !== photoChangeToken) return;
+        pendingPhotoDataUrl = "";
         input.value = "";
         if (photoPreview) {
           photoPreview.src = "";
           photoPreview.hidden = true;
         }
+        if (photoPreviewBox) photoPreviewBox.hidden = true;
         if (photoInfo) photoInfo.textContent = err.message;
       }
     }
+    el("apdPhotoRemoveBtn")?.addEventListener("click", () => {
+      photoChangeToken += 1;
+      pendingPhotoDataUrl = "";
+      if (photoInput) photoInput.value = "";
+      if (photoCameraInput) photoCameraInput.value = "";
+      if (photoPreview) {
+        photoPreview.src = "";
+        photoPreview.hidden = true;
+      }
+      if (photoPreviewBox) photoPreviewBox.hidden = true;
+      if (photoInfo)
+        photoInfo.textContent = currentPhotoFileId
+          ? "Foto bukti tersimpan. Pilih gambar baru untuk mengganti."
+          : "";
+      refreshCalculation();
+      photoChooseBtn?.focus();
+    });
+    photoPreview?.addEventListener("click", () => {
+      if (pendingPhotoDataUrl) showApdPhotoPopup(pendingPhotoDataUrl);
+    });
+    photoPreview?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      if (pendingPhotoDataUrl) showApdPhotoPopup(pendingPhotoDataUrl);
+    });
     photoInput?.addEventListener("change", () =>
       handleApdPhotoChange(photoInput),
     );
     photoCameraInput?.addEventListener("change", () =>
       handleApdPhotoChange(photoCameraInput),
     );
+    function closePhotoOptions() {
+      if (photoOptions) photoOptions.hidden = true;
+      photoChooseBtn?.setAttribute("aria-expanded", "false");
+    }
+    photoChooseBtn?.addEventListener("click", () => {
+      if (!photoOptions) return;
+      photoOptions.hidden = !photoOptions.hidden;
+      photoChooseBtn.setAttribute(
+        "aria-expanded",
+        String(!photoOptions.hidden),
+      );
+    });
+    el("apdPhotoCameraBtn")?.addEventListener("click", () => {
+      closePhotoOptions();
+      if (photoCameraInput) photoCameraInput.value = "";
+      photoCameraInput?.click();
+    });
+    el("apdPhotoStorageBtn")?.addEventListener("click", () => {
+      closePhotoOptions();
+      if (photoInput) photoInput.value = "";
+      photoInput?.click();
+    });
+    document.addEventListener("click", (event) => {
+      if (!event.target.closest(".apd-photo-picker")) closePhotoOptions();
+    });
     cancelBtn?.addEventListener("click", () => {
       resetForm();
       renderApdPreview();
@@ -3411,7 +3524,7 @@
             "Foto bukti wajib untuk nilai APD kurang dari 100%.";
           errorEl.hidden = false;
         }
-        photoInput?.focus();
+        photoChooseBtn?.focus();
         return;
       }
       const id = editingId?.value || "";
@@ -3474,7 +3587,13 @@
             photoInfo.textContent = "Foto bukti berhasil diunggah.";
         } catch (err) {
           if (errorEl) {
-            errorEl.textContent = `Gagal mengunggah foto: ${err.message}`;
+            const missingDriveAccess =
+              /DriveApp|googleapis\.com\/auth\/drive|izin.*Drive/i.test(
+                String(err.message || ""),
+              );
+            errorEl.textContent = missingDriveAccess
+              ? "Gagal mengunggah foto: izin Google Drive pada Apps Script belum diberikan. Minta pemilik deployment menjalankan authorizeApdPhotoStorage() dari editor Apps Script, lalu menerapkan versi baru."
+              : `Gagal mengunggah foto: ${err.message}`;
             errorEl.hidden = false;
           }
           if (addBtn) addBtn.disabled = false;
@@ -3683,7 +3802,7 @@
         const payload = rows.map((item) => ({
           tanggal: item.tanggal,
           operator: item.operator,
-          scores: item.scores,
+          scores: { kebersihanSepatu: 0, ...item.scores },
           alasan: item.alasan || "",
           photoFileId: item.photoFileId || "",
           clientRequestId: item.id,

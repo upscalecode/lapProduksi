@@ -15,6 +15,9 @@ LANGKAH PEMASANGAN
 2. Buka Extensions > Apps Script.
 3. Hapus isi Code.gs lama lalu tempel isi Code.gs dari paket ini.
 4. Jalankan fungsi setupSpreadsheet() SATU KALI dan izinkan akses.
+   Untuk fitur foto APD, jalankan juga authorizeApdPhotoStorage() dari editor
+   Apps Script dengan akun pemilik deployment. Setujui izin Google Drive yang
+   diminta. Fungsi ini membuat folder bukti APD jika belum ada.
 5. Apps Script akan membuat/menyiapkan sheet:
    - Master      : Kolom A Operator, B Produk, C Botol
    - Users       : akun login
@@ -56,3 +59,29 @@ UPDATE — OPTIMISTIC / INSTANT SAVE
 - Laporan dan export hanya memakai data yang sudah dikonfirmasi tersimpan di Spreadsheet.
 
 PENTING: karena Code.gs berubah, buat New version pada deployment Web App setelah mengganti Code.gs.
+
+JIKA UNGGAH FOTO APD GAGAL KARENA IZIN DRIVE
+- Pastikan pemilik deployment membuka project Apps Script yang sama dan menjalankan
+  authorizeApdPhotoStorage() dari editor, lalu menyetujui seluruh izin Drive.
+- Jika appsscript.json memakai oauthScopes eksplisit, tambahkan
+  https://www.googleapis.com/auth/drive dan simpan project sebelum otorisasi.
+- Deploy > Manage deployments > Edit > Version: New version > Deploy.
+  Pastikan Execute as tetap Me. Lalu coba unggah foto lagi.
+
+PERUBAHAN URUTAN KOLOM APD
+- Hentikan input APD sementara selama migrasi dan pembaruan deployment.
+- Setelah menempel Code.gs terbaru, jalankan migrateApdColumnOrder() sekali
+  dari editor Apps Script, lalu segera terapkan versi deployment baru.
+- Fungsi ini memindahkan nilai Kebersihan Sepatu dari kolom Q ke kolom I,
+  tepat setelah Memakai aksesoris. Kolom metadata bergeser ke M:Q.
+
+OPTIMASI PENYIMPANAN APD
+- Header yang sudah sesuai tidak diformat ulang dan data lama tidak dipindai
+  untuk migrasi pada setiap request. Pemeriksaan struktur digunakan kembali
+  selama request yang sama; data penilaian tidak dicache lintas request.
+- Simpan batch membaca data sekali, menulis batch sekali, lalu mengonfirmasi
+  penulisan dengan flush sebelum mengirim respons. Riwayat respons disusun dari
+  data yang sudah dibaca dan ditulis, tanpa membaca seluruh Sheet kembali.
+- setupSpreadsheet() dan migrateApdColumnOrder() tetap menjalankan pemeriksaan
+  serta perbaikan struktur secara lengkap bila dipanggil dari editor.
+- Terapkan Code.gs sebagai New version pada deployment aktif untuk mengaktifkan optimasi.

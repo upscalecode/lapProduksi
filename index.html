@@ -14,7 +14,7 @@
       src="https://kit.fontawesome.com/59dfa0db6c.js"
       crossorigin="anonymous"
     ></script>
-    <link rel="stylesheet" href="style.css?v=20260922-v23-apd-photo" />
+    <link rel="stylesheet" href="style.css?v=20260922-v31-apd-history-filter" />
 
     <style></style>
   </head>
@@ -894,7 +894,7 @@
                         type="text"
                         id="apdTotalPoints"
                         readonly
-                        value="0 / 30"
+                        value="0 / 35"
                         aria-label="Total Poin"
                       />
                     </label>
@@ -1020,28 +1020,101 @@
                         <option value="5">5</option>
                       </select>
                     </label>
+                    <label
+                      class="apd-unified-cell apd-score-cell apd-shoe-score"
+                    >
+                      <span class="apd-input-label">Kebersihan Sepatu</span>
+                      <select
+                        class="apd-score"
+                        data-apd-key="kebersihanSepatu"
+                        required
+                      >
+                        <option value="" disabled selected>0–5</option>
+                        <option value="0">0</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4">4</option>
+                        <option value="5">5</option>
+                      </select>
+                    </label>
+                    <label class="apd-unified-cell apd-reason-cell-input">
+                      <span class="apd-input-label">Keterangan</span>
+                      <textarea
+                        id="apdReason"
+                        placeholder="Isi alasan atau keterangan..."
+                      ></textarea>
+                      <span id="apdReasonWordCount" class="apd-word-count"
+                        >0 / 300 kata</span
+                      >
+                    </label>
+                    <div class="apd-photo-field" id="apdPhotoField" hidden>
+                      <span class="apd-photo-label">Unggah Foto <b>*</b></span>
+                      <div class="apd-photo-picker">
+                        <button
+                          type="button"
+                          class="btn btn-secondary"
+                          id="apdPhotoChooseBtn"
+                          aria-expanded="false"
+                          aria-controls="apdPhotoOptions"
+                        >
+                          Ambil/Unggah Foto
+                        </button>
+                        <div
+                          id="apdPhotoOptions"
+                          class="apd-photo-options"
+                          hidden
+                        >
+                          <button type="button" id="apdPhotoCameraBtn">
+                            Ambil foto
+                          </button>
+                          <button type="button" id="apdPhotoStorageBtn">
+                            Pilih dari penyimpanan
+                          </button>
+                        </div>
+                        <input
+                          id="apdPhotoInput"
+                          class="apd-file-input"
+                          type="file"
+                          accept="image/*"
+                          aria-label="Pilih foto dari penyimpanan"
+                          tabindex="-1"
+                        />
+                        <input
+                          id="apdPhotoCameraInput"
+                          class="apd-file-input"
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          aria-label="Ambil foto dengan kamera"
+                          tabindex="-1"
+                        />
+                      </div>
+                      <div
+                        id="apdPhotoPreviewBox"
+                        class="apd-photo-preview-box"
+                        hidden
+                      >
+                        <img
+                          id="apdPhotoPreview"
+                          alt="Buka pratinjau foto bukti APD"
+                          role="button"
+                          tabindex="0"
+                        />
+                        <button
+                          type="button"
+                          id="apdPhotoRemoveBtn"
+                          class="apd-photo-remove"
+                          aria-label="Hapus foto yang dipilih"
+                          title="Hapus foto"
+                        >
+                          <i class="fa-solid fa-trash" aria-hidden="true"></i>
+                        </button>
+                      </div>
+                      <span id="apdPhotoInfo" class="hint-text"></span>
+                    </div>
                   </div>
                 </fieldset>
-                <label class="apd-unified-cell apd-reason-cell-input">
-                  <span class="apd-input-label">Keterangan</span>
-                  <textarea
-                    id="apdReason"
-                    placeholder="Isi alasan atau keterangan..."
-                  ></textarea>
-                  <span id="apdReasonWordCount" class="apd-word-count"
-                    >0 / 300 kata</span
-                  >
-                </label>
-                <div class="apd-photo-field" id="apdPhotoField" hidden>
-                  <label for="apdPhotoInput">Foto bukti APD <b>*</b></label>
-                  <span class="hint-text">Pilih dari penyimpanan:</span>
-                  <input id="apdPhotoInput" type="file" accept="image/*" />
-                  <span class="hint-text">Atau ambil foto langsung:</span>
-                  <input id="apdPhotoCameraInput" type="file" accept="image/*" capture="environment" aria-label="Ambil foto dengan kamera" />
-                  <p class="hint-text">Ambil foto atau pilih gambar. Foto akan diperkecil sebelum diunggah.</p>
-                  <img id="apdPhotoPreview" alt="Pratinjau foto bukti APD" hidden />
-                  <span id="apdPhotoInfo" class="hint-text"></span>
-                </div>
                 <div class="apd-inline-actions">
                   <button type="submit" class="btn btn-primary" id="apdAddBtn">
                     <i class="fa-solid fa-plus" aria-hidden="true"></i> Simpan
@@ -1068,35 +1141,39 @@
                   </div>
                   <div class="apd-head-cell">
                     <strong>Masker tidak sesuai</strong>
-                    <small>Bobot 25% · 5% / poin</small>
+                    <small>Bobot 25 dari 110</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>Lengan ditarik ke atas</strong>
-                    <small>Bobot 20% · 4% / poin</small>
+                    <small>Bobot 20 dari 110</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>Sepatu diinjak</strong>
-                    <small>Bobot 10% · 2% / poin</small>
+                    <small>Bobot 10 dari 110</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>Rambut kelihatan</strong>
-                    <small>Bobot 15% · 3% / poin</small>
+                    <small>Bobot 15 dari 110</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>APD tidak diresleting penuh</strong>
-                    <small>Bobot 10% · 2% / poin</small>
+                    <small>Bobot 10 dari 110</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>Memakai aksesoris</strong>
-                    <small>Bobot 20% · 4% / poin</small>
+                    <small>Bobot 20 dari 110</small>
+                  </div>
+                  <div class="apd-head-cell">
+                    <strong>Kebersihan Sepatu</strong
+                    ><small>Bobot 10 dari 110</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>Total Poin</strong>
-                    <small>Maksimum 30 poin</small>
+                    <small>Maksimum 35 poin</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>Total Prosentase</strong>
-                    <small>Total bobot 100%</small>
+                    <small>Bobot dinormalisasi ke 100%</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>Alasan / Keterangan</strong>
@@ -1127,13 +1204,25 @@
             <section class="panel apd-saved-panel" id="apdSavedSection">
               <div class="panel-head apd-saved-head">
                 <div>
-                  <p class="eyebrow">Data Tersimpan Hari Ini</p>
-                  <h2>Riwayat Penilaian APD — Hari Ini</h2>
+                  <p class="eyebrow">Data Tersimpan</p>
+                  <h2 id="apdSavedTitle">Riwayat Penilaian APD — Hari Ini</h2>
                   <p class="hint-text apd-saved-hint">
-                    Menampilkan data yang sudah berhasil tersimpan di Sheet APD
-                    pada tanggal hari ini.
+                    Cari riwayat berdasarkan nama operator dan tanggal penilaian.
                   </p>
                 </div>
+              </div>
+
+              <div class="apd-history-filters" role="group" aria-label="Filter riwayat penilaian APD">
+                <label class="field">
+                  <span>Nama Operator</span>
+                  <input type="search" id="apdHistoryName" placeholder="Cari nama operator..." />
+                </label>
+                <label class="field">
+                  <span>Tanggal Penilaian</span>
+                  <input type="date" id="apdHistoryDate" aria-describedby="apdHistoryDateHint" />
+                </label>
+                <button type="button" id="apdHistoryReset" class="btn btn-ghost">Reset filter</button>
+                <p id="apdHistoryDateHint" class="hint-text">Kosongkan tanggal untuk melihat semua riwayat.</p>
               </div>
 
               <div class="apd-saved-scroll">
@@ -1145,31 +1234,39 @@
                     <strong>Nama Operator</strong><small>Data tersimpan</small>
                   </div>
                   <div class="apd-head-cell">
-                    <strong>Masker tidak sesuai</strong><small>Bobot 25%</small>
+                    <strong>Masker tidak sesuai</strong
+                    ><small>Bobot 25 dari 110</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>Lengan ditarik ke atas</strong
-                    ><small>Bobot 20%</small>
+                    ><small>Bobot 20 dari 110</small>
                   </div>
                   <div class="apd-head-cell">
-                    <strong>Sepatu diinjak</strong><small>Bobot 10%</small>
+                    <strong>Sepatu diinjak</strong
+                    ><small>Bobot 10 dari 110</small>
                   </div>
                   <div class="apd-head-cell">
-                    <strong>Rambut kelihatan</strong><small>Bobot 15%</small>
+                    <strong>Rambut kelihatan</strong
+                    ><small>Bobot 15 dari 110</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>APD tidak diresleting penuh</strong
-                    ><small>Bobot 10%</small>
+                    ><small>Bobot 10 dari 110</small>
                   </div>
                   <div class="apd-head-cell">
-                    <strong>Memakai aksesoris</strong><small>Bobot 20%</small>
+                    <strong>Memakai aksesoris</strong
+                    ><small>Bobot 20 dari 110</small>
                   </div>
                   <div class="apd-head-cell">
-                    <strong>Total Poin</strong><small>Maksimum 30 poin</small>
+                    <strong>Kebersihan Sepatu</strong
+                    ><small>Bobot 10 dari 110</small>
+                  </div>
+                  <div class="apd-head-cell">
+                    <strong>Total Poin</strong><small>Maksimum 35 poin</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>Total Prosentase</strong
-                    ><small>Total bobot 100%</small>
+                    ><small>Bobot dinormalisasi ke 100%</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>Alasan / Keterangan</strong
@@ -1810,7 +1907,7 @@
                 type="button"
                 id="permissionClose"
                 class="btn btn-ghost"
-                title="Tutup"
+                title="x"
               >
                 ✕
               </button>
@@ -1991,7 +2088,7 @@
       </main>
     </div>
 
-    <script src="script.js?v=20260922-v34-api-status"></script>
+    <script src="script.js?v=20260922-v40-apd-history-filter"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>

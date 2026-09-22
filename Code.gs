@@ -43,7 +43,7 @@ const APP = {
     'Tanggal', 'Nama Operator',
     'Masker tidak sesuai', 'Lengan ditarik ke atas', 'Sepatu diinjak',
     'Rambut kelihatan', 'APD tidak diresleting penuh', 'Memakai aksesoris',
-    'Total Poin', 'Nilai Prosentase APD', 'Alasan',
+    'Kebersihan Sepatu', 'Total Poin', 'Nilai Prosentase APD', 'Alasan',
     'apdId', 'createdBy', 'createdAt', 'updatedAt', 'photoFileId'
   ]
 };
@@ -60,7 +60,7 @@ function setupSpreadsheet() {
   ensureEntrySheetSchema_(ss);
   ensureSheet_(ss, APP.SHEETS.PRESS_ADJUSTMENTS, APP.PRESS_ADJUSTMENT_HEADERS);
   ensureSheet_(ss, APP.SHEETS.PRESS_REMAINDERS, APP.PRESS_REMAINDER_HEADERS);
-  ensureApdSheet_(ss);
+  ensureApdSheet_(ss, true);
   ensureSettingsSheet_(ss);
 
   if (master.getLastRow() < 2) {
@@ -528,7 +528,8 @@ const APD_VARIABLES_ = [
   { key: 'sepatuDiinjak', label: 'Sepatu diinjak', weight: 10 },
   { key: 'rambutKelihatan', label: 'Rambut kelihatan', weight: 15 },
   { key: 'resletingTidakPenuh', label: 'Tidak diresleting secara penuh', weight: 10 },
-  { key: 'memakaiAksesoris', label: 'Memakai aksesoris', weight: 20 }
+  { key: 'memakaiAksesoris', label: 'Memakai aksesoris', weight: 20 },
+  { key: 'kebersihanSepatu', label: 'Kebersihan sepatu', weight: 10 }
 ];
 
 function apdPhotoFolder_() {
@@ -540,6 +541,12 @@ function apdPhotoFolder_() {
   const folder = DriveApp.createFolder('Laporan Produksi - Bukti APD');
   properties.setProperty('APD_PHOTO_FOLDER_ID', folder.getId());
   return folder;
+}
+
+// Jalankan sekali dari editor Apps Script sebagai pemilik deployment untuk
+// meminta izin Drive dan menyiapkan folder foto APD sebelum web app digunakan.
+function authorizeApdPhotoStorage() {
+  return 'Penyimpanan foto APD siap: ' + apdPhotoFolder_().getName();
 }
 
 function apdPhotoFile_(id) {
@@ -569,7 +576,7 @@ function uploadApdPhoto_(user, dataUrl) {
 function getApdPhotoData_(apdId) {
   const sh = ensureApdSheet_(spreadsheet_());
   const row = findApdRowById_(sh, apdId);
-  const id = String(sh.getRange(row, 16).getValue() || '');
+  const id = String(sh.getRange(row, 17).getValue() || '');
   if (!id) throw new Error('Data APD ini tidak memiliki foto bukti.');
   const file = apdPhotoFile_(id);
   return 'data:image/jpeg;base64,' + Utilities.base64Encode(file.getBlob().getBytes());
@@ -583,7 +590,7 @@ function discardApdPhoto_(user, photoFileId) {
   const sh = ensureApdSheet_(spreadsheet_());
   const last = sh.getLastRow();
   if (last >= 2) {
-    const ids = sh.getRange(2, 16, last - 1, 1).getDisplayValues();
+    const ids = sh.getRange(2, 17, last - 1, 1).getDisplayValues();
     if (ids.some(function (row) { return String(row[0] || '') === file.getId(); })) {
       throw new Error('Foto bukti sudah terhubung dengan data APD.');
     }
@@ -619,11 +626,14 @@ function buildApdRecord_(raw, index, user, existingPhotoId) {
 
   let totalPoints = 0;
   let percentage = 0;
+  let totalWeight = 0;
   APD_VARIABLES_.forEach(function (variable) {
     const point = normalizeApdPoint_(scores[variable.key], variable.label, index);
     totalPoints += point;
     percentage += point * (variable.weight / 5);
+    totalWeight += variable.weight;
   });
+  percentage = percentage / totalWeight * 100;
 
   const requestId = String(data.clientRequestId || '').trim();
   const validRequestId = /^[A-Za-z0-9-]{16,100}$/.test(requestId) ? requestId : '';
@@ -648,7 +658,8 @@ function buildApdRecord_(raw, index, user, existingPhotoId) {
       sepatuDiinjak: Number(scores.sepatuDiinjak),
       rambutKelihatan: Number(scores.rambutKelihatan),
       resletingTidakPenuh: Number(scores.resletingTidakPenuh),
-      memakaiAksesoris: Number(scores.memakaiAksesoris)
+      memakaiAksesoris: Number(scores.memakaiAksesoris),
+      kebersihanSepatu: Number(scores.kebersihanSepatu)
     },
     percentage: Math.round(percentage * 100) / 100,
     totalPoints: totalPoints,
@@ -665,7 +676,7 @@ function apdEntryKey_(tanggal, operator) {
 function apdRowToObject_(row, rowNumber) {
   const values = row || [];
   return {
-    id: String(values[11] || '').trim(),
+    id: String(values[12] || '').trim(),
     rowNumber: rowNumber,
     tanggal: formatDateCell_(values[0]),
     operator: String(values[1] || '').trim(),
@@ -675,15 +686,16 @@ function apdRowToObject_(row, rowNumber) {
       sepatuDiinjak: number_(values[4]),
       rambutKelihatan: number_(values[5]),
       resletingTidakPenuh: number_(values[6]),
-      memakaiAksesoris: number_(values[7])
+      memakaiAksesoris: number_(values[7]),
+      kebersihanSepatu: number_(values[8])
     },
-    totalPoints: number_(values[8]),
-    percentage: number_(values[9]),
-    alasan: String(values[10] || ''),
-    photoFileId: String(values[15] || ''),
-    createdBy: String(values[12] || ''),
-    createdAt: isoCell_(values[13]),
-    updatedAt: isoCell_(values[14])
+    totalPoints: number_(values[9]),
+    percentage: number_(values[10]),
+    alasan: String(values[11] || ''),
+    photoFileId: String(values[16] || ''),
+    createdBy: String(values[13] || ''),
+    createdAt: isoCell_(values[14]),
+    updatedAt: isoCell_(values[15])
   };
 }
 
@@ -693,6 +705,10 @@ function getApdEntries_() {
   const lastRow = sh.getLastRow();
   if (lastRow < 2) return [];
   const rows = sh.getRange(2, 1, lastRow - 1, APP.APD_HEADERS.length).getValues();
+  return apdRowsToEntries_(rows);
+}
+
+function apdRowsToEntries_(rows) {
   return rows.map(function (row, index) {
     return apdRowToObject_(row, index + 2);
   }).sort(function (a, b) {
@@ -725,7 +741,7 @@ function findApdRowById_(sh, id) {
   if (!target) throw new Error('ID data APD tidak valid.');
   const lastRow = sh.getLastRow();
   if (lastRow < 2) throw new Error('Data APD tidak ditemukan.');
-  const ids = sh.getRange(2, 12, lastRow - 1, 1).getDisplayValues();
+  const ids = sh.getRange(2, 13, lastRow - 1, 1).getDisplayValues();
   for (let i = 0; i < ids.length; i++) {
     if (String(ids[i][0] || '').trim() === target) return i + 2;
   }
@@ -739,7 +755,7 @@ function ensureNoApdDuplicate_(sh, tanggal, operator, excludeId) {
   if (lastRow < 2) return;
   const values = sh.getRange(2, 1, lastRow - 1, APP.APD_HEADERS.length).getValues();
   for (let i = 0; i < values.length; i++) {
-    const rowId = String(values[i][11] || '').trim();
+    const rowId = String(values[i][12] || '').trim();
     if (exclude && rowId === exclude) continue;
     const rowKey = apdEntryKey_(formatDateCell_(values[i][0]), values[i][1]);
     if (rowKey === targetKey) {
@@ -788,7 +804,7 @@ function createApdEntriesBatch_(user, dataList) {
   const existingIds = {};
   const existingKeys = {};
   existingRows.forEach(function (row) {
-    const rowId = String(row[11] || '').trim();
+    const rowId = String(row[12] || '').trim();
     if (rowId) existingIds[rowId] = true;
     const key = apdEntryKey_(formatDateCell_(row[0]), row[1]);
     if (key !== '||') existingKeys[key] = rowId || true;
@@ -821,6 +837,7 @@ function createApdEntriesBatch_(user, dataList) {
       record.scores.rambutKelihatan,
       record.scores.resletingTidakPenuh,
       record.scores.memakaiAksesoris,
+      record.scores.kebersihanSepatu,
       record.totalPoints,
       record.percentage,
       record.alasan,
@@ -836,31 +853,31 @@ function createApdEntriesBatch_(user, dataList) {
   });
 
   if (rowsToWrite.length) {
-    const startRow = Math.max(sh.getLastRow() + 1, 2);
+    const startRow = Math.max(lastRow + 1, 2);
     sh.getRange(startRow, 1, rowsToWrite.length, APP.APD_HEADERS.length).setValues(rowsToWrite);
+    SpreadsheetApp.flush();
   }
 
-  const responseDate = records[0] ? records[0].tanggal : '';
   return {
     savedCount: records.length,
     newCount: rowsToWrite.length,
     duplicateIds: duplicateIds,
     savedIds: savedIds,
-    apdEntries: getApdEntries_()
+    apdEntries: apdRowsToEntries_(existingRows.concat(rowsToWrite))
   };
 }
 
 function updateApdEntry_(user, id, rawData) {
   const sh = ensureApdSheet_(spreadsheet_());
   const rowNumber = findApdRowById_(sh, id);
-  const createdBy = String(sh.getRange(rowNumber, 13).getValue() || '');
+  const createdBy = String(sh.getRange(rowNumber, 14).getValue() || '');
   requireManage_(user, 'apd', createdBy === user.username ? 'own' : 'others');
-  const existingPhotoId = String(sh.getRange(rowNumber, 16).getValue() || '');
+  const existingPhotoId = String(sh.getRange(rowNumber, 17).getValue() || '');
   const record = buildApdRecord_(rawData, 0, user, existingPhotoId);
   record.operator = canonicalMasterValue_(getMaster_().operator, record.operator, 'Operator');
   ensureNoApdDuplicate_(sh, record.tanggal, record.operator, id);
 
-  const oldMeta = sh.getRange(rowNumber, 12, 1, 4).getValues()[0];
+  const oldMeta = sh.getRange(rowNumber, 13, 1, 4).getValues()[0];
   const now = new Date().toISOString();
   sh.getRange(rowNumber, 1, 1, APP.APD_HEADERS.length).setValues([[
     record.tanggal,
@@ -871,6 +888,7 @@ function updateApdEntry_(user, id, rawData) {
     record.scores.rambutKelihatan,
     record.scores.resletingTidakPenuh,
     record.scores.memakaiAksesoris,
+    record.scores.kebersihanSepatu,
     record.totalPoints,
     record.percentage,
     record.alasan,
@@ -878,7 +896,7 @@ function updateApdEntry_(user, id, rawData) {
     String(oldMeta[1] || user.username),
     oldMeta[2] || now,
     now,
-    record.photoFileId || String(sh.getRange(rowNumber, 16).getValue() || '')
+    record.photoFileId || String(sh.getRange(rowNumber, 17).getValue() || '')
   ]]);
 
   if (existingPhotoId && record.photoFileId && existingPhotoId !== record.photoFileId) {
@@ -895,9 +913,9 @@ function updateApdEntry_(user, id, rawData) {
 function deleteApdEntry_(user, id) {
   const sh = ensureApdSheet_(spreadsheet_());
   const rowNumber = findApdRowById_(sh, id);
-  const createdBy = String(sh.getRange(rowNumber, 13).getValue() || '');
+  const createdBy = String(sh.getRange(rowNumber, 14).getValue() || '');
   requireManage_(user, 'apd', createdBy === user.username ? 'own' : 'others');
-  const photoFileId = String(sh.getRange(rowNumber, 16).getValue() || '');
+  const photoFileId = String(sh.getRange(rowNumber, 17).getValue() || '');
   const tanggal = formatDateCell_(sh.getRange(rowNumber, 1).getValue());
   sh.deleteRow(rowNumber);
   if (photoFileId) {
@@ -2525,17 +2543,27 @@ function sheet_(name) {
   return sh;
 }
 
-function ensureApdSheet_(ss) {
+// Cache hanya selama satu request; data penilaian tetap dibaca dari Sheet.
+let APD_READY_SHEET_ = null;
+
+function ensureApdSheet_(ss, forceSetup) {
+  if (APD_READY_SHEET_ && !forceSetup) return APD_READY_SHEET_;
   let sh = ss.getSheetByName(APP.SHEETS.APD);
   if (!sh) sh = ss.insertSheet(APP.SHEETS.APD);
+  if (sh.getMaxColumns() < APP.APD_HEADERS.length) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), APP.APD_HEADERS.length - sh.getMaxColumns());
+  }
+  const currentHeaders = sh.getRange(1, 1, 1, APP.APD_HEADERS.length).getDisplayValues()[0]
+    .map(function (value) { return String(value || '').trim(); });
+  if (!forceSetup && APP.APD_HEADERS.every(function (header, index) { return currentHeaders[index] === header; })) {
+    APD_READY_SHEET_ = sh;
+    return sh;
+  }
 
   // Migrasi aman dari struktur lama:
   // A Tanggal | B Nama Operator | C Nilai Prosentase APD | D Alasan
-  // menjadi struktur baru dengan 7 kolom variable/total di antara B dan persentase.
-  // Dengan insertColumnsAfter(2, 7), data lama C-D otomatis bergeser ke J-K.
-  const lastHeaderCol = Math.max(4, Math.min(sh.getLastColumn(), 11));
-  const currentHeaders = sh.getRange(1, 1, 1, lastHeaderCol).getDisplayValues()[0]
-    .map(function (value) { return String(value || '').trim(); });
+  // menjadi struktur baru dengan kolom indikator dan total di antara B dan persentase.
+  // Dengan insertColumnsAfter(2, 8), data lama C-D bergeser ke K-L.
   const oldSchema =
     currentHeaders[0] === 'Tanggal' &&
     currentHeaders[1] === 'Nama Operator' &&
@@ -2544,7 +2572,18 @@ function ensureApdSheet_(ss) {
     !currentHeaders.slice(4).some(Boolean);
 
   if (oldSchema) {
-    sh.insertColumnsAfter(2, 7);
+    sh.insertColumnsAfter(2, 8);
+  } else {
+    const scoreHeader = currentHeaders[8];
+    const lastHeader = currentHeaders[16];
+    if (scoreHeader === 'Total Poin' && lastHeader === 'Kebersihan Sepatu') {
+      // Versi sebelumnya menyimpan Kebersihan Sepatu di Q. Pindahkan kolom
+      // beserta nilainya ke I, tepat setelah Memakai aksesoris di H.
+      sh.moveColumns(sh.getRange('Q1'), 9);
+    } else if (scoreHeader === 'Total Poin') {
+      // Versi enam indikator belum memiliki kolom Kebersihan Sepatu.
+      sh.insertColumnAfter(8);
+    }
   }
 
   if (sh.getMaxColumns() < APP.APD_HEADERS.length) {
@@ -2554,15 +2593,14 @@ function ensureApdSheet_(ss) {
   styleHeader_(sh, APP.APD_HEADERS.length);
   sh.setFrozenRows(1);
 
-  // Kolom L:P adalah metadata teknis, termasuk ID foto bukti.
-  // Kolom ini disembunyikan sehingga tampilan Sheet APD lama (A:K) tidak berubah.
-  try { sh.hideColumns(12, 5); } catch (_) {}
+  // Kolom M:Q adalah metadata teknis, termasuk ID foto bukti.
+  try { sh.hideColumns(13, 5); } catch (_) {}
 
-  // Migrasi data APD lama: beri ID stabil tanpa mengubah isi A:K.
+  // Migrasi data APD lama: beri ID stabil tanpa mengubah nilai penilaian.
   const lastRow = sh.getLastRow();
   if (lastRow >= 2) {
-    const visibleRows = sh.getRange(2, 1, lastRow - 1, 11).getValues();
-    const metadata = sh.getRange(2, 12, lastRow - 1, 4).getValues();
+    const visibleRows = sh.getRange(2, 1, lastRow - 1, 12).getValues();
+    const metadata = sh.getRange(2, 13, lastRow - 1, 4).getValues();
     let metadataChanged = false;
     for (let i = 0; i < metadata.length; i++) {
       const hasVisibleData = visibleRows[i].some(function (value) { return String(value || '').trim() !== ''; });
@@ -2572,10 +2610,19 @@ function ensureApdSheet_(ss) {
         metadataChanged = true;
       }
     }
-    if (metadataChanged) sh.getRange(2, 12, metadata.length, 4).setValues(metadata);
+    if (metadataChanged) sh.getRange(2, 13, metadata.length, 4).setValues(metadata);
   }
 
+  APD_READY_SHEET_ = sh;
   return sh;
+}
+
+// Jalankan dari editor Apps Script setelah memperbarui Code.gs untuk
+// menempatkan Kebersihan Sepatu di kolom I sebelum deployment baru.
+function migrateApdColumnOrder() {
+  const sh = ensureApdSheet_(spreadsheet_(), true);
+  SpreadsheetApp.flush();
+  return 'Urutan kolom APD siap: ' + sh.getRange(1, 8, 1, 3).getDisplayValues()[0].join(' | ');
 }
 
 function ensureSheet_(ss, name, headers) {
