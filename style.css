@@ -666,6 +666,18 @@ body[data-page="login"] .login-screen{
   font-size:12.5px; font-weight:600; color:var(--ink);
 }
 .permission-grid input{margin-top:2px;}
+.permission-grid{display:block;}
+.permission-table-wrap{overflow-x:auto;}
+.permission-table{width:100%;border-collapse:collapse;font-size:13px;}
+.permission-table th,.permission-table td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:center;}
+.permission-table th:first-child{text-align:left;min-width:220px;}
+.permission-table thead th{font-weight:700;background:var(--surface-2);}
+.permission-table label{display:inline-flex;padding:0;border:0;background:none;}
+.permission-table input{width:17px;height:17px;cursor:pointer;}
+.permission-table input:disabled{cursor:not-allowed;opacity:.35;}
+.permission-table tr[data-scope="reports"]{background:var(--surface-2);}
+.permission-table .permission-child th:first-child{padding-left:30px;font-weight:500;}
+.permission-grid > .hint-text{margin-top:12px;}
 .permission-actions{display: flex; justify-content:flex-end; align-items: center; gap: 10px; margin-top:18px;}
 .permission-full{font-size:11px; font-weight:700; color:var(--success); white-space:nowrap;}
 .saved-data-panel{margin-top:0;}
@@ -2443,6 +2455,14 @@ input,select,textarea,button{max-width:100%;}
 .laporan-subnav-btn:hover:not(.active){background:var(--surface-2);color:var(--ink);}
 .laporan-subnav-btn.active{background:var(--ink);color:#fff;}
 .laporan-subview[hidden]{display:none !important;}
+.laporan-subnav-btn[hidden], .master-layout > .panel[hidden]{display:none !important;}
+.permission-grid .permission-table label{display:inline-flex;align-items:center;justify-content:center;padding:0;border:0;background:none;}
+.view.read-only .form-panel,.view.read-only #apdForm,.view.read-only #apdSaveBtn,
+.view.read-only .btn-edit,.view.read-only .btn-delete,.view.read-only .apd-record-actions,
+.view.read-only .press-balance-delete,.view.read-only .press-balance-use,.view.read-only .press-use-btn,
+.view.master-read-only .chip-add,.view.master-read-only .chip-list button[data-cat],
+#kpiSettingPanel.read-only .form-actions{display:none !important;}
+.apd-record-actions[hidden]{display:none !important;}
 
 .kpi-press-report-panel{overflow:visible;}
 .kpi-press-report-heading{align-items:flex-start;}

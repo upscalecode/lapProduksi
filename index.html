@@ -14,7 +14,7 @@
       src="https://kit.fontawesome.com/59dfa0db6c.js"
       crossorigin="anonymous"
     ></script>
-    <link rel="stylesheet" href="style.css?v=20260921-v17-apd-date-align" />
+    <link rel="stylesheet" href="style.css?v=20260922-v18-report-access" />
 
     <style></style>
   </head>
@@ -40,7 +40,7 @@
             <span id="connectionText">Memeriksa koneksi…</span>
           </div>
           <div class="device-date">
-            <span class="label">Tanggal Sistem</span>
+            <span class="label">Tanggal</span>
             <span id="deviceDateDisplay" class="mono value"></span>
           </div>
           <div class="user-chip">
@@ -834,10 +834,10 @@
                 </div>
 
                 <div class="apd-heading-actions">
-                  <label class="apd-system-date">
-                    <span>Tanggal Sistem hari ini</span>
+                  <!-- <label class="apd-system-date">
+                    <span>Tanggal</span>
                     <input type="text" id="apdTanggal" class="mono" readonly />
-                  </label>
+                  </label> -->
                   <button
                     type="button"
                     class="btn btn-secondary"
@@ -1117,7 +1117,7 @@
                   <h2>Riwayat Penilaian APD — Hari Ini</h2>
                   <p class="hint-text apd-saved-hint">
                     Menampilkan data yang sudah berhasil tersimpan di Sheet APD
-                    pada tanggal sistem hari ini.
+                    pada tanggal hari ini.
                   </p>
                 </div>
               </div>
@@ -1497,7 +1497,7 @@
         <section class="view" id="view-master" hidden>
           <div class="master-layout">
             <section class="panel">
-              <div class="panel-head"><h2>Data Master (Sumber Search)</h2></div>
+              <div class="panel-head"><h2>Data Master</h2></div>
               <p class="hint-text">
                 Sheet <code>Master</code>: kolom A = Nama Operator, kolom B =
                 Nama Produk, kolom C = Nama Botol.
@@ -1775,12 +1775,44 @@
 
               <!-- LAPORAN -->
               <label>
-                <input type="checkbox" data-permission="accessReports" />
+                <input type="checkbox" data-permission="accessKpiReport" />
                 <span>
-                  <strong>Akses Laporan</strong><br />
-                  <small>Dapat melihat dan membuat laporan produksi.</small>
+                  <strong>Akses Laporan KPI Saja</strong><br />
+                  <small>Dapat membuka laporan KPI.</small>
                 </span>
               </label>
+
+              <label
+                ><input
+                  type="checkbox"
+                  data-permission="accessKpiFillingReport"
+                /><span
+                  ><strong>Akses Laporan KPI Filling</strong><br /><small
+                    >Dapat melihat KPI Filling.</small
+                  ></span
+                ></label
+              >
+              <label
+                ><input
+                  type="checkbox"
+                  data-permission="accessKpiPressReport"
+                /><span
+                  ><strong>Akses Laporan KPI Press</strong><br /><small
+                    >Dapat melihat KPI Press.</small
+                  ></span
+                ></label
+              >
+              <label
+                ><input
+                  type="checkbox"
+                  data-permission="accessWorkReport"
+                /><span
+                  ><strong>Akses Laporan Hasil Pengerjaan Saja</strong
+                  ><br /><small
+                    >Dapat membuka laporan hasil pengerjaan.</small
+                  ></span
+                ></label
+              >
 
               <!-- HAPUS SISA PRESS -->
               <label>
@@ -1842,10 +1874,21 @@
               <label>
                 <input type="checkbox" data-permission="accessMaster" />
                 <span>
-                  <strong>Akses Setting</strong><br />
-                  <small>Dapat membuka menu Setting / Master Data.</small>
+                  <strong>Akses Setting Data Master (Sumber Search)</strong
+                  ><br />
+                  <small>Dapat mengelola sumber pencarian.</small>
                 </span>
               </label>
+              <label
+                ><input
+                  type="checkbox"
+                  data-permission="accessKpiSettings"
+                /><span
+                  ><strong>Akses Pengaturan KPI</strong><br /><small
+                    >Dapat mengatur target KPI.</small
+                  ></span
+                ></label
+              >
             </div>
 
             <div class="form-actions permission-actions">
@@ -1867,7 +1910,7 @@
       </main>
     </div>
 
-    <script src="script.js?v=20260921-v28-shift-kpi"></script>
+    <script src="script.js?v=20260922-v30-tablet-read-data"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>

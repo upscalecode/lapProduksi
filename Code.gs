@@ -119,25 +119,30 @@ function doGet(e) {
     if (action === 'appdata') {
       const session = requireSession_(param_(e, 'token'));
       const allEntries = getEntries_();
-      const reportAccess = can_(session.user, 'accessReports');
       const featureEntries = allEntries.filter(function (entry) {
-        if (reportAccess) return true;
+        if (can_(session.user, 'accessDashboard')) return true;
         if (entry.tab === 'filling') return can_(session.user, 'accessFilling');
         if (entry.tab === 'press') return can_(session.user, 'accessPress');
         return false;
       });
-      const visibleEntries = can_(session.user, 'viewAllData')
-        ? featureEntries
-        : featureEntries.filter(function (entry) { return entry.createdBy === session.user.username; });
+      // Read menampilkan seluruh data pada bagian yang diizinkan. Hak ubah/hapus
+      // tetap diperiksa terpisah menurut pemilik data pada setiap aksi tulis.
+      const visibleEntries = featureEntries;
+      const reportEntries = allEntries.filter(function (entry) {
+        return (entry.tab === 'filling' || entry.tab === 'press') &&
+          (can_(session.user, 'accessWorkReport') || can_(session.user, 'accessKpiFillingReport') ||
+            can_(session.user, 'accessKpiPressReport') || can_(session.user, 'accessKpiReport'));
+      });
       const pressAdjustments = can_(session.user, 'accessPress') ? getPressAdjustments_() : [];
       const apdDate = String(param_(e, 'apdDate') || '').trim();
       return json_({
         ok: true,
         entries: visibleEntries,
+        reportEntries: reportEntries,
         adjustments: pressAdjustments,
         remainders: can_(session.user, 'accessPress') ? getPressRemainders_(allEntries, pressAdjustments) : [],
         // KPI pada Dashboard/Laporan membutuhkan nilai APD meskipun user tidak membuka tab APD.
-        apdEntries: (can_(session.user, 'accessApd') || can_(session.user, 'accessReports') || can_(session.user, 'accessDashboard')) ? getApdEntries_() : [],
+        apdEntries: (can_(session.user, 'accessApd') || can_(session.user, 'accessKpiReport') || can_(session.user, 'accessKpiFillingReport') || can_(session.user, 'accessKpiPressReport') || can_(session.user, 'accessDashboard')) ? getApdEntries_() : [],
         users: session.user.role === 'superuser' ? getUsers_() : [],
         settings: getSettings_()
       });
@@ -167,7 +172,7 @@ function doPost(e) {
       case 'entry.create':
         return withWriteLock_(function () {
           const payload = parseJsonParam_(e, 'data');
-          requireLineAccess_(session.user, payload && payload.line);
+          requireLevel_(session.user, payload && payload.line, 'write');
           const entry = createEntry_(session.user, payload);
           return json_({ ok: true, entry: entry, remainders: getPressRemainders_() });
         });
@@ -175,7 +180,7 @@ function doPost(e) {
       case 'entry.batchCreate':
         return withWriteLock_(function () {
           const payload = parseJsonParam_(e, 'data');
-          (Array.isArray(payload) ? payload : []).forEach(function (item) { requireLineAccess_(session.user, item && item.line); });
+          (Array.isArray(payload) ? payload : []).forEach(function (item) { requireLevel_(session.user, item && item.line, 'write'); });
           const result = createEntriesBatch_(session.user, payload);
           return json_({
             ok: true,
@@ -189,7 +194,7 @@ function doPost(e) {
       case 'entry.update':
         return withWriteLock_(function () {
           const payload = parseJsonParam_(e, 'data');
-          requireLineAccess_(session.user, payload && payload.line);
+          requireLevel_(session.user, payload && payload.line, 'write');
           const entry = updateEntry_(session.user, param_(e, 'id'), payload);
           return json_({ ok: true, entry: entry, remainders: getPressRemainders_() });
         });
@@ -202,8 +207,7 @@ function doPost(e) {
 
       // Dipertahankan untuk kompatibilitas data/versi lama.
       case 'press.adjustment.close':
-        requireLineAccess_(session.user, 'press');
-        requirePermission_(session.user, 'deleteUnpressed', 'Anda tidak memiliki akses menghapus pengerjaan yang belum di-Press.');
+        requireLevel_(session.user, 'press', 'admin');
         return withWriteLock_(function () {
           const adjustment = closePressRemainder_(session.user, parseJsonParam_(e, 'data'));
           rebuildPressRemainders_();
@@ -212,7 +216,7 @@ function doPost(e) {
 
 
       case 'apd.batchCreate':
-        requirePermission_(session.user, 'accessApd', 'Anda tidak memiliki akses APD.');
+        requireLevel_(session.user, 'apd', 'write');
         return withWriteLock_(function () {
           const result = createApdEntriesBatch_(session.user, parseJsonParam_(e, 'data'));
           return json_({
@@ -226,35 +230,35 @@ function doPost(e) {
         });
 
       case 'apd.update':
-        requirePermission_(session.user, 'accessApd', 'Anda tidak memiliki akses APD.');
+        requireLevel_(session.user, 'apd', 'write');
         return withWriteLock_(function () {
           const updated = updateApdEntry_(session.user, param_(e, 'id'), parseJsonParam_(e, 'data'));
           return json_({ ok: true, entry: updated.entry, apdEntries: updated.apdEntries });
         });
 
       case 'apd.delete':
-        requirePermission_(session.user, 'accessApd', 'Anda tidak memiliki akses APD.');
+        requireLevel_(session.user, 'apd', 'write');
         return withWriteLock_(function () {
           const deleted = deleteApdEntry_(session.user, param_(e, 'id'));
           return json_({ ok: true, deletedId: deleted.deletedId, apdEntries: deleted.apdEntries });
         });
 
       case 'master.add':
-        requirePermission_(session.user, 'accessMaster', 'Anda tidak memiliki akses Setting / Master Data.');
+        requireLevel_(session.user, 'master', 'write');
         return withWriteLock_(function () {
           addMaster_(param_(e, 'category'), param_(e, 'value'));
           return json_({ ok: true, master: getMaster_() });
         });
 
       case 'master.remove':
-        requirePermission_(session.user, 'accessMaster', 'Anda tidak memiliki akses Setting / Master Data.');
+        requireLevel_(session.user, 'master', 'write');
         return withWriteLock_(function () {
           removeMaster_(param_(e, 'category'), param_(e, 'value'));
           return json_({ ok: true, master: getMaster_() });
         });
 
       case 'settings.kpiTargets.set':
-        requirePermission_(session.user, 'accessMaster', 'Anda tidak memiliki akses Setting / Master Data.');
+        requireLevel_(session.user, 'kpiSettings', 'write');
         return withWriteLock_(function () {
           const settings = setKpiOutputTargets_(
             session.user,
@@ -265,14 +269,14 @@ function doPost(e) {
         });
 
       case 'settings.kpiFilling.set':
-        requirePermission_(session.user, 'accessMaster', 'Anda tidak memiliki akses Setting / Master Data.');
+        requireLevel_(session.user, 'kpiSettings', 'write');
         return withWriteLock_(function () {
           const settings = setKpiFillingOutputTarget_(session.user, param_(e, 'value'));
           return json_({ ok: true, settings: settings });
         });
 
       case 'settings.kpiPress.set':
-        requirePermission_(session.user, 'accessMaster', 'Anda tidak memiliki akses Setting / Master Data.');
+        requireLevel_(session.user, 'kpiSettings', 'write');
         return withWriteLock_(function () {
           const settings = setKpiPressOutputTarget_(session.user, param_(e, 'value'));
           return json_({ ok: true, settings: settings });
@@ -743,6 +747,8 @@ function createApdEntriesBatch_(user, dataList) {
 function updateApdEntry_(user, id, rawData) {
   const sh = ensureApdSheet_(spreadsheet_());
   const rowNumber = findApdRowById_(sh, id);
+  const createdBy = String(sh.getRange(rowNumber, 13).getValue() || '');
+  requireManage_(user, 'apd', createdBy === user.username ? 'own' : 'others');
   const record = buildApdRecord_(rawData, 0);
   record.operator = canonicalMasterValue_(getMaster_().operator, record.operator, 'Operator');
   ensureNoApdDuplicate_(sh, record.tanggal, record.operator, id);
@@ -777,6 +783,8 @@ function updateApdEntry_(user, id, rawData) {
 function deleteApdEntry_(user, id) {
   const sh = ensureApdSheet_(spreadsheet_());
   const rowNumber = findApdRowById_(sh, id);
+  const createdBy = String(sh.getRange(rowNumber, 13).getValue() || '');
+  requireManage_(user, 'apd', createdBy === user.username ? 'own' : 'others');
   const tanggal = formatDateCell_(sh.getRange(rowNumber, 1).getValue());
   sh.deleteRow(rowNumber);
   return {
@@ -1031,9 +1039,8 @@ function updateEntry_(user, id, data) {
 
   const existing = rowToEntry_(found.values);
   const isOwn = existing.createdBy === user.username;
-  if (isOwn) requirePermission_(user, 'editOwn', 'Anda tidak memiliki izin mengubah data sendiri.');
-  else requirePermission_(user, 'editOthers', 'Anda tidak memiliki izin mengubah data milik user lain.');
-  requireLineAccess_(user, existing.tab);
+  requireManage_(user, existing.tab, isOwn ? 'own' : 'others');
+  requireLevel_(user, data.line === 'press' ? 'press' : 'filling', 'write');
 
   const qtyKardus = number_(data.qtyKardus);
   const qtyBotol = number_(data.qtyBotolPerKardus);
@@ -1087,9 +1094,7 @@ function deleteEntry_(user, id) {
 
   const existing = rowToEntry_(found.values);
   const isOwn = existing.createdBy === user.username;
-  if (isOwn) requirePermission_(user, 'deleteOwn', 'Anda tidak memiliki izin menghapus data sendiri.');
-  else requirePermission_(user, 'deleteOthers', 'Anda tidak memiliki izin menghapus data milik user lain.');
-  requireLineAccess_(user, existing.tab);
+  requireManage_(user, existing.tab, isOwn ? 'own' : 'others');
 
   // Simulasikan kondisi setelah baris dihapus. Filling tidak boleh dihapus
   // bila menyebabkan Qty Press historis menjadi lebih besar daripada Filling.
@@ -2069,7 +2074,13 @@ function addUser_(name, username, password, role) {
   if (!name || !username || !password) throw new Error('Nama, username, dan password wajib diisi.');
   if (findUser_(username)) throw new Error('Username sudah digunakan.');
 
-  sheet_(APP.SHEETS.USERS).appendRow([username, hashPassword_(password), name, role, true, new Date(), JSON.stringify(defaultPermissions_(role))]);
+  const permissions = defaultPermissions_(role);
+  if (role === 'user') permissions.levels = {
+    dashboard: 'none', filling: 'write', press: 'write', apd: 'write',
+    reports: 'none', workReport: 'none', kpiFilling: 'none', kpiPress: 'none',
+    master: 'none', kpiSettings: 'none'
+  };
+  sheet_(APP.SHEETS.USERS).appendRow([username, hashPassword_(password), name, role, true, new Date(), JSON.stringify(permissions)]);
   invalidateUsersCache_();
 }
 
@@ -2185,13 +2196,18 @@ function defaultPermissions_(role) {
       accessPress: true,
       accessApd: true,
       accessReports: true,
+      accessWorkReport: true,
+      accessKpiReport: true,
+      accessKpiFillingReport: true,
+      accessKpiPressReport: true,
       deleteUnpressed: true,
       viewAllData: true,
       editOwn: true,
       editOthers: true,
       deleteOwn: true,
       deleteOthers: true,
-      accessMaster: true
+      accessMaster: true,
+      accessKpiSettings: true
     };
   }
   return {
@@ -2200,13 +2216,18 @@ function defaultPermissions_(role) {
     accessPress: true,
     accessApd: true,
     accessReports: false,
+    accessWorkReport: false,
+    accessKpiReport: false,
+    accessKpiFillingReport: false,
+    accessKpiPressReport: false,
     deleteUnpressed: false,
     viewAllData: false,
     editOwn: true,
     editOthers: false,
     deleteOwn: false,
     deleteOthers: false,
-    accessMaster: false
+    accessMaster: false,
+    accessKpiSettings: false
   };
 }
 
@@ -2218,10 +2239,94 @@ function normalizePermissions_(role, raw) {
   else if (String(raw || '').trim()) {
     try { parsed = JSON.parse(String(raw)); } catch (_) { parsed = {}; }
   }
+  // User lama dengan izin gabungan tetap mendapat akses yang sama.
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'accessWorkReport')) parsed.accessWorkReport = parsed.accessReports === true;
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'accessKpiReport')) parsed.accessKpiReport = parsed.accessReports === true;
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'accessKpiFillingReport')) parsed.accessKpiFillingReport = parsed.accessReports === true;
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'accessKpiPressReport')) parsed.accessKpiPressReport = parsed.accessReports === true;
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'accessKpiSettings')) parsed.accessKpiSettings = parsed.accessMaster === true;
   Object.keys(defaults).forEach(function (key) {
     if (Object.prototype.hasOwnProperty.call(parsed, key)) defaults[key] = parsed[key] === true;
   });
+  if (parsed.levels && typeof parsed.levels === 'object') {
+    defaults.accessReports = false;
+    defaults.accessKpiReport = false;
+  }
+  const scopes = {
+    dashboard: 'accessDashboard', filling: 'accessFilling', press: 'accessPress', apd: 'accessApd',
+    reports: 'accessReports',
+    workReport: 'accessWorkReport', kpiFilling: 'accessKpiFillingReport',
+    kpiPress: 'accessKpiPressReport', master: 'accessMaster', kpiSettings: 'accessKpiSettings'
+  };
+  const levels = {};
+  const hasLevels = parsed.levels && typeof parsed.levels === 'object';
+  Object.keys(scopes).forEach(function (scope) {
+    const explicit = hasLevels && scope === 'reports' && !Object.prototype.hasOwnProperty.call(parsed.levels, 'reports')
+      ? (['workReport', 'kpiFilling', 'kpiPress'].some(function (child) {
+          return ['read', 'write', 'admin'].indexOf(parsed.levels[child]) >= 0;
+        }) ? 'read' : 'none')
+      : hasLevels && parsed.levels[scope];
+    if (hasLevels) {
+      levels[scope] = ['none', 'read', 'write', 'admin'].indexOf(explicit) >= 0 ? explicit : 'none';
+      defaults[scopes[scope]] = levels[scope] !== 'none';
+    } else {
+      const allowed = scope === 'reports'
+        ? defaults.accessReports || defaults.accessWorkReport || defaults.accessKpiReport || defaults.accessKpiFillingReport || defaults.accessKpiPressReport
+        : defaults[scopes[scope]] || (scope.indexOf('kpi') === 0 && defaults.accessKpiReport);
+      levels[scope] = !allowed ? 'none' :
+        scope === 'reports' && defaults.accessReports ? 'admin' :
+        (scope === 'filling' || scope === 'press') && defaults.viewAllData && defaults.editOthers && defaults.deleteOthers ? 'admin' :
+        scope === 'apd' ? 'admin' :
+        (scope === 'filling' || scope === 'press' || scope === 'master' || scope === 'kpiSettings') ? 'write' :
+        defaults.viewAllData ? 'admin' : 'read';
+    }
+  });
+  if (hasLevels) {
+    const parent = levels.reports;
+    ['workReport', 'kpiFilling', 'kpiPress'].forEach(function (scope) {
+      defaults[scopes[scope]] = parent === 'admin' || (parent !== 'none' && levels[scope] !== 'none');
+    });
+  }
+  defaults.management = {};
+  ['filling', 'press', 'apd'].forEach(function (scope) {
+    const admin = levels[scope] === 'admin';
+    const write = levels[scope] === 'write';
+    const selected = parsed.management && parsed.management[scope];
+    defaults.management[scope] = {
+      own: admin || (write && (selected && typeof selected.own === 'boolean' ? selected.own :
+        hasLevels ? true : defaults.editOwn || defaults.deleteOwn)),
+      others: admin || (write && (selected && typeof selected.others === 'boolean' ? selected.others :
+        hasLevels ? false : defaults.editOthers || defaults.deleteOthers))
+    };
+  });
+  defaults.levels = levels;
   return defaults;
+}
+
+function canLevel_(user, scope, minimum) {
+  if (!user) return false;
+  if (user.role === 'superuser') return true;
+  const levels = normalizePermissions_(user.role, user.permissions || user.permissionsJson || '').levels;
+  const rank = { none: 0, read: 1, write: 2, admin: 3 };
+  if (['workReport', 'kpiFilling', 'kpiPress'].indexOf(scope) >= 0) {
+    if (levels.reports === 'admin') return true;
+    if (levels.reports === 'none') return false;
+  }
+  return (rank[levels[scope]] || 0) >= (rank[minimum] || 1);
+}
+
+function requireLevel_(user, scope, minimum) {
+  if (!canLevel_(user, scope, minimum)) throw new Error('Anda tidak memiliki akses ' + minimum + ' pada bagian ' + scope + '.');
+}
+
+function canManage_(user, scope, owner) {
+  if (!canLevel_(user, scope, 'write')) return false;
+  const permissions = normalizePermissions_(user.role, user.permissions || user.permissionsJson || '');
+  return user.role === 'superuser' || Boolean(permissions.management[scope] && permissions.management[scope][owner] === true);
+}
+
+function requireManage_(user, scope, owner) {
+  if (!canManage_(user, scope, owner)) throw new Error('Anda tidak memiliki akses mengelola data ' + (owner === 'own' ? 'sendiri' : 'user lain') + ' pada bagian ' + scope + '.');
 }
 
 function can_(user, permission) {

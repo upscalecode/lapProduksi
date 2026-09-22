@@ -27,7 +27,7 @@
   "use strict";
 
   const CONFIG = {
-    URL_KEY: "ppr_apps_script_url_v3",
+    URL_KEY: "ppr_apps_script_url_v4",
     TOKEN_KEY: "ppr_session_token_v3",
     USER_KEY: "ppr_session_user_v3",
     MASTER_KEY: "ppr_master_cache_v3",
@@ -41,7 +41,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbxeT4W0jC8JnfA3h5TnHB9Xo-SFhr87soXxHVinPoHxRJO_ReZ3KTqzrUnvSheIqyGOYA/exec",
+      "https://script.google.com/macros/s/AKfycbwgWlEzLr3d1fT_m4zf4q6iJO0V95B4GhARi5DNh0s1L9lH8OY4JqF0knRJ-DnP8n2VLQ/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -53,6 +53,7 @@
     currentUser: null,
     master: { operator: [], produk: [], botol: [], botolpecah: [] },
     entries: [],
+    reportEntries: [],
     adjustments: [],
     remainders: [],
     apdEntries: [],
@@ -129,6 +130,10 @@
     accessPress: true,
     accessApd: true,
     accessReports: false,
+    accessWorkReport: false,
+    accessKpiReport: false,
+    accessKpiFillingReport: false,
+    accessKpiPressReport: false,
     deleteUnpressed: false,
     viewAllData: false,
     editOwn: true,
@@ -136,6 +141,7 @@
     deleteOwn: false,
     deleteOthers: false,
     accessMaster: false,
+    accessKpiSettings: false,
   });
 
   function permissionsOf(user = state.currentUser) {
@@ -145,7 +151,18 @@
         Object.keys(DEFAULT_USER_PERMISSIONS).map((key) => [key, true]),
       );
     }
-    return { ...DEFAULT_USER_PERMISSIONS, ...(user.permissions || {}) };
+    const saved = user.permissions || {};
+    return {
+      ...DEFAULT_USER_PERMISSIONS,
+      accessWorkReport: saved.accessWorkReport ?? saved.accessReports ?? false,
+      accessKpiReport: saved.accessKpiReport ?? saved.accessReports ?? false,
+      accessKpiFillingReport:
+        saved.accessKpiFillingReport ?? saved.accessReports ?? false,
+      accessKpiPressReport:
+        saved.accessKpiPressReport ?? saved.accessReports ?? false,
+      accessKpiSettings: saved.accessKpiSettings ?? saved.accessMaster ?? false,
+      ...saved,
+    };
   }
 
   function can(permission, user = state.currentUser) {
@@ -155,18 +172,87 @@
     );
   }
 
+  function canLevel(scope, minimum = "read", user = state.currentUser) {
+    if (!user) return false;
+    if (user.role === "superuser") return true;
+    const rank = { none: 0, read: 1, write: 2, admin: 3 };
+    const perms = permissionsOf(user);
+    const flags = {
+      dashboard: "accessDashboard",
+      filling: "accessFilling",
+      press: "accessPress",
+      apd: "accessApd",
+      reports: "accessReports",
+      workReport: "accessWorkReport",
+      kpiFilling: "accessKpiFillingReport",
+      kpiPress: "accessKpiPressReport",
+      master: "accessMaster",
+      kpiSettings: "accessKpiSettings",
+    };
+    const fallback = !perms[flags[scope]]
+      ? "none"
+      : ["filling", "press", "apd", "master", "kpiSettings"].includes(scope)
+        ? "write"
+        : "read";
+    if (["workReport", "kpiFilling", "kpiPress"].includes(scope)) {
+      const parent =
+        perms.levels?.reports || (perms.accessReports ? "admin" : "read");
+      if (parent === "admin") return true;
+      if (parent === "none") return false;
+    }
+    return (rank[perms.levels?.[scope] || fallback] || 0) >= rank[minimum];
+  }
+
+  function canManage(scope, owner, user = state.currentUser) {
+    if (!canLevel(scope, "write", user)) return false;
+    if (user.role === "superuser" || canLevel(scope, "admin", user))
+      return true;
+    const selected = permissionsOf(user).management?.[scope];
+    return selected ? selected[owner] === true : owner === "own";
+  }
+
+  function canKpiType(type) {
+    if (!canLevel("reports")) return false;
+    if (can("accessKpiReport")) return true;
+    if (type === "press") return canLevel("kpiPress");
+    if (type === "filling") return canLevel("kpiFilling");
+    return false;
+  }
+
+  function canOpenReports() {
+    return (
+      canLevel("reports") &&
+      (canLevel("workReport") || canKpiType("filling") || canKpiType("press"))
+    );
+  }
+
+  function selectAvailableKpiMonth() {
+    const input = el("lap-kpi-month");
+    if (!input || input.dataset.userSelected === "1") return;
+    const type = el("lap-kpi-type")?.value || "filling";
+    const months = (state.reportEntries || [])
+      .filter((entry) => type === "shift" || entry.tab === type)
+      .map((entry) => String(entry.tanggal || "").slice(0, 7))
+      .filter((value) => /^\d{4}-\d{2}$/.test(value))
+      .sort();
+    if (months.length && !months.includes(input.value))
+      input.value = months[months.length - 1];
+  }
+
   function canEditEntry(entry) {
     if (!state.currentUser || !entry) return false;
-    return entry.createdBy === state.currentUser.username
-      ? can("editOwn")
-      : can("editOthers");
+    return canManage(
+      entry.tab,
+      entry.createdBy === state.currentUser.username ? "own" : "others",
+    );
   }
 
   function canDeleteEntry(entry) {
     if (!state.currentUser || !entry) return false;
-    return entry.createdBy === state.currentUser.username
-      ? can("deleteOwn")
-      : can("deleteOthers");
+    return canManage(
+      entry.tab,
+      entry.createdBy === state.currentUser.username ? "own" : "others",
+    );
   }
 
   function firstAllowedView() {
@@ -174,8 +260,8 @@
     if (can("accessFilling")) return "filling";
     if (can("accessPress")) return "press";
     if (can("accessApd")) return "apd";
-    if (can("accessReports")) return "laporan";
-    if (can("accessMaster")) return "master";
+    if (canOpenReports()) return "laporan";
+    if (can("accessMaster") || can("accessKpiSettings")) return "master";
     return "";
   }
 
@@ -185,13 +271,63 @@
       filling: can("accessFilling"),
       press: can("accessPress"),
       apd: can("accessApd"),
-      laporan: can("accessReports"),
-      master: can("accessMaster"),
+      laporan: canOpenReports(),
+      master: can("accessMaster") || can("accessKpiSettings"),
     };
     Object.entries(accessMap).forEach(([view, allowed]) => {
       const btn = qs(`.tab-btn[data-view="${view}"]`);
       if (btn) btn.hidden = !allowed;
     });
+    ["filling", "press", "apd"].forEach((scope) => {
+      el("view-" + scope)?.classList.toggle(
+        "read-only",
+        !canLevel(scope, "write"),
+      );
+    });
+    el("view-master")?.classList.toggle(
+      "master-read-only",
+      !canLevel("master", "write"),
+    );
+    el("kpiSettingPanel")?.classList.toggle(
+      "read-only",
+      !canLevel("kpiSettings", "write"),
+    );
+    qsa(
+      "#view-master .master-layout > section:not(#userManagementPanel):not(#kpiSettingPanel)",
+    ).forEach((node) => {
+      node.hidden = !can("accessMaster");
+    });
+    if (el("kpiSettingPanel"))
+      el("kpiSettingPanel").hidden = !can("accessKpiSettings");
+    qsa(".laporan-subnav-btn").forEach((btn) => {
+      btn.hidden =
+        btn.dataset.laporanView === "hasil"
+          ? !can("accessWorkReport")
+          : !(canKpiType("filling") || canKpiType("press"));
+    });
+    const activeReport = qs(".laporan-subnav-btn.active");
+    if (activeReport?.hidden) {
+      const fallback = can("accessWorkReport") ? "hasil" : "kpi";
+      qsa(".laporan-subnav-btn").forEach((btn) => {
+        const selected = btn.dataset.laporanView === fallback;
+        btn.classList.toggle("active", selected);
+        btn.setAttribute("aria-selected", String(selected));
+      });
+      qsa(".laporan-subview").forEach((node) => {
+        node.hidden = node.id !== "laporan-subview-" + fallback;
+      });
+    }
+    const kpiType = el("lap-kpi-type");
+    if (kpiType) {
+      qsa("option", kpiType).forEach((option) => {
+        option.hidden = !canKpiType(option.value);
+        option.disabled = option.hidden;
+      });
+      if (kpiType.selectedOptions[0]?.disabled) {
+        kpiType.value = qsa("option:not(:disabled)", kpiType)[0]?.value || "";
+        kpiType.dispatchEvent(new Event("change"));
+      }
+    }
     const userPanel = el("userManagementPanel");
     if (userPanel)
       userPanel.hidden =
@@ -865,8 +1001,15 @@
           closePressFormPopup();
         }
         if (event.key !== "Tab") return;
-        const controls = qsa("button, input, select, textarea, [tabindex]", popup)
-          .filter((node) => !node.disabled && node.tabIndex >= 0 && node.getClientRects().length);
+        const controls = qsa(
+          "button, input, select, textarea, [tabindex]",
+          popup,
+        ).filter(
+          (node) =>
+            !node.disabled &&
+            node.tabIndex >= 0 &&
+            node.getClientRects().length,
+        );
         const first = controls[0];
         const last = controls[controls.length - 1];
         if (event.shiftKey && document.activeElement === first) {
@@ -882,7 +1025,7 @@
     clone.addEventListener("click", async (event) => {
       const deleteBtn = event.target.closest(".press-balance-delete");
       if (deleteBtn) {
-        if (!can("deleteUnpressed")) {
+        if (!canLevel("press", "admin")) {
           return toast("Tidak ada akses", true);
         }
         const produkValue = deleteBtn.dataset.produk || "";
@@ -941,7 +1084,8 @@
       const pressForm = qs(".form-panel", clone);
       if (!pressForm) return;
       // Gunakan selalu membuat Preview baru, bukan mengubah entry yang sedang diedit.
-      if (qs(".f-editing-id", pressForm)?.value) qs(".f-cancel-btn", pressForm)?.click();
+      if (qs(".f-editing-id", pressForm)?.value)
+        qs(".f-cancel-btn", pressForm)?.click();
       const produk = qs(".f-produk", pressForm);
       const botol = qs(".f-botol", pressForm);
       const perKardusInput = qs(".f-qty-botol", pressForm);
@@ -1000,6 +1144,9 @@
       } catch (_) {}
     }
     if (Array.isArray(data.entries)) state.entries = data.entries;
+    if (Array.isArray(data.reportEntries))
+      state.reportEntries = data.reportEntries;
+    else if (Array.isArray(data.entries)) state.reportEntries = data.entries;
     if (Array.isArray(data.adjustments)) state.adjustments = data.adjustments;
     if (Array.isArray(data.remainders)) state.remainders = data.remainders;
     if (Array.isArray(data.apdEntries)) state.apdEntries = data.apdEntries;
@@ -1034,6 +1181,7 @@
     renderKpiFillingSetting();
     renderUserHeader();
     applyAccessControl();
+    if (Array.isArray(data.reportEntries)) selectAvailableKpiMonth();
     renderDashboard();
     if (typeof window.refreshLaporanAutoPreview === "function") {
       window.refreshLaporanAutoPreview();
@@ -1052,6 +1200,13 @@
   async function loadAppData() {
     const data = await apiGet("appdata", { apdDate: todayStr() });
     applyBootstrap(data);
+    if (!Array.isArray(data.reportEntries) && canOpenReports()) {
+      setConnection("error", "Backend laporan perlu diperbarui");
+      toast(
+        "Backend laporan belum diperbarui. Deploy ulang Code.gs agar data semua user tersedia.",
+        true,
+      );
+    }
     return data;
   }
 
@@ -1130,7 +1285,8 @@
   }
 
   function attachMasterSearch(input) {
-    if (!input || input.readOnly || input.dataset.masterSearchReady === "1") return;
+    if (!input || input.readOnly || input.dataset.masterSearchReady === "1")
+      return;
     input.dataset.masterSearchReady = "1";
 
     const field = input.closest(".field") || input.parentElement;
@@ -1343,7 +1499,9 @@
       el("userRole").textContent =
         user.role === "superuser" ? "Super User" : "User Biasa";
     if (el("masterTabBtn"))
-      el("masterTabBtn").hidden = !can("accessMaster", user);
+      el("masterTabBtn").hidden = !(
+        can("accessMaster", user) || can("accessKpiSettings", user)
+      );
     if (el("deviceDateDisplay")) {
       el("deviceDateDisplay").textContent = new Date().toLocaleDateString(
         "id-ID",
@@ -1434,6 +1592,13 @@
     const index = state.entries.findIndex((x) => x.id === entry.id);
     if (index >= 0) state.entries[index] = entry;
     else state.entries.push(entry);
+    if (canOpenReports()) {
+      const reportIndex = state.reportEntries.findIndex(
+        (x) => x.id === entry.id,
+      );
+      if (reportIndex >= 0) state.reportEntries[reportIndex] = entry;
+      else state.reportEntries.push(entry);
+    }
   }
 
   function balanceKey(produk, botol) {
@@ -1570,7 +1735,8 @@
         Number(item.qtyBotolPerKardus) > 0 &&
         Array.isArray(item.groupQtyBotolPerKardusValues) &&
         item.groupQtyBotolPerKardusValues.length === 1 &&
-        Number(item.groupQtyBotolPerKardusValues[0]) === Number(item.qtyBotolPerKardus) &&
+        Number(item.groupQtyBotolPerKardusValues[0]) ===
+          Number(item.qtyBotolPerKardus) &&
         item.groupQtyFilling !== undefined &&
         item.groupQtyPressTerpakai !== undefined;
       lots.push({
@@ -1828,7 +1994,7 @@
                 : row.source === "mixed"
                   ? '<span class="sync-badge pending">Spreadsheet + Preview</span>'
                   : '<span class="sync-badge saved">Spreadsheet</span>';
-            const deleteAllowed = can("deleteUnpressed");
+            const deleteAllowed = canLevel("press", "admin");
             const deleteDisabled = row.hasPreview || !row.hasSpreadsheet;
             // !deleteAllowed || row.hasPreview || !row.hasSpreadsheet;
             const deleteTitle = row.hasPreview
@@ -2299,7 +2465,7 @@
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       errorEl.hidden = true;
-      if (!can(line === "press" ? "accessPress" : "accessFilling")) {
+      if (!canLevel(line, "write")) {
         errorEl.textContent = `Anda tidak memiliki akses ${LINE_LABEL[line]}.`;
         errorEl.hidden = false;
         return;
@@ -2668,6 +2834,9 @@
             apiPost("entry.delete", { id: entry.id }),
           );
           state.entries = state.entries.filter((x) => x.id !== entry.id);
+          state.reportEntries = state.reportEntries.filter(
+            (x) => x.id !== entry.id,
+          );
           if (Array.isArray(response.remainders))
             state.remainders = response.remainders;
           renderPreview(line);
@@ -2759,6 +2928,13 @@
 
   function apdRecordHtml(item, source, activeEditingId, activeEditingSource) {
     const isSaved = source === "saved";
+    const canChange =
+      canLevel("apd", "write") &&
+      (!isSaved ||
+        canManage(
+          "apd",
+          item.createdBy === state.currentUser?.username ? "own" : "others",
+        ));
     const isActive =
       item.id === activeEditingId && activeEditingSource === source;
     return `
@@ -2776,7 +2952,7 @@
         <div class="apd-record-cell apd-record-result"><strong>${Number(item.totalPoints) || 0} / 30</strong></div>
         <div class="apd-record-cell"><span class="apd-percent-badge">${dashboardPercent(item.percentage)}</span></div>
         <div class="apd-record-cell apd-record-reason">${esc(item.alasan || "—")}</div>
-        <div class="apd-record-cell apd-record-actions">
+        <div class="apd-record-cell apd-record-actions" ${canChange ? "" : "hidden"}>
           <button type="button" class="btn btn-ghost ${isSaved ? "apd-saved-edit" : "apd-edit"}" data-id="${esc(item.id)}">Edit</button>
           <button type="button" class="btn btn-danger ${isSaved ? "apd-saved-delete" : "apd-delete"}" data-id="${esc(item.id)}">Hapus</button>
         </div>
@@ -2957,7 +3133,8 @@
       if (totalPoints) totalPoints.value = "0 / 30";
       if (percentage) percentage.value = "0%";
       if (addBtn) {
-        addBtn.innerHTML = '<i class="fa-solid fa-plus" aria-hidden="true"></i> Simpan Penilaian';
+        addBtn.innerHTML =
+          '<i class="fa-solid fa-plus" aria-hidden="true"></i> Simpan Penilaian';
         addBtn.disabled = false;
       }
       if (cancelBtn) cancelBtn.hidden = false;
@@ -3009,7 +3186,7 @@
       event.preventDefault();
       if (errorEl) errorEl.hidden = true;
 
-      if (!can("accessApd")) {
+      if (!canLevel("apd", "write")) {
         if (errorEl) {
           errorEl.textContent = "Anda tidak memiliki akses APD.";
           errorEl.hidden = false;
@@ -3210,7 +3387,7 @@
       }
 
       if (deleteBtn) {
-        if (!can("accessApd"))
+        if (!canLevel("apd", "write"))
           return toast("Anda tidak memiliki akses APD.", true);
         const item = (state.apdEntries || []).find(
           (row) => row.id === deleteBtn.dataset.id,
@@ -3255,7 +3432,7 @@
     saveBtn?.addEventListener("click", async () => {
       const rows = [...(state.preview.apd || [])];
       if (!rows.length) return toast("Belum ada data APD di preview.", true);
-      if (!can("accessApd"))
+      if (!canLevel("apd", "write"))
         return toast("Anda tidak memiliki akses APD.", true);
 
       saveBtn.disabled = true;
@@ -3904,10 +4081,10 @@
         const level = dashboardPriorityLevel(row);
         const age = dashboardAgeDays(row.tanggalAsal);
         const canUse =
-          can("accessPress") &&
+          canLevel("press", "write") &&
           isMasterValue("produk", row.produk) &&
           isMasterValue("botol", row.botol);
-        const actionTitle = !can("accessPress")
+        const actionTitle = !canLevel("press", "write")
           ? "Anda tidak memiliki akses Press."
           : !isMasterValue("produk", row.produk) ||
               !isMasterValue("botol", row.botol)
@@ -4543,7 +4720,7 @@
     el("dashboardPriorityBody")?.addEventListener("click", (event) => {
       const btn = event.target.closest(".dashboard-work-btn");
       if (!btn || btn.disabled) return;
-      if (!can("accessPress"))
+      if (!canLevel("press", "write"))
         return toast("Anda tidak memiliki akses Press.", true);
 
       const pressTab = qs('.tab-btn[data-view="press"]');
@@ -4589,7 +4766,14 @@
       };
 
       const permisson = permissionMap[view];
-      if (!permisson || !can(permisson)) {
+      if (
+        !permisson ||
+        !(view === "laporan"
+          ? canOpenReports()
+          : view === "master"
+            ? can("accessMaster") || can("accessKpiSettings")
+            : can(permisson))
+      ) {
         return;
       }
       // const allowed = view === "dashboard" ? can("accessDashboard")
@@ -4699,11 +4883,14 @@
   }
 
   function laporanQtyTotals(rows) {
-    return rows.reduce((totals, entry) => {
-      const key = laporanQtyUnit(entry) === "Pcs" ? "pcs" : "kardus";
-      totals[key] += Number(entry.qtyKardus) || 0;
-      return totals;
-    }, { kardus: 0, pcs: 0 });
+    return rows.reduce(
+      (totals, entry) => {
+        const key = laporanQtyUnit(entry) === "Pcs" ? "pcs" : "kardus";
+        totals[key] += Number(entry.qtyKardus) || 0;
+        return totals;
+      },
+      { kardus: 0, pcs: 0 },
+    );
   }
 
   function buildLaporanPrintHtml(options = {}) {
@@ -5064,7 +5251,7 @@
       return operators.get(key);
     }
 
-    (state.entries || [])
+    (state.reportEntries || [])
       .filter(
         (entry) =>
           !entry._syncState &&
@@ -5083,7 +5270,7 @@
         day.broken += Number(entry.qtyBotolPecah) || 0;
       });
 
-    (state.entries || [])
+    (state.reportEntries || [])
       .filter(
         (entry) =>
           !entry._syncState &&
@@ -5311,7 +5498,11 @@
 
   function kpiTypeLabel(type) {
     const normalized = normalizeKpiType(type);
-    return normalized === "shift" ? "Ka. Shift" : normalized === "press" ? "Press" : "Filling";
+    return normalized === "shift"
+      ? "Ka. Shift"
+      : normalized === "press"
+        ? "Press"
+        : "Filling";
   }
 
   function getKpiPressOutputTarget() {
@@ -5405,7 +5596,7 @@
     if (!saveBtn || !fillingInput || !pressInput) return;
 
     saveBtn.addEventListener("click", async () => {
-      if (!can("accessMaster")) {
+      if (!canLevel("kpiSettings", "write")) {
         return toast("Anda tidak memiliki akses Setting.", true);
       }
 
@@ -5568,7 +5759,7 @@
     const period = kpiPressMonthPeriod(monthValue);
     if (!operator || !period) return null;
 
-    const savedProduction = (state.entries || []).filter(
+    const savedProduction = (state.reportEntries || []).filter(
       (entry) =>
         entry &&
         !entry._syncState &&
@@ -5742,7 +5933,7 @@
     const period = kpiPressMonthPeriod(monthValue);
     if (!operator || !period) return null;
 
-    const savedProduction = (state.entries || []).filter(
+    const savedProduction = (state.reportEntries || []).filter(
       (entry) =>
         entry &&
         !entry._syncState &&
@@ -5909,12 +6100,14 @@
     const line = normalizeKpiType(type);
     const names = new Map();
 
-    (state.entries || [])
+    (state.reportEntries || [])
       .filter(
         (item) =>
           item &&
           !item._syncState &&
-          (line === "shift" ? item.tab === "filling" || item.tab === "press" : item.tab === line) &&
+          (line === "shift"
+            ? item.tab === "filling" || item.tab === "press"
+            : item.tab === line) &&
           dashboardDateInPeriod(item.tanggal, period),
       )
       .forEach((item) => {
@@ -5930,10 +6123,13 @@
   function buildShiftKpiReport(monthValue) {
     const period = kpiPressMonthPeriod(monthValue);
     if (!period) return null;
-    const entries = (state.entries || []).filter((entry) =>
-      entry && !entry._syncState &&
-      (entry.tab === "filling" || entry.tab === "press") &&
-      dashboardDateInPeriod(entry.tanggal, period));
+    const entries = (state.reportEntries || []).filter(
+      (entry) =>
+        entry &&
+        !entry._syncState &&
+        (entry.tab === "filling" || entry.tab === "press") &&
+        dashboardDateInPeriod(entry.tanggal, period),
+    );
     if (!entries.length) return null;
 
     const workersByLine = { filling: new Set(), press: new Set() };
@@ -5942,49 +6138,119 @@
     let wet = 0;
     let updateTotal = 0;
     entries.forEach((entry) => {
-      const worker = String(entry.operator || "").trim().toLowerCase();
+      const worker = String(entry.operator || "")
+        .trim()
+        .toLowerCase();
       if (worker) workersByLine[entry.tab].add(worker);
       totalQty += Math.max(0, Number(entry.totalQty) || 0);
-      if (entry.tab === "press") broken += Math.max(0, Number(entry.qtyBotolPecah) || 0);
-      if (entry.tab === "filling") wet += Math.max(0, Number(entry.qtyKardusBasah) || 0);
+      if (entry.tab === "press")
+        broken += Math.max(0, Number(entry.qtyBotolPecah) || 0);
+      if (entry.tab === "filling")
+        wet += Math.max(0, Number(entry.qtyKardusBasah) || 0);
       updateTotal += Math.max(0, Number(entry.updateCount) || 0);
     });
-    const outputTarget = workersByLine.filling.size * getKpiFillingOutputTarget() +
+    const outputTarget =
+      workersByLine.filling.size * getKpiFillingOutputTarget() +
       workersByLine.press.size * getKpiPressOutputTarget();
-    const outputPercent = outputTarget > 0 ? totalQty / outputTarget * 100 : 0;
-    const rejectPercent = totalQty > 0 ? (broken + wet) / totalQty * 100 : null;
+    const outputPercent =
+      outputTarget > 0 ? (totalQty / outputTarget) * 100 : 0;
+    const rejectPercent =
+      totalQty > 0 ? ((broken + wet) / totalQty) * 100 : null;
     const updateAverage = updateTotal / entries.length;
-    const workerKeys = new Set([...workersByLine.filling, ...workersByLine.press]);
+    const workerKeys = new Set([
+      ...workersByLine.filling,
+      ...workersByLine.press,
+    ]);
     const apdByWorker = new Map();
     (state.apdEntries || []).forEach((item) => {
-      const worker = String(item?.operator || "").trim().toLowerCase();
+      const worker = String(item?.operator || "")
+        .trim()
+        .toLowerCase();
       const value = Number(item?.percentage);
-      if (!workerKeys.has(worker) || !dashboardDateInPeriod(item.tanggal, period) ||
-          !Number.isFinite(value)) return;
+      if (
+        !workerKeys.has(worker) ||
+        !dashboardDateInPeriod(item.tanggal, period) ||
+        !Number.isFinite(value)
+      )
+        return;
       if (!apdByWorker.has(worker)) apdByWorker.set(worker, []);
       apdByWorker.get(worker).push(value);
     });
-    const apdActual = averageKpiValues(Array.from(apdByWorker.values()).map(averageKpiValues));
+    const apdActual = averageKpiValues(
+      Array.from(apdByWorker.values()).map(averageKpiValues),
+    );
     const rows = [
-      { no: 1, field: "TARGET", indicator: "PRESENTASE CAPAI TARGET HARIAN", weight: 40,
-        targetText: "> 90% DARI SPK", targetPercent: 100, actualText: kpiPressPercentText(outputPercent),
-        achievement: Math.min(40, outputPercent / 90 * 40), tone: "output" },
-      { no: 2, field: "QC", indicator: "KERUSAKAN HASIL (REJECT YANG SUDAH DI PRESS)", weight: 30,
-        targetText: "RATA-RATA 0,5%", targetPercent: 100, actualText: kpiPressPercentText(rejectPercent),
-        achievement: rejectPercent === null ? 0 : rejectPercent <= 0.5 ? 30 : 0.5 / rejectPercent * 30, tone: "quality" },
-      { no: 3, field: "AKURASI DATA", indicator: "AKURASI DATA HASIL OPERATOR", weight: 20,
-        targetText: "AVERAGE < 3 KESALAHAN PENCATATAN", targetPercent: 100,
-        actualText: updateAverage.toLocaleString("id-ID", { maximumFractionDigits: 2 }),
-        achievement: updateAverage <= 3 ? 20 : 3 / updateAverage * 20, tone: "attendance" },
-      { no: 4, field: "KEPATUHAN", indicator: "KEDISIPLINAN PEMAKAIAN APD", weight: 10,
-        targetText: "> 95%", targetPercent: 100, actualText: kpiPressPercentText(apdActual),
-        achievement: apdActual === null ? 0 : Math.min(10, apdActual / 95 * 10), tone: "apd" },
+      {
+        no: 1,
+        field: "TARGET",
+        indicator: "PRESENTASE CAPAI TARGET HARIAN",
+        weight: 40,
+        targetText: "> 90% DARI SPK",
+        targetPercent: 100,
+        actualText: kpiPressPercentText(outputPercent),
+        achievement: Math.min(40, (outputPercent / 90) * 40),
+        tone: "output",
+      },
+      {
+        no: 2,
+        field: "QC",
+        indicator: "KERUSAKAN HASIL (REJECT YANG SUDAH DI PRESS)",
+        weight: 30,
+        targetText: "RATA-RATA 0,5%",
+        targetPercent: 100,
+        actualText: kpiPressPercentText(rejectPercent),
+        achievement:
+          rejectPercent === null
+            ? 0
+            : rejectPercent <= 0.5
+              ? 30
+              : (0.5 / rejectPercent) * 30,
+        tone: "quality",
+      },
+      {
+        no: 3,
+        field: "AKURASI DATA",
+        indicator: "AKURASI DATA HASIL OPERATOR",
+        weight: 20,
+        targetText: "AVERAGE < 3 KESALAHAN PENCATATAN",
+        targetPercent: 100,
+        actualText: updateAverage.toLocaleString("id-ID", {
+          maximumFractionDigits: 2,
+        }),
+        achievement: updateAverage <= 3 ? 20 : (3 / updateAverage) * 20,
+        tone: "attendance",
+      },
+      {
+        no: 4,
+        field: "KEPATUHAN",
+        indicator: "KEDISIPLINAN PEMAKAIAN APD",
+        weight: 10,
+        targetText: "> 95%",
+        targetPercent: 100,
+        actualText: kpiPressPercentText(apdActual),
+        achievement:
+          apdActual === null ? 0 : Math.min(10, (apdActual / 95) * 10),
+        tone: "apd",
+      },
     ];
-    return { kpiType: "shift", lineLabel: "Ka. Shift", operator: "Ka. Shift", period,
-      outputTarget, outputActual: totalQty, rejectActual: rejectPercent, apdActual,
-      updateAverage, broken, wet, productionDays: new Set(entries.map((entry) => entry.tanggal)).size,
-      presentDays: workerKeys.size, lineDays: entries.length, rows,
-      totalAchievement: rows.reduce((sum, row) => sum + row.achievement, 0) };
+    return {
+      kpiType: "shift",
+      lineLabel: "Ka. Shift",
+      operator: "Ka. Shift",
+      period,
+      outputTarget,
+      outputActual: totalQty,
+      rejectActual: rejectPercent,
+      apdActual,
+      updateAverage,
+      broken,
+      wet,
+      productionDays: new Set(entries.map((entry) => entry.tanggal)).size,
+      presentDays: workerKeys.size,
+      lineDays: entries.length,
+      rows,
+      totalAchievement: rows.reduce((sum, row) => sum + row.achievement, 0),
+    };
   }
 
   function kpiResolveExactOperator(rawOperator, allowedOperators = []) {
@@ -6023,8 +6289,8 @@
       intro.textContent = isShift
         ? "KPI Ka. Shift merangkum seluruh pengerjaan Filling dan Press serta penilaian APD karyawan pada bulan terpilih."
         : isPress
-        ? "Preview KPI Press akan tampil otomatis. Karyawan yang ditampilkan hanya karyawan yang mempunyai pengerjaan Press pada bulan terpilih. Target output KPI Press tetap mengikuti menu Setting."
-        : `Preview KPI Filling akan tampil otomatis. Karyawan yang ditampilkan hanya karyawan yang mempunyai pengerjaan Filling pada bulan terpilih. Target output KPI Filling mengikuti menu Setting (${kpiPressQtyText(getKpiFillingOutputTarget())} botol/bulan).`;
+          ? "Preview KPI Press akan tampil otomatis. Karyawan yang ditampilkan hanya karyawan yang mempunyai pengerjaan Press pada bulan terpilih. Target output KPI Press tetap mengikuti menu Setting."
+          : `Preview KPI Filling akan tampil otomatis. Karyawan yang ditampilkan hanya karyawan yang mempunyai pengerjaan Filling pada bulan terpilih. Target output KPI Filling mengikuti menu Setting (${kpiPressQtyText(getKpiFillingOutputTarget())} botol/bulan).`;
     }
 
     if (badge) {
@@ -6032,8 +6298,8 @@
       badge.innerHTML = isShift
         ? '<i class="fa-solid fa-users"></i> KPI KA. SHIFT'
         : isPress
-        ? '<i class="fa-solid fa-circle-down"></i> KPI PRESS'
-        : '<i class="fa-solid fa-droplet"></i> KPI FILLING';
+          ? '<i class="fa-solid fa-circle-down"></i> KPI PRESS'
+          : '<i class="fa-solid fa-droplet"></i> KPI FILLING';
     }
   }
 
@@ -6104,9 +6370,11 @@
           </div>
 
           <div class="kpi-employee-detail-summary">
-            ${report.kpiType === "shift"
-              ? `<span>Hari Produksi <strong>${report.productionDays}</strong></span><span>Karyawan Aktif <strong>${report.presentDays}</strong></span><span>Entri Produksi <strong>${report.lineDays}</strong></span>`
-              : `<span>Hari Produksi <strong>${report.productionDays}</strong></span><span>Hari Hadir <strong>${report.presentDays}</strong></span><span>Hari ${esc(report.lineLabel || "Produksi")} <strong>${report.lineDays || 0}</strong></span>`}
+            ${
+              report.kpiType === "shift"
+                ? `<span>Hari Produksi <strong>${report.productionDays}</strong></span><span>Karyawan Aktif <strong>${report.presentDays}</strong></span><span>Entri Produksi <strong>${report.lineDays}</strong></span>`
+                : `<span>Hari Produksi <strong>${report.productionDays}</strong></span><span>Hari Hadir <strong>${report.presentDays}</strong></span><span>Hari ${esc(report.lineLabel || "Produksi")} <strong>${report.lineDays || 0}</strong></span>`
+            }
           </div>
         </div>
       </article>`;
@@ -6149,9 +6417,10 @@
       const selectedLabel = reportSet.selectedOperator
         ? "1 karyawan"
         : `${reports.length} karyawan`;
-      summary.textContent = reportSet.kpiType === "shift"
-        ? `KPI Ka. Shift · Periode ${reportSet.period.label} · Target gabungan ${kpiPressQtyText(reportSet.outputTarget)} botol/bulan`
-        : `${selectedLabel} KPI ${reportSet.lineLabel} · Periode ${reportSet.period.label} · Target output ${kpiPressQtyText(reportSet.outputTarget)} botol/bulan`;
+      summary.textContent =
+        reportSet.kpiType === "shift"
+          ? `KPI Ka. Shift · Periode ${reportSet.period.label} · Target gabungan ${kpiPressQtyText(reportSet.outputTarget)} botol/bulan`
+          : `${selectedLabel} KPI ${reportSet.lineLabel} · Periode ${reportSet.period.label} · Target output ${kpiPressQtyText(reportSet.outputTarget)} botol/bulan`;
     }
   }
 
@@ -6186,7 +6455,10 @@
     const id = finalize
       ? genLaporanId().replace(/^LAP-/, `KPI-${lineLabel.toUpperCase()}-`)
       : "PREVIEW";
-    const outputTarget = kpiType === "shift" ? reports[0].outputTarget : getKpiOutputTarget(kpiType);
+    const outputTarget =
+      kpiType === "shift"
+        ? reports[0].outputTarget
+        : getKpiOutputTarget(kpiType);
     state.lastKpiLaporan = {
       id,
       reports,
@@ -6239,7 +6511,13 @@
 
     if (type === "shift") {
       const report = buildShiftKpiReport(monthValue);
-      return { reports: report ? [report] : [], period, selectedOperator: "Ka. Shift", type, error: "" };
+      return {
+        reports: report ? [report] : [],
+        period,
+        selectedOperator: "Ka. Shift",
+        type,
+        error: "",
+      };
     }
 
     // Hanya operator yang benar-benar memiliki pengerjaan pada line KPI terpilih.
@@ -6313,8 +6591,8 @@
         const qualitySummary = isShift
           ? `Reject ${esc(kpiPressPercentText(report.rejectActual, 2))} · Rata-rata update ${esc(String(report.updateAverage.toLocaleString("id-ID", { maximumFractionDigits: 2 })))}`
           : isPress
-          ? `Kerusakan ${esc(report.outputActual > 0 ? kpiPressPercentText(report.rejectActual || 0, 2) : "—")}`
-          : `Kardus Basah ${esc(kpiPressQtyText(report.wetCartonsActual || 0))} dus · Tumpahan ${esc(kpiPressPercentText(report.spillActual, 2))}`;
+            ? `Kerusakan ${esc(report.outputActual > 0 ? kpiPressPercentText(report.rejectActual || 0, 2) : "—")}`
+            : `Kardus Basah ${esc(kpiPressQtyText(report.wetCartonsActual || 0))} dus · Tumpahan ${esc(kpiPressPercentText(report.spillActual, 2))}`;
 
         return `
         <section class="employee-section">
@@ -6333,9 +6611,11 @@
           <div class="compact">
             Output ${esc(kpiPressQtyText(report.outputActual))} · ${qualitySummary} ·
             APD ${esc(kpiPressPercentText(report.apdActual, 2))} ${isShift ? "" : `· Kehadiran ${esc(kpiPressPercentText(report.attendanceActual, 2))}`} ·
-            Hari produksi ${report.productionDays} · ${isShift
-              ? `Karyawan aktif ${report.presentDays} · Entri produksi ${report.lineDays}`
-              : `Hari hadir ${report.presentDays} · Hari ${esc(report.lineLabel)} ${report.lineDays || 0}`}
+            Hari produksi ${report.productionDays} · ${
+              isShift
+                ? `Karyawan aktif ${report.presentDays} · Entri produksi ${report.lineDays}`
+                : `Hari hadir ${report.presentDays} · Hari ${esc(report.lineLabel)} ${report.lineDays || 0}`
+            }
           </div>
         </section>`;
       })
@@ -6345,10 +6625,10 @@
       ? `<p><strong>Keterangan:</strong> Target gabungan memakai target bulanan Filling dan Press di Setting, dikalikan jumlah karyawan aktif pada masing-masing bagian. Capaian target penuh saat hasil mencapai 90% target gabungan.</p>
          <p>Reject = (botol rusak Press + kardus basah Filling) ÷ total pengerjaan pcs. Rata-rata update dihitung per entri Filling dan Press; update APD tidak dihitung.</p>`
       : isPress
-      ? `
+        ? `
         <p><strong>Keterangan:</strong> Target output KPI Press diatur melalui menu Setting.</p>
         <p>Kerusakan botol dihitung dari rata-rata persentase kerusakan harian pada data Press. Target &lt; 1%.</p>`
-      : `
+        : `
         <p><strong>Keterangan:</strong> Target output KPI Filling diatur melalui menu Setting (${esc(kpiPressQtyText(reportSet.outputTarget))} botol/bulan).</p>
         <p>Tumpahan per hari: 0 kardus basah = 0%; 1–5 = 1%; di atas 5 = 1% + ((Qty Kardus Basah − 5) ÷ Qty Pengerjaan Dus × 30%). Nilai KPI bulanan memakai rata-rata persentase harian.</p>`;
 
@@ -6452,7 +6732,14 @@
     };
 
     function showLaporanSubview(name) {
-      const target = views[name] ? name : "hasil";
+      const target =
+        name === "hasil" && can("accessWorkReport")
+          ? "hasil"
+          : name === "kpi" && (canKpiType("filling") || canKpiType("press"))
+            ? "kpi"
+            : can("accessWorkReport")
+              ? "hasil"
+              : "kpi";
       buttons.forEach((btn) => {
         const active = btn.dataset.laporanView === target;
         btn.classList.toggle("active", active);
@@ -6476,7 +6763,7 @@
       showLaporanSubview(btn.dataset.laporanView || "hasil");
     });
 
-    showLaporanSubview("hasil");
+    showLaporanSubview(can("accessWorkReport") ? "hasil" : "kpi");
   }
 
   function initKpiLaporan() {
@@ -6499,7 +6786,7 @@
     }
 
     function refreshAutoPreview() {
-      if (!can("accessReports")) return;
+      if (!canKpiType(el("lap-kpi-type")?.value || "filling")) return;
       const { reports, period, selectedOperator, type, error } =
         collectKpiLaporanData({ finalize: false });
       updateKpiLaporanTypeUi(type);
@@ -6532,12 +6819,14 @@
     el("lap-kpi-operator")?.addEventListener("change", () =>
       scheduleAutoPreview(0),
     );
-    el("lap-kpi-month")?.addEventListener("input", () =>
-      scheduleAutoPreview(120),
-    );
-    el("lap-kpi-month")?.addEventListener("change", () =>
-      scheduleAutoPreview(0),
-    );
+    el("lap-kpi-month")?.addEventListener("input", (event) => {
+      event.target.dataset.userSelected = "1";
+      scheduleAutoPreview(120);
+    });
+    el("lap-kpi-month")?.addEventListener("change", (event) => {
+      event.target.dataset.userSelected = "1";
+      scheduleAutoPreview(0);
+    });
 
     el("lap-kpi-cards")?.addEventListener("click", (event) => {
       const toggle = event.target.closest(".kpi-card-toggle");
@@ -6618,7 +6907,7 @@
     }
 
     generate.addEventListener("click", () => {
-      if (!can("accessReports"))
+      if (!canKpiType(el("lap-kpi-type")?.value || "filling"))
         return toast("Anda tidak memiliki akses Laporan.", true);
 
       const { reports, period, selectedOperator, type, error } =
@@ -6699,11 +6988,17 @@
   }
 
   function matchesLaporanSearch(entry, query) {
-    const keyword = String(query || "").trim().toLowerCase();
+    const keyword = String(query || "")
+      .trim()
+      .toLowerCase();
     if (!keyword) return true;
-    return [entry.operator, entry.produk, entry.botol].some((value) =>
-      String(value || "").toLowerCase().includes(keyword),
-    ) || Number(entry.qtyBotolPerKardus) === Number(keyword);
+    return (
+      [entry.operator, entry.produk, entry.botol].some((value) =>
+        String(value || "")
+          .toLowerCase()
+          .includes(keyword),
+      ) || Number(entry.qtyBotolPerKardus) === Number(keyword)
+    );
   }
 
   function initLaporan() {
@@ -6724,28 +7019,13 @@
     function collectLaporanData() {
       const line = el("lap-line")?.value || "all";
       const searchQuery = el("lap-search")?.value || "";
-      const periodMode = String(el("lap-period-mode")?.value || "").trim();
-      let period = kpiReportPeriodFromInputs();
+      const period = kpiReportPeriodFromInputs();
 
-      // Aturan default Auto Preview:
-      // jika Line masih "Semua Line" dan Periode belum dipilih,
-      // preview/laporan mengikuti tanggal sistem hari ini saja.
-      // Begitu pengguna memilih periode, pilihan tersebut tetap menjadi prioritas.
-      if (line === "all" && !periodMode) {
-        const systemDate = dashboardDateParts(todayStr());
-        if (systemDate) {
-          period = {
-            mode: "date",
-            start: systemDate,
-            end: systemDate,
-            label: dashboardDateKey(systemDate),
-            averagingLabel: "KPI tanggal sistem",
-          };
-        }
-      }
+      // "Semua Periode" memakai seluruh data; filter tanggal diterapkan hanya
+      // setelah pengguna memilih periode tertentu.
 
       // Laporan hanya memakai data yang sudah benar-benar dikonfirmasi Spreadsheet.
-      let rows = state.entries.filter((e) => !e._syncState);
+      let rows = state.reportEntries.filter((e) => !e._syncState);
       rows = rows.filter((entry) => matchesLaporanSearch(entry, searchQuery));
       if (line !== "all") rows = rows.filter((e) => e.tab === line);
       rows = rows.filter((e) => dashboardDateInPeriod(e.tanggal, period));
@@ -6841,8 +7121,10 @@
       el("lap-period").textContent = period.label;
       el("lap-total-entries").textContent = rows.length;
       const quantityTotals = laporanQtyTotals(rows);
-      el("lap-total-kardus").textContent = quantityTotals.kardus.toLocaleString("id-ID");
-      el("lap-total-pcs").textContent = quantityTotals.pcs.toLocaleString("id-ID");
+      el("lap-total-kardus").textContent =
+        quantityTotals.kardus.toLocaleString("id-ID");
+      el("lap-total-pcs").textContent =
+        quantityTotals.pcs.toLocaleString("id-ID");
       el("lap-total-qty").textContent = rows
         .reduce((sum, e) => sum + (Number(e.totalQty) || 0), 0)
         .toLocaleString("id-ID");
@@ -6892,7 +7174,7 @@
     }
 
     function refreshAutoPreview() {
-      if (!can("accessReports")) return;
+      if (!can("accessWorkReport")) return;
       const { rows, period, line } = collectLaporanData();
       showLaporan(rows, period, line, false);
     }
@@ -6914,12 +7196,8 @@
 
     // Semua perubahan filter langsung memperbarui preview.
     el("lap-line")?.addEventListener("change", () => scheduleAutoPreview(0));
-    el("lap-search")?.addEventListener("input", () =>
-      scheduleAutoPreview(180),
-    );
-    el("lap-search")?.addEventListener("change", () =>
-      scheduleAutoPreview(0),
-    );
+    el("lap-search")?.addEventListener("input", () => scheduleAutoPreview(180));
+    el("lap-search")?.addEventListener("change", () => scheduleAutoPreview(0));
     ["lap-date", "lap-month", "lap-year", "lap-start", "lap-end"].forEach(
       (id) => {
         el(id)?.addEventListener("input", () => scheduleAutoPreview(120));
@@ -6931,7 +7209,7 @@
     scheduleAutoPreview(0);
 
     generate.addEventListener("click", () => {
-      if (!can("accessReports"))
+      if (!can("accessWorkReport"))
         return toast("Anda tidak memiliki akses Laporan.", true);
       const { rows, period, line } = collectLaporanData();
       if (!rows.length) {
@@ -7128,7 +7406,7 @@
       wrap.addEventListener("click", async (event) => {
         const btn = event.target.closest("button[data-cat]");
         if (!btn) return;
-        if (!can("accessMaster"))
+        if (!canLevel("master", "write"))
           return toast(
             "Anda tidak memiliki akses Setting / Master Data.",
             true,
@@ -7157,7 +7435,7 @@
       if (!input || !btn) return;
 
       async function addMaster() {
-        if (!can("accessMaster"))
+        if (!canLevel("master", "write"))
           return toast(
             "Anda tidak memiliki akses Setting / Master Data.",
             true,
@@ -7189,7 +7467,7 @@
     });
 
     el("masterReload")?.addEventListener("click", async (event) => {
-      if (!can("accessMaster"))
+      if (!canLevel("master", "write"))
         return toast("Anda tidak memiliki akses Setting / Master Data.", true);
       const btn = event.currentTarget;
       btn.disabled = true;
@@ -7205,7 +7483,7 @@
     });
 
     el("masterCsvExport")?.addEventListener("click", () => {
-      if (!can("accessMaster"))
+      if (!canLevel("master", "write"))
         return toast("Anda tidak memiliki akses Setting / Master Data.", true);
       const op = state.master.operator || [];
       const produk = state.master.produk || [];
@@ -7254,6 +7532,71 @@
     const modal = el("permissionModal");
     const permissionGrid = el("permissionGrid");
     let permissionUsername = "";
+    const permissionScopes = [
+      ["dashboard", "Dashboard"],
+      ["filling", "Filling"],
+      ["press", "Press"],
+      ["apd", "APD"],
+      ["reports", "Laporan"],
+      ["workReport", "Laporan Hasil Pengerjaan"],
+      ["kpiFilling", "Laporan KPI Filling"],
+      ["kpiPress", "Laporan KPI Press"],
+      ["master", "Data Master (Sumber Search)"],
+      ["kpiSettings", "Pengaturan KPI"],
+    ];
+    if (permissionGrid) {
+      permissionGrid.innerHTML = `<div class="permission-table-wrap"><table class="permission-table"><thead><tr><th>Bagian</th><th>Read</th><th>Write</th><th>Administrator</th><th>Kelola Sendiri</th><th>Kelola User Lain</th></tr></thead><tbody>${permissionScopes.map(([scope, title]) => `<tr data-scope="${scope}" ${["workReport", "kpiFilling", "kpiPress"].includes(scope) ? 'class="permission-child"' : ""}><th scope="row">${title}</th>${["read", "write", "admin"].map((level) => `<td><label><input type="checkbox" data-level="${level}" aria-label="${title}: ${level}" ${["dashboard", "reports", "workReport", "kpiFilling", "kpiPress"].includes(scope) && level === "write" ? 'disabled title="Bagian ini tidak memiliki aksi tulis"' : ""}></label></td>`).join("")}${["own", "others"].map((owner) => `<td><label><input type="checkbox" data-manage="${owner}" aria-label="${title}: kelola data ${owner === "own" ? "sendiri" : "user lain"}" ${["filling", "press", "apd"].includes(scope) ? "" : 'disabled title="Tidak berlaku pada bagian ini"'}></label></td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="hint-text">Kelola Sendiri dan Kelola User Lain berlaku pada Filling, Press, dan APD. Write diperlukan untuk menambah data; dua ceklis kelola menentukan izin mengubah dan menghapus. Administrator otomatis mencakup keduanya.</p>`;
+      function syncManagement(row, reset) {
+        if (!["filling", "press", "apd"].includes(row.dataset.scope)) return;
+        const admin = qs('[data-level="admin"]', row).checked;
+        const write = qs('[data-level="write"]', row).checked;
+        qsa("input[data-manage]", row).forEach((input) => {
+          if (admin) input.checked = true;
+          else if (!write) input.checked = false;
+          else if (reset) input.checked = input.dataset.manage === "own";
+          input.disabled = admin || !write;
+        });
+      }
+      function syncReportChildren(reset) {
+        const parent = qs('tr[data-scope="reports"]', permissionGrid);
+        const admin = qs('[data-level="admin"]', parent).checked;
+        const read = qs('[data-level="read"]', parent).checked;
+        qsa("tr.permission-child", permissionGrid).forEach((row) => {
+          qsa('input[data-level]:not([data-level="write"])', row).forEach(
+            (child) => {
+              if (admin) child.checked = true;
+              else if (!read || reset) child.checked = false;
+              child.disabled = admin || !read;
+            },
+          );
+        });
+      }
+      permissionGrid.addEventListener("change", (event) => {
+        const input = event.target.closest("input[data-level]");
+        if (!input) return;
+        const row = input.closest("tr");
+        const check = (level, value) => {
+          const node = qs(`[data-level="${level}"]`, row);
+          if (node && !node.disabled) node.checked = value;
+        };
+        if (input.checked && input.dataset.level === "admin") {
+          check("write", true);
+          check("read", true);
+        }
+        if (input.checked && input.dataset.level === "write")
+          check("read", true);
+        if (!input.checked && input.dataset.level === "read") {
+          check("write", false);
+          check("admin", false);
+        }
+        if (!input.checked && input.dataset.level === "write")
+          check("admin", false);
+        if (row.dataset.scope === "reports") syncReportChildren(true);
+        if (input.dataset.level) syncManagement(row, true);
+      });
+      permissionGrid.syncReportChildren = syncReportChildren;
+      permissionGrid.syncManagement = syncManagement;
+    }
 
     function closePermissionModal() {
       permissionUsername = "";
@@ -7269,9 +7612,30 @@
         ...DEFAULT_USER_PERMISSIONS,
         ...(user.permissions || {}),
       };
-      qsa("input[data-permission]", permissionGrid).forEach((input) => {
-        input.checked = perms[input.dataset.permission] === true;
+      qsa("tr[data-scope]", permissionGrid).forEach((row) => {
+        const scope = row.dataset.scope;
+        const level = perms.levels?.[scope] || "none";
+        const rank = { none: 0, read: 1, write: 2, admin: 3 };
+        qsa("input[data-level]", row).forEach((input) => {
+          if (
+            row.classList.contains("permission-child") &&
+            input.dataset.level !== "write"
+          )
+            input.disabled = false;
+          input.checked =
+            !input.disabled && rank[level] >= rank[input.dataset.level];
+        });
+        qsa("input[data-manage]", row).forEach((input) => {
+          const selected = perms.management?.[scope]?.[input.dataset.manage];
+          input.checked =
+            selected === true ||
+            (selected === undefined &&
+              (level === "admin" ||
+                (level === "write" && input.dataset.manage === "own")));
+        });
+        permissionGrid.syncManagement(row, false);
       });
+      permissionGrid.syncReportChildren(false);
       modal.hidden = false;
     }
 
@@ -7289,10 +7653,31 @@
       const btn = el("permissionSave");
       btn.disabled = true;
       try {
-        const permissions = {};
-        qsa("input[data-permission]", permissionGrid).forEach((input) => {
-          permissions[input.dataset.permission] = input.checked;
+        const permissions = { levels: {}, management: {} };
+        qsa("tr[data-scope]", permissionGrid).forEach((row) => {
+          permissions.levels[row.dataset.scope] = qs(
+            '[data-level="admin"]',
+            row,
+          ).checked
+            ? "admin"
+            : qs('[data-level="write"]', row).checked
+              ? "write"
+              : qs('[data-level="read"]', row).checked
+                ? "read"
+                : "none";
         });
+        ["filling", "press", "apd"].forEach((scope) => {
+          const row = qs(`tr[data-scope="${scope}"]`, permissionGrid);
+          permissions.management[scope] = {
+            own: qs('[data-manage="own"]', row).checked,
+            others: qs('[data-manage="others"]', row).checked,
+          };
+        });
+        if (permissions.levels.reports !== "read") {
+          ["workReport", "kpiFilling", "kpiPress"].forEach((scope) => {
+            permissions.levels[scope] = "none";
+          });
+        }
         const data = await apiPost("user.permissions.set", {
           username: permissionUsername,
           permissions,
