@@ -42,7 +42,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbyk3oyUJpJ5eEGSs6Lvq1xp58r9lsfROdJc2lWPC_66XgcO2kSVIr6BxX2p3HcTV5MQqw/exec",
+      "https://script.google.com/macros/s/AKfycbw4JvxePJMRFqRuUJ9hPoFfLz_ts3gE0RZMt7B2P7ht1ycgq_vw0ni4aX4ovrqhGeDUQA/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -1210,8 +1210,17 @@
     return data;
   }
 
-  async function loadAppData() {
-    const data = await apiGet("appdata", { apdDate: todayStr() });
+  async function loadAppData(includeBootstrap = false) {
+    const data = await apiGet("appdata", {
+      includeBootstrap: includeBootstrap ? "1" : "0",
+    });
+    // Kompatibilitas deployment lama: jalur baru cukup satu request.
+    if (includeBootstrap && (!data.user || !data.master)) {
+      const bootstrap = await apiGet("bootstrap");
+      data.user = bootstrap.user;
+      data.master = bootstrap.master;
+      if (!data.settings) data.settings = bootstrap.settings;
+    }
     applyBootstrap(data);
     if (!Array.isArray(data.reportEntries) && canOpenReports()) {
       setConnection("error", "Backend laporan perlu diperbarui");
@@ -5152,6 +5161,10 @@
       qsa(".content > .view").forEach((node) => {
         node.hidden = node.id !== "view-" + view;
       });
+      if (view === "laporan") {
+        window.refreshLaporanAutoPreview?.();
+        window.refreshKpiLaporanAutoPreview?.();
+      }
     });
   }
 
@@ -7148,6 +7161,7 @@
     }
 
     function refreshAutoPreview() {
+      if (el("view-laporan")?.hidden) return;
       if (!canKpiType(el("lap-kpi-type")?.value || "filling")) return;
       const { reports, period, selectedOperator, type, error } =
         collectKpiLaporanData({ finalize: false });
@@ -7536,6 +7550,7 @@
     }
 
     function refreshAutoPreview() {
+      if (el("view-laporan")?.hidden) return;
       if (!can("accessWorkReport")) return;
       const { rows, period, line } = collectLaporanData();
       showLaporan(rows, period, line, false);
@@ -7834,8 +7849,7 @@
       const btn = event.currentTarget;
       btn.disabled = true;
       try {
-        await loadBootstrap();
-        await loadAppData();
+        await loadAppData(true);
         toast("Data terbaru sudah dimuat dari Spreadsheet.");
       } catch (err) {
         toast(err.message, true);
@@ -8458,8 +8472,8 @@
       initDashboardSlider();
     });
     try {
-      // Bootstrap sekarang ringan: hanya validasi user + master dropdown.
-      await loadBootstrap();
+      // Profil, master, dan data awal dimuat bersama dalam satu request.
+      await loadAppData(true);
       if (state.currentUser) {
         localStorage.setItem(
           CONFIG.USER_KEY,
@@ -8467,13 +8481,22 @@
         );
       }
       el("appScreen").hidden = false;
-
-      // Daftar pengerjaan/users dimuat setelah halaman sudah bisa dipakai.
-      loadAppData().catch((err) => {
-        setConnection("error", "Daftar data gagal dimuat");
-        toast(err.message, true);
-      });
     } catch (err) {
+      const invalidSession =
+        err?.isApiError && /sesi|user.*tidak aktif/i.test(err.message || "");
+      if (!invalidSession) {
+        setConnection("error", "Data awal gagal dimuat");
+        const notice = el("startupError");
+        if (notice) notice.hidden = false;
+        const message = el("startupErrorMessage");
+        if (message) message.textContent = err.message;
+        el("startupRetry")?.addEventListener(
+          "click",
+          () => window.location.reload(),
+          { once: true },
+        );
+        return;
+      }
       state.token = "";
       state.currentUser = null;
       localStorage.removeItem(CONFIG.TOKEN_KEY);

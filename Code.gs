@@ -57,7 +57,7 @@ function setupSpreadsheet() {
   const master = ensureSheet_(ss, APP.SHEETS.MASTER, ['Nama Operator', 'Nama Produk', 'Nama Botol']);
   const users = ensureSheet_(ss, APP.SHEETS.USERS, APP.USER_HEADERS);
   ensureSheet_(ss, APP.SHEETS.SESSIONS, APP.SESSION_HEADERS);
-  ensureEntrySheetSchema_(ss);
+  ensureEntrySheetSchema_(ss, true);
   ensureSheet_(ss, APP.SHEETS.PRESS_ADJUSTMENTS, APP.PRESS_ADJUSTMENT_HEADERS);
   ensureSheet_(ss, APP.SHEETS.PRESS_REMAINDERS, APP.PRESS_REMAINDER_HEADERS);
   ensureApdSheet_(ss, true);
@@ -134,31 +134,37 @@ function doGet(e) {
 
     if (action === 'appdata') {
       const session = requireSession_(param_(e, 'token'));
-      const allEntries = getEntries_();
+      const readDashboard = can_(session.user, 'accessDashboard');
+      const readFilling = can_(session.user, 'accessFilling');
+      const readPress = can_(session.user, 'accessPress');
+      const readKpi = can_(session.user, 'accessKpiReport') || can_(session.user, 'accessKpiFillingReport') || can_(session.user, 'accessKpiPressReport');
+      const readReports = can_(session.user, 'accessWorkReport') || readKpi;
+      const readApd = can_(session.user, 'accessApd') || readKpi || readDashboard;
+      const allEntries = (readDashboard || readFilling || readPress || readReports) ? getEntries_() : [];
       const featureEntries = allEntries.filter(function (entry) {
-        if (can_(session.user, 'accessDashboard')) return true;
-        if (entry.tab === 'filling') return can_(session.user, 'accessFilling');
-        if (entry.tab === 'press') return can_(session.user, 'accessPress');
+        if (readDashboard) return true;
+        if (entry.tab === 'filling') return readFilling;
+        if (entry.tab === 'press') return readPress;
         return false;
       });
       // Read menampilkan seluruh data pada bagian yang diizinkan. Hak ubah/hapus
       // tetap diperiksa terpisah menurut pemilik data pada setiap aksi tulis.
       const visibleEntries = featureEntries;
       const reportEntries = allEntries.filter(function (entry) {
-        return (entry.tab === 'filling' || entry.tab === 'press') &&
-          (can_(session.user, 'accessWorkReport') || can_(session.user, 'accessKpiFillingReport') ||
-            can_(session.user, 'accessKpiPressReport') || can_(session.user, 'accessKpiReport'));
+        return (entry.tab === 'filling' || entry.tab === 'press') && readReports;
       });
-      const pressAdjustments = can_(session.user, 'accessPress') ? getPressAdjustments_() : [];
-      const apdDate = String(param_(e, 'apdDate') || '').trim();
+      const pressAdjustments = readPress ? getPressAdjustments_() : [];
+      const includeBootstrap = param_(e, 'includeBootstrap') === '1';
       return json_({
         ok: true,
+        user: includeBootstrap ? publicUser_(session.user) : undefined,
+        master: includeBootstrap ? getMaster_() : undefined,
         entries: visibleEntries,
         reportEntries: reportEntries,
         adjustments: pressAdjustments,
-        remainders: can_(session.user, 'accessPress') ? getPressRemainders_(allEntries, pressAdjustments) : [],
+        remainders: readPress ? getPressRemainders_(allEntries, pressAdjustments) : [],
         // KPI pada Dashboard/Laporan membutuhkan nilai APD meskipun user tidak membuka tab APD.
-        apdEntries: (can_(session.user, 'accessApd') || can_(session.user, 'accessKpiReport') || can_(session.user, 'accessKpiFillingReport') || can_(session.user, 'accessKpiPressReport') || can_(session.user, 'accessDashboard')) ? getApdEntries_() : [],
+        apdEntries: readApd ? getApdEntries_() : [],
         users: session.user.role === 'superuser' ? getUsers_() : [],
         settings: getSettings_()
       });
@@ -1242,9 +1248,11 @@ function deleteEntry_(user, id) {
 
 function getEntries_() {
   const sh = entrySheet_();
-  const values = sh.getDataRange().getValues();
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return [];
+  const values = sh.getRange(2, 1, lastRow - 1, APP.ENTRY_HEADERS.length).getValues();
   const result = [];
-  for (let i = 1; i < values.length; i++) {
+  for (let i = 0; i < values.length; i++) {
     if (values[i][0]) result.push(rowToEntry_(values[i]));
   }
   return result;
@@ -1342,7 +1350,10 @@ function productKey_(produk) {
   return String(produk || '').trim().toLowerCase();
 }
 
-function ensureEntrySheetSchema_(ss) {
+let ENTRY_READY_SHEET_ = null;
+
+function ensureEntrySheetSchema_(ss, forceSetup) {
+  if (ENTRY_READY_SHEET_ && !forceSetup) return ENTRY_READY_SHEET_;
   let sh = ss.getSheetByName(APP.SHEETS.ENTRIES);
   if (!sh) {
     sh = ss.insertSheet(APP.SHEETS.ENTRIES);
@@ -1363,6 +1374,10 @@ function ensureEntrySheetSchema_(ss) {
   // 1) Pastikan qtyKardusBasah benar-benar menjadi kolom M / ke-13.
   //    Schema lama menaruh createdBy langsung sesudah qtyBotolPecah.
   let headers = readHeaders_();
+  if (!forceSetup && APP.ENTRY_HEADERS.every(function (header, index) { return headers[index] === header; }) && headers.indexOf('createdByName') < 0) {
+    ENTRY_READY_SHEET_ = sh;
+    return sh;
+  }
   const qtyPecahIndex = headers.indexOf('qtyBotolPecah'); // zero-based
   const qtyBasahIndex = headers.indexOf('qtyKardusBasah');
 
@@ -1492,6 +1507,7 @@ function ensureEntrySheetSchema_(ss) {
   }
 
   // Sel kosong qtyKardusBasah tetap dibaca sebagai 0 oleh rowToEntry_().
+  ENTRY_READY_SHEET_ = sh;
   return sh;
 }
 
@@ -2028,15 +2044,21 @@ function getSettings_() {
   }
 
   const ss = spreadsheet_();
-  // ensureSettingsSheet_ juga berfungsi sebagai migrasi otomatis untuk Spreadsheet
-  // lama yang sebelumnya hanya memiliki target KPI Press.
-  const sh = ensureSettingsSheet_(ss);
+  let sh = ss.getSheetByName(APP.SHEETS.SETTINGS);
+  let lastRow = sh ? sh.getLastRow() : 0;
+  let rows = sh && lastRow >= 2 && sh.getMaxColumns() >= APP.SETTINGS_HEADERS.length
+    ? sh.getRange(2, 1, lastRow - 1, APP.SETTINGS_HEADERS.length).getValues() : [];
+  const keys = rows.map(function (row) { return String(row[0] || '').trim(); });
+  if (keys.indexOf(KPI_FILLING_OUTPUT_TARGET_KEY_) < 0 || keys.indexOf(KPI_PRESS_OUTPUT_TARGET_KEY_) < 0) {
+    // Jalankan migrasi hanya jika salah satu target belum tersedia.
+    sh = ensureSettingsSheet_(ss);
+    lastRow = sh.getLastRow();
+    rows = lastRow >= 2 ? sh.getRange(2, 1, lastRow - 1, APP.SETTINGS_HEADERS.length).getValues() : [];
+  }
 
   let fillingOutputTarget = KPI_FILLING_OUTPUT_TARGET_DEFAULT_;
   let pressOutputTarget = KPI_PRESS_OUTPUT_TARGET_DEFAULT_;
-  const lastRow = sh.getLastRow();
   if (lastRow >= 2) {
-    const rows = sh.getRange(2, 1, lastRow - 1, APP.SETTINGS_HEADERS.length).getValues();
     rows.forEach(function (row) {
       const key = String(row[0] || '').trim();
       const candidate = Number(row[1]);
@@ -2629,6 +2651,8 @@ function ensureSheet_(ss, name, headers) {
   let sh = ss.getSheetByName(name);
   if (!sh) sh = ss.insertSheet(name);
   if (sh.getMaxColumns() < headers.length) sh.insertColumnsAfter(sh.getMaxColumns(), headers.length - sh.getMaxColumns());
+  const existingHeaders = sh.getRange(1, 1, 1, headers.length).getDisplayValues()[0];
+  if (headers.every(function (header, index) { return String(existingHeaders[index] || '').trim() === header; })) return sh;
   sh.getRange(1, 1, 1, headers.length).setValues([headers]);
   styleHeader_(sh, headers.length);
   sh.setFrozenRows(1);

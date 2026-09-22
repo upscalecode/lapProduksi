@@ -13,12 +13,18 @@
     <script
       src="https://kit.fontawesome.com/59dfa0db6c.js"
       crossorigin="anonymous"
+      defer
     ></script>
     <link rel="stylesheet" href="style.css?v=20260922-v31-apd-history-filter" />
 
     <style></style>
   </head>
   <body data-page="app">
+    <div id="startupError" class="panel" role="alert" hidden>
+      <p>Data awal belum berhasil dimuat.</p>
+      <p id="startupErrorMessage" class="hint-text"></p>
+      <button type="button" id="startupRetry" class="btn btn-primary">Coba lagi</button>
+    </div>
     <div id="appScreen" class="app-shell" hidden>
       <div class="sticky-app-header">
         <header class="topbar">
@@ -2088,7 +2094,7 @@
       </main>
     </div>
 
-    <script src="script.js?v=20260922-v40-apd-history-filter"></script>
+    <script src="script.js?v=20260922-v41-startup-performance"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>
