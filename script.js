@@ -41,7 +41,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbwgWlEzLr3d1fT_m4zf4q6iJO0V95B4GhARi5DNh0s1L9lH8OY4JqF0knRJ-DnP8n2VLQ/exec",
+      "https://script.google.com/macros/s/AKfycbzPA3QRFo2OlvpOtI6gQ1WqLd5IxMFd2vQ98Y28UIy19kxlsWZT9EYWVix9jTE9_wCDaw/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -7518,6 +7518,7 @@
         <td><span class="role-tag ${esc(user.role)}">${user.role === "superuser" ? "Super User" : "User"}</span></td>
         <td class="row-actions">
           ${user.role === "user" ? `<button type="button" class="btn btn-ghost btn-access-user" data-username="${esc(user.username)}">Atur Akses</button>` : '<span class="permission-full">Akses penuh</span>'}
+          <button type="button" class="btn btn-ghost btn-reset-user" data-username="${esc(user.username)}">Reset Password</button>
           ${user.username === state.currentUser.username ? "" : `<button type="button" class="btn btn-danger btn-del-user" data-username="${esc(user.username)}">Hapus</button>`}
         </td>
       </tr>`,
@@ -7531,7 +7532,74 @@
     if (!form || !tbody) return;
     const modal = el("permissionModal");
     const permissionGrid = el("permissionGrid");
+    const resetModal = el("resetPasswordModal");
+    const resetForm = el("resetPasswordForm");
     let permissionUsername = "";
+    let resetUsername = "";
+
+    function closeResetPasswordModal() {
+      resetUsername = "";
+      resetForm?.reset();
+      if (el("resetPasswordError")) el("resetPasswordError").hidden = true;
+      if (resetModal) resetModal.hidden = true;
+    }
+
+    function openResetPasswordModal(user) {
+      if (!resetModal || !user || state.currentUser?.role !== "superuser")
+        return;
+      resetForm?.reset();
+      resetUsername = user.username;
+      el("resetPasswordUserLabel").textContent =
+        `${user.name} (@${user.username})`;
+      el("resetPasswordError").hidden = true;
+      resetModal.hidden = false;
+      el("resetPasswordNew")?.focus();
+    }
+
+    el("resetPasswordClose")?.addEventListener(
+      "click",
+      closeResetPasswordModal,
+    );
+    el("resetPasswordCancel")?.addEventListener(
+      "click",
+      closeResetPasswordModal,
+    );
+    resetModal?.addEventListener("click", (event) => {
+      if (event.target === resetModal) closeResetPasswordModal();
+    });
+    resetForm?.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (!resetUsername || state.currentUser?.role !== "superuser") return;
+      const password = el("resetPasswordNew").value;
+      const confirmPassword = el("resetPasswordConfirm").value;
+      const error = el("resetPasswordError");
+      if (password !== confirmPassword) {
+        error.textContent = "Konfirmasi password tidak sama.";
+        error.hidden = false;
+        return;
+      }
+      const button = el("resetPasswordSave");
+      button.disabled = true;
+      error.hidden = true;
+      try {
+        const target = resetUsername;
+        await apiPost("user.password.reset", { username: target, password });
+        closeResetPasswordModal();
+        if (target === state.currentUser.username) {
+          state.token = "";
+          localStorage.removeItem(CONFIG.TOKEN_KEY);
+          localStorage.removeItem(CONFIG.USER_KEY);
+          window.location.replace("login.html");
+          return;
+        }
+        toast(`Password ${target} berhasil direset. User perlu login kembali.`);
+      } catch (err) {
+        error.textContent = err.message;
+        error.hidden = false;
+      } finally {
+        button.disabled = false;
+      }
+    });
     const permissionScopes = [
       ["dashboard", "Dashboard"],
       ["filling", "Filling"],
@@ -7722,6 +7790,14 @@
           (item) => item.username === accessBtn.dataset.username,
         );
         openPermissionModal(user);
+        return;
+      }
+      const resetBtn = event.target.closest(".btn-reset-user");
+      if (resetBtn) {
+        const user = state.users.find(
+          (item) => item.username === resetBtn.dataset.username,
+        );
+        openResetPasswordModal(user);
         return;
       }
       const btn = event.target.closest(".btn-del-user");

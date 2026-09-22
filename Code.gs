@@ -296,6 +296,13 @@ function doPost(e) {
           return json_({ ok: true, users: getUsers_() });
         });
 
+      case 'user.password.reset':
+        requireSuperuser_(session.user);
+        return withWriteLock_(function () {
+          resetUserPassword_(param_(e, 'username'), param_(e, 'password'));
+          return json_({ ok: true });
+        });
+
       case 'user.remove':
         requireSuperuser_(session.user);
         return withWriteLock_(function () {
@@ -2097,6 +2104,24 @@ function setUserPermissions_(username, permissions) {
     const normalized = normalizePermissions_('user', permissions || {});
     sh.getRange(i + 1, 7).setValue(JSON.stringify(normalized));
     invalidateUsersCache_();
+    return;
+  }
+  throw new Error('User tidak ditemukan.');
+}
+
+function resetUserPassword_(username, password) {
+  const target = String(username || '').trim();
+  const nextPassword = String(password || '');
+  if (!target) throw new Error('Username tidak valid.');
+  if (nextPassword.length < 8) throw new Error('Password baru minimal 8 karakter.');
+
+  const sh = sheet_(APP.SHEETS.USERS);
+  const values = sh.getDataRange().getValues();
+  for (let i = 1; i < values.length; i++) {
+    if (String(values[i][0]) !== target) continue;
+    sh.getRange(i + 1, 2).setValue(hashPassword_(nextPassword));
+    invalidateUsersCache_();
+    removeSessionsForUser_(target);
     return;
   }
   throw new Error('User tidak ditemukan.');
