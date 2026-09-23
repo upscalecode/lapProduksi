@@ -129,6 +129,8 @@
     accessDashboard: false,
     accessFilling: true,
     accessPress: true,
+    accessExportFillingCsv: false,
+    accessExportPressCsv: false,
     accessApd: true,
     accessReports: false,
     accessWorkReport: false,
@@ -284,6 +286,12 @@
         "read-only",
         !canLevel(scope, "write"),
       );
+    });
+    qsa("#view-filling .f-export-btn").forEach((button) => {
+      button.hidden = !can("accessExportFillingCsv");
+    });
+    qsa("#view-press .f-export-btn").forEach((button) => {
+      button.hidden = !can("accessExportPressCsv");
     });
     el("view-master")?.classList.toggle(
       "master-read-only",
@@ -788,6 +796,78 @@
     }, 3500);
   }
 
+  function confirmDelete({ title = "Hapus data?", message, item = "" } = {}) {
+    return new Promise((resolve) => {
+      const previousFocus = document.activeElement;
+      const overlay = document.createElement("div");
+      overlay.className = "delete-confirm-modal";
+      overlay.innerHTML = `
+        <div class="delete-confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="deleteConfirmTitle" aria-describedby="deleteConfirmMessage">
+          <div class="delete-confirm-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" focusable="false"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-2 6h10l-.7 11H7.7L7 9Zm3 2v7h2v-7h-2Zm4 0v7h2v-7h-2Z"/></svg>
+          </div>
+          <div class="delete-confirm-content">
+            <p class="delete-confirm-eyebrow">Konfirmasi hapus</p>
+            <h3 id="deleteConfirmTitle"></h3>
+            <p id="deleteConfirmMessage" class="delete-confirm-message"></p>
+            <p class="delete-confirm-item" hidden></p>
+          </div>
+          <div class="delete-confirm-actions">
+            <button type="button" class="btn delete-confirm-cancel">Batal</button>
+            <button type="button" class="btn delete-confirm-submit">Ya, hapus</button>
+          </div>
+        </div>`;
+
+      qs("#deleteConfirmTitle", overlay).textContent = title;
+      qs("#deleteConfirmMessage", overlay).textContent =
+        message || "Data yang sudah dihapus tidak dapat dikembalikan.";
+      const itemEl = qs(".delete-confirm-item", overlay);
+      if (item) {
+        itemEl.textContent = item;
+        itemEl.hidden = false;
+      }
+
+      let finished = false;
+      const finish = (confirmed) => {
+        if (finished) return;
+        finished = true;
+        document.removeEventListener("keydown", onKeydown);
+        overlay.classList.add("is-closing");
+        setTimeout(() => overlay.remove(), 140);
+        if (previousFocus instanceof HTMLElement) previousFocus.focus();
+        resolve(confirmed);
+      };
+      const onKeydown = (event) => {
+        if (event.key === "Escape") finish(false);
+        if (event.key !== "Tab") return;
+        const buttons = qsa("button", overlay);
+        const first = buttons[0];
+        const last = buttons[buttons.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      };
+
+      qs(".delete-confirm-cancel", overlay).addEventListener("click", () =>
+        finish(false),
+      );
+      qs(".delete-confirm-submit", overlay).addEventListener("click", () =>
+        finish(true),
+      );
+      overlay.addEventListener("click", (event) => {
+        if (event.target === overlay) finish(false);
+      });
+      document.addEventListener("keydown", onKeydown);
+      document.body.appendChild(overlay);
+      requestAnimationFrame(() => overlay.classList.add("is-visible"));
+      qs(".delete-confirm-cancel", overlay).focus();
+    });
+  }
+
   function pageNumbers(current, total) {
     if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
     const values = [1];
@@ -1047,6 +1127,8 @@
           (item) =>
             balanceKey(item.produk, item.botol) ===
               balanceKey(produkValue, botolValue) &&
+            String(item.tanggalAsal || "") ===
+              String(deleteBtn.dataset.tanggalAsal || "") &&
             Number(item.qtyBotolPerKardus[0]) ===
               Number(deleteBtn.dataset.perKardus),
         );
@@ -1763,34 +1845,15 @@
     (state.remainders || []).forEach((item) => {
       const remaining = Number(item.sisaQty ?? item.remaining) || 0;
       if (remaining <= 0) return;
-      const hasGroupStats =
-        Number(item.qtyBotolPerKardus) > 0 &&
-        Array.isArray(item.groupQtyBotolPerKardusValues) &&
-        item.groupQtyBotolPerKardusValues.length === 1 &&
-        Number(item.groupQtyBotolPerKardusValues[0]) ===
-          Number(item.qtyBotolPerKardus) &&
-        item.groupQtyFilling !== undefined &&
-        item.groupQtyPressTerpakai !== undefined;
       lots.push({
         id: String(item.id || ""),
         tanggalAsal: String(item.tanggalAsal || item.tanggal || ""),
         produk: String(item.produk || "").trim(),
         botol: String(item.botol || "").trim(),
         qtyBotolPerKardus: getQtyBotolPerKardusFromRemainder(item),
-        qtyBotolPerKardusValues:
-          hasGroupStats && Array.isArray(item.groupQtyBotolPerKardusValues)
-            ? item.groupQtyBotolPerKardusValues
-                .map(Number)
-                .filter((value) => value > 0)
-            : [],
+        qtyBotolPerKardusValues: [],
         qtyFilling: Number(item.qtyFilling) || remaining,
         qtyPressTerpakai: Number(item.qtyPressTerpakai) || 0,
-        groupQtyFilling: hasGroupStats
-          ? Number(item.groupQtyFilling) || 0
-          : null,
-        groupQtyPressTerpakai: hasGroupStats
-          ? Number(item.groupQtyPressTerpakai) || 0
-          : null,
         previewPressTerpakai: 0,
         remaining,
         source: "spreadsheet",
@@ -1809,8 +1872,6 @@
         qtyBotolPerKardus: Number(item.qtyBotolPerKardus) || 0,
         qtyFilling: qty,
         qtyPressTerpakai: 0,
-        groupQtyFilling: null,
-        groupQtyPressTerpakai: null,
         previewPressTerpakai: 0,
         remaining: qty,
         source: "preview",
@@ -1865,70 +1926,42 @@
         });
     });
 
-    // Gabungkan berdasarkan Produk + Botol + Qty Botol per Kardus. Semua lot ikut
+    // Gabungkan berdasarkan Tanggal Asal + Produk + Botol + Qty Botol per Kardus.
+    // Pemisahan tanggal mencegah nilai "Sudah Press" dari tanggal lain ikut masuk.
+    // Semua lot ikut
     // dihitung, termasuk lot yang menjadi 0 karena Preview Press. Baris baru
     // disembunyikan setelah total Sisa kombinasi benar-benar 0.
     //
-    // Backend mengirim groupQtyFilling/groupQtyPressTerpakai agar histori lot
-    // yang sudah habis Press tetap masuk ke kolom Qty Filling dan Sudah Press.
     const grouped = new Map();
     lots.forEach((lot) => {
       // Filter per lot agar Filling masa depan tidak ikut saldo tanggal Press.
       if (options.pressDate && lot.tanggalAsal > options.pressDate) return;
+      const tanggal = String(lot.tanggalAsal || "");
       const key =
+        tanggal +
+        "|" +
         balanceKey(lot.produk, lot.botol) +
         "|" +
         (Number(lot.qtyBotolPerKardus) || 0);
       if (!grouped.has(key)) {
         grouped.set(key, {
           id: `balance-${key}`,
-          tanggalAsal: "",
+          tanggalAsal: tanggal,
           produk: String(lot.produk || "").trim(),
           botol: String(lot.botol || "").trim(),
           qtyFilling: 0,
           qtyPressTerpakai: 0,
           remaining: 0,
-          savedGroupStatsApplied: false,
           qtyBotolPerKardusValues: new Set(),
           sources: new Set(),
         });
       }
       const group = grouped.get(key);
-      const tanggal = String(lot.tanggalAsal || "");
-
-      // Tanggal Asal adalah lot tertua yang masih memiliki sisa setelah seluruh
-      // Preview Press dialokasikan.
-      if (
-        lot.remaining > 0 &&
-        tanggal &&
-        (!group.tanggalAsal || tanggal < group.tanggalAsal)
-      ) {
-        group.tanggalAsal = tanggal;
-      }
-
-      if (
-        lot.source === "spreadsheet" &&
-        lot.groupQtyFilling !== null &&
-        lot.groupQtyPressTerpakai !== null
-      ) {
-        // Nilai grup dari backend identik pada setiap lot aktif kombinasi yang sama,
-        // sehingga cukup dimasukkan satu kali agar tidak terduplikasi.
-        if (!group.savedGroupStatsApplied) {
-          group.qtyFilling += Number(lot.groupQtyFilling) || 0;
-          group.qtyPressTerpakai += Number(lot.groupQtyPressTerpakai) || 0;
-          group.savedGroupStatsApplied = true;
-        }
-      } else {
-        // Kompatibilitas deployment lama dan Preview Filling.
-        group.qtyFilling += Number(lot.qtyFilling) || 0;
-        group.qtyPressTerpakai += Number(lot.qtyPressTerpakai) || 0;
-      }
-
-      // Preview Press belum ada di angka grup backend, jadi tambahkan delta ini
-      // secara terpisah untuk semua lot yang dikonsumsi preview.
-      if (lot.source === "spreadsheet" && lot.groupQtyFilling !== null) {
-        group.qtyPressTerpakai += Number(lot.previewPressTerpakai) || 0;
-      }
+      // Untuk data tersimpan, kedua angka ini hanya berasal dari baris pada
+      // Sheet Sisa Press dengan tanggal asal yang sama. Preview Press ditambahkan
+      // sebagai delta lokal setelah lolos validasi tanggal di atas.
+      group.qtyFilling += Number(lot.qtyFilling) || 0;
+      group.qtyPressTerpakai += Number(lot.qtyPressTerpakai) || 0;
 
       group.remaining += Number(lot.remaining) || 0;
 
@@ -2070,6 +2103,7 @@
                 ? `
             <button type="button" class="btn btn-danger press-balance-delete"
             data-produk="${esc(row.produk)}"
+            data-tanggal-asal="${esc(row.tanggalAsal)}"
             data-per-kardus="${Number(row.qtyBotolPerKardus[0]) || 0}"
             data-botol="${esc(row.botol)}" ${deleteDisabled ? "disabled" : ""}
             title="${esc(deleteTitle)}"> Hapus </button>
@@ -2806,7 +2840,21 @@
       });
     }
 
-    qs(".f-export-btn", section).addEventListener("click", () => {
+    const exportButton = qs(".f-export-btn", section);
+    if (exportButton) {
+      exportButton.hidden = !can(
+        line === "filling"
+          ? "accessExportFillingCsv"
+          : "accessExportPressCsv",
+      );
+    }
+    exportButton?.addEventListener("click", () => {
+      const exportPermission =
+        line === "filling"
+          ? "accessExportFillingCsv"
+          : "accessExportPressCsv";
+      if (!can(exportPermission))
+        return toast("Anda tidak memiliki akses Export CSV.", true);
       const rows = filteredPreviewEntries(line);
       if (!rows.length)
         return toast("Belum ada data preview untuk diexport.", true);
@@ -2887,7 +2935,14 @@
         );
         if (!entry || !canDeleteEntry(entry))
           return toast("Anda tidak memiliki akses menghapus data ini.", true);
-        if (!confirm(`Hapus data ${entry.reportId}?`)) return;
+        if (
+          !(await confirmDelete({
+            title: "Hapus data produksi?",
+            message: "Data produksi dan riwayat terkait akan dihapus permanen.",
+            item: entry.reportId,
+          }))
+        )
+          return;
         savedDeleteBtn.disabled = true;
         try {
           const response = await enqueueWrite(() =>
@@ -3779,7 +3834,11 @@
             true,
           );
         if (
-          !confirm(`Hapus data APD ${item.operator} tanggal ${item.tanggal}?`)
+          !(await confirmDelete({
+            title: "Hapus data APD?",
+            message: "Data pemeriksaan APD ini akan dihapus permanen.",
+            item: `${item.operator} • ${item.tanggal}`,
+          }))
         )
           return;
 
@@ -4863,13 +4922,13 @@
     const brokenToday = entries
       .filter((entry) => entry.tab === "press" && entry.tanggal === today)
       .reduce((sum, entry) => sum + (Number(entry.qtyBotolPecah) || 0), 0);
+    const wetCartonsToday = entries
+      .filter((entry) => entry.tab === "filling" && entry.tanggal === today)
+      .reduce((sum, entry) => sum + (Number(entry.qtyKardusBasah) || 0), 0);
     const waiting = balanceRows.reduce(
       (sum, row) => sum + (Number(row.remaining) || 0),
       0,
     );
-    const oldestDays = balanceRows.length
-      ? Math.max(...balanceRows.map((row) => dashboardAgeDays(row.tanggalAsal)))
-      : 0;
     const fillingAll = entries
       .filter((entry) => entry.tab === "filling")
       .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
@@ -4898,7 +4957,7 @@
       dashboardQty(masterValues("produk").length),
     );
     dashboardSetText("dashBrokenToday", dashboardQty(brokenToday));
-    dashboardSetText("dashOldestDays", dashboardQty(oldestDays));
+    dashboardSetText("dashWetCartonsToday", dashboardQty(wetCartonsToday));
     dashboardSetText("dashFlowFilling", `${dashboardQty(fillingToday)} pcs`);
     dashboardSetText(
       "dashFlowWaiting",
@@ -7889,7 +7948,14 @@
             "Anda tidak memiliki akses Setting / Master Data.",
             true,
           );
-        if (!confirm(`Hapus "${btn.dataset.value}" dari master?`)) return;
+        if (
+          !(await confirmDelete({
+            title: "Hapus master data?",
+            message: "Item ini akan dihapus dari daftar master.",
+            item: btn.dataset.value,
+          }))
+        )
+          return;
         try {
           const data = await apiPost("master.remove", {
             category: btn.dataset.cat,
@@ -8090,7 +8156,7 @@
       ["kpiSettings", "Pengaturan KPI"],
     ];
     if (permissionGrid) {
-      permissionGrid.innerHTML = `<div class="permission-table-wrap"><table class="permission-table"><thead><tr><th>Bagian</th><th>Read</th><th>Write</th><th>Administrator</th><th>Kelola Sendiri</th><th>Kelola User Lain</th></tr></thead><tbody>${permissionScopes.map(([scope, title]) => `<tr data-scope="${scope}" ${["workReport", "kpiFilling", "kpiPress"].includes(scope) ? 'class="permission-child"' : ""}><th scope="row">${title}</th>${["read", "write", "admin"].map((level) => `<td><label><input type="checkbox" data-level="${level}" aria-label="${title}: ${level}" ${["dashboard", "reports", "workReport", "kpiFilling", "kpiPress"].includes(scope) && level === "write" ? 'disabled title="Bagian ini tidak memiliki aksi tulis"' : ""}></label></td>`).join("")}${["own", "others"].map((owner) => `<td><label><input type="checkbox" data-manage="${owner}" aria-label="${title}: kelola data ${owner === "own" ? "sendiri" : "user lain"}" ${["filling", "press", "apd"].includes(scope) ? "" : 'disabled title="Tidak berlaku pada bagian ini"'}></label></td>`).join("")}</tr>`).join("")}</tbody></table></div><p class="hint-text">Kelola Sendiri dan Kelola User Lain berlaku pada Filling, Press, dan APD. Write diperlukan untuk menambah data; dua ceklis kelola menentukan izin mengubah dan menghapus. Administrator otomatis mencakup keduanya.</p>`;
+      permissionGrid.innerHTML = `<div class="permission-table-wrap"><table class="permission-table"><thead><tr><th>Bagian</th><th>Read</th><th>Write</th><th>Administrator</th><th>Kelola Sendiri</th><th>Kelola User Lain</th><th>Export CSV</th></tr></thead><tbody>${permissionScopes.map(([scope, title]) => `<tr data-scope="${scope}" ${["workReport", "kpiFilling", "kpiPress"].includes(scope) ? 'class="permission-child"' : ""}><th scope="row">${title}</th>${["read", "write", "admin"].map((level) => `<td><label><input type="checkbox" data-level="${level}" aria-label="${title}: ${level}" ${["dashboard", "reports", "workReport", "kpiFilling", "kpiPress"].includes(scope) && level === "write" ? 'disabled title="Bagian ini tidak memiliki aksi tulis"' : ""}></label></td>`).join("")}${["own", "others"].map((owner) => `<td><label><input type="checkbox" data-manage="${owner}" aria-label="${title}: kelola data ${owner === "own" ? "sendiri" : "user lain"}" ${["filling", "press", "apd"].includes(scope) ? "" : 'disabled title="Tidak berlaku pada bagian ini"'}></label></td>`).join("")}<td><label><input type="checkbox" data-export-csv aria-label="${title}: Export CSV" ${["filling", "press"].includes(scope) ? "" : 'disabled title="Export CSV khusus Filling dan Press"'}></label></td></tr>`).join("")}</tbody></table></div><p class="hint-text">Export CSV dapat diberikan secara terpisah untuk Filling dan Press. Kelola Sendiri dan Kelola User Lain berlaku pada Filling, Press, dan APD.</p>`;
       function syncManagement(row, reset) {
         if (!["filling", "press", "apd"].includes(row.dataset.scope)) return;
         const admin = qs('[data-level="admin"]', row).checked;
@@ -8178,6 +8244,15 @@
               (level === "admin" ||
                 (level === "write" && input.dataset.manage === "own")));
         });
+        const exportCsv = qs("input[data-export-csv]", row);
+        if (exportCsv) {
+          exportCsv.checked =
+            scope === "filling"
+              ? perms.accessExportFillingCsv === true
+              : scope === "press"
+                ? perms.accessExportPressCsv === true
+                : false;
+        }
         permissionGrid.syncManagement(row, false);
       });
       permissionGrid.syncReportChildren(false);
@@ -8198,7 +8273,12 @@
       const btn = el("permissionSave");
       btn.disabled = true;
       try {
-        const permissions = { levels: {}, management: {} };
+        const permissions = {
+          levels: {},
+          management: {},
+          accessExportFillingCsv: false,
+          accessExportPressCsv: false,
+        };
         qsa("tr[data-scope]", permissionGrid).forEach((row) => {
           permissions.levels[row.dataset.scope] = qs(
             '[data-level="admin"]',
@@ -8218,6 +8298,14 @@
             others: qs('[data-manage="others"]', row).checked,
           };
         });
+        permissions.accessExportFillingCsv = qs(
+          'tr[data-scope="filling"] input[data-export-csv]',
+          permissionGrid,
+        ).checked;
+        permissions.accessExportPressCsv = qs(
+          'tr[data-scope="press"] input[data-export-csv]',
+          permissionGrid,
+        ).checked;
         if (permissions.levels.reports !== "read") {
           ["workReport", "kpiFilling", "kpiPress"].forEach((scope) => {
             permissions.levels[scope] = "none";
@@ -8279,7 +8367,14 @@
       }
       const btn = event.target.closest(".btn-del-user");
       if (!btn) return;
-      if (!confirm(`Hapus user "${btn.dataset.username}"?`)) return;
+      if (
+        !(await confirmDelete({
+          title: "Hapus pengguna?",
+          message: "Akun pengguna ini tidak akan dapat mengakses sistem lagi.",
+          item: btn.dataset.username,
+        }))
+      )
+        return;
       try {
         const data = await apiPost("user.remove", {
           username: btn.dataset.username,

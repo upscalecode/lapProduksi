@@ -1689,34 +1689,18 @@ function buildPressAllocationModel_(entries, adjustments) {
 function decoratePressRemainders_(remainders, entries, adjustments) {
   const rows = Array.isArray(remainders) ? remainders : [];
   const model = buildPressAllocationModel_(entries || [], adjustments || []);
-  const statsByKey = {};
   const lotsById = {};
-  function groupKey_(item) {
-    return balanceKey_(item.produk, item.botol) + '|' + number_(item.qtyBotolPerKardus);
-  }
-  // Hitung histori dan penutupan dari alokasi setiap lot, termasuk lot yang habis.
+  // Data Pengerjaan hanya dipakai untuk melengkapi Qty Botol/Kardus karena kolom
+  // tersebut belum tersimpan di sheet Sisa Press. Nilai Qty Filling, Sudah Press,
+  // dan Sisa tetap dibaca langsung dari setiap baris sheet Sisa Press.
   model.fillingLots.forEach(function (lot) {
     lotsById[lot.id] = lot;
-    const key = groupKey_(lot);
-    if (!statsByKey[key]) statsByKey[key] = { filling: 0, press: 0, closed: 0, remaining: 0 };
-    const stats = statsByKey[key];
-    stats.filling += lot.qtyFilling;
-    stats.press += lot.qtyPressTerpakai;
-    stats.closed += lot.qtyDitutup;
-    stats.remaining += lot.remaining;
   });
   return rows.map(function (item) {
     const lot = lotsById[String(item.id)];
     const perKardus = lot ? lot.qtyBotolPerKardus : number_(item.qtyBotolPerKardus);
-    const stats = statsByKey[groupKey_(Object.assign({}, item, { qtyBotolPerKardus: perKardus }))] ||
-      { filling: number_(item.qtyFilling), press: number_(item.qtyPressTerpakai), closed: number_(item.qtyDitutup), remaining: number_(item.sisaQty) };
     return Object.assign({}, item, {
-      qtyBotolPerKardus: perKardus,
-      groupQtyFilling: stats.filling,
-      groupQtyPressTerpakai: stats.press,
-      groupQtyDitutup: stats.closed,
-      groupSisaQty: stats.remaining,
-      groupQtyBotolPerKardusValues: perKardus > 0 ? [perKardus] : []
+      qtyBotolPerKardus: perKardus
     });
   });
 }
@@ -2402,6 +2386,8 @@ function defaultPermissions_(role) {
       accessDashboard: true,
       accessFilling: true,
       accessPress: true,
+      accessExportFillingCsv: true,
+      accessExportPressCsv: true,
       accessApd: true,
       accessReports: true,
       accessWorkReport: true,
@@ -2422,6 +2408,8 @@ function defaultPermissions_(role) {
     accessDashboard: false,
     accessFilling: true,
     accessPress: true,
+    accessExportFillingCsv: false,
+    accessExportPressCsv: false,
     accessApd: true,
     accessReports: false,
     accessWorkReport: false,

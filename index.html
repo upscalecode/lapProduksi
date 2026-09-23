@@ -15,7 +15,7 @@
       crossorigin="anonymous"
       defer
     ></script>
-    <link rel="stylesheet" href="style.css?v=20260922-v31-apd-history-filter" />
+    <link rel="stylesheet" href="style.css?v=20260923-v32-wet-cartons-today" />
 
     <style></style>
   </head>
@@ -23,7 +23,9 @@
     <div id="startupError" class="panel" role="alert" hidden>
       <p>Data awal belum berhasil dimuat.</p>
       <p id="startupErrorMessage" class="hint-text"></p>
-      <button type="button" id="startupRetry" class="btn btn-primary">Coba lagi</button>
+      <button type="button" id="startupRetry" class="btn btn-primary">
+        Coba lagi
+      </button>
     </div>
     <div id="appScreen" class="app-shell" hidden>
       <div class="sticky-app-header">
@@ -147,19 +149,19 @@
                   <i class="fa-solid fa-triangle-exclamation"></i>
                 </span>
                 <div>
-                  <span class="dashboard-kpi-label">Pecah Press Hari Ini</span
+                  <span class="dashboard-kpi-label">Botol Pecah Press</span
                   ><strong id="dashBrokenToday">0</strong
                   ><span class="dashboard-kpi-unit">pcs</span>
                 </div>
               </article>
-              <article class="dashboard-kpi kpi-oldest">
+              <article class="dashboard-kpi kpi-wet-cartons">
                 <span class="dashboard-kpi-icon">
-                  <i class="fa-regular fa-calendar-check"></i>
+                  <i class="fa-solid fa-box-open"></i>
                 </span>
                 <div>
-                  <span class="dashboard-kpi-label">Waktu Terlama</span
-                  ><strong id="dashOldestDays">0</strong
-                  ><span class="dashboard-kpi-unit">hari</span>
+                  <span class="dashboard-kpi-label">Kardus Basah Filling</span
+                  ><strong id="dashWetCartonsToday">0</strong
+                  ><span class="dashboard-kpi-unit">kardus</span>
                 </div>
               </article>
             </div>
@@ -1213,22 +1215,43 @@
                   <p class="eyebrow">Data Tersimpan</p>
                   <h2 id="apdSavedTitle">Riwayat Penilaian APD — Hari Ini</h2>
                   <p class="hint-text apd-saved-hint">
-                    Cari riwayat berdasarkan nama operator dan tanggal penilaian.
+                    Cari riwayat berdasarkan nama operator dan tanggal
+                    penilaian.
                   </p>
                 </div>
               </div>
 
-              <div class="apd-history-filters" role="group" aria-label="Filter riwayat penilaian APD">
+              <div
+                class="apd-history-filters"
+                role="group"
+                aria-label="Filter riwayat penilaian APD"
+              >
                 <label class="field">
                   <span>Nama Operator</span>
-                  <input type="search" id="apdHistoryName" placeholder="Cari nama operator..." />
+                  <input
+                    type="search"
+                    id="apdHistoryName"
+                    placeholder="Cari nama operator..."
+                  />
                 </label>
                 <label class="field">
                   <span>Tanggal Penilaian</span>
-                  <input type="date" id="apdHistoryDate" aria-describedby="apdHistoryDateHint" />
+                  <input
+                    type="date"
+                    id="apdHistoryDate"
+                    aria-describedby="apdHistoryDateHint"
+                  />
                 </label>
-                <button type="button" id="apdHistoryReset" class="btn btn-ghost">Reset filter</button>
-                <p id="apdHistoryDateHint" class="hint-text">Kosongkan tanggal untuk melihat semua riwayat.</p>
+                <button
+                  type="button"
+                  id="apdHistoryReset"
+                  class="btn btn-ghost"
+                >
+                  Reset filter
+                </button>
+                <p id="apdHistoryDateHint" class="hint-text">
+                  Kosongkan tanggal untuk melihat semua riwayat.
+                </p>
               </div>
 
               <div class="apd-saved-scroll">
@@ -2094,7 +2117,7 @@
       </main>
     </div>
 
-    <script src="script.js?v=20260922-v41-startup-performance"></script>
+    <script src="script.js?v=20260923-v42-wet-cartons-today"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>

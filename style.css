@@ -176,6 +176,7 @@ button{font-family:inherit;}
 .btn-danger:hover{background:#f7573f; color:#fff}
 .btn-block{width:100%; justify-content:center;}
 .btn[disabled]{opacity:.45; cursor:not-allowed;}
+.f-export-btn[hidden]{display:none !important;}
 .file-btn{position:relative; cursor:pointer;}
 
 /* ===========================================================
@@ -757,8 +758,8 @@ body[data-page="login"] .login-screen{
 .kpi-products strong{color:var(--dash-purple);}
 .kpi-broken .dashboard-kpi-icon{background:var(--dash-red-soft);color:var(--dash-red);}
 .kpi-broken strong{color:var(--dash-red);}
-.kpi-oldest .dashboard-kpi-icon{background:var(--dash-amber-soft);color:var(--dash-amber);}
-.kpi-oldest strong{color:var(--dash-amber);}
+.kpi-wet-cartons .dashboard-kpi-icon{background:var(--dash-amber-soft);color:var(--dash-amber);}
+.kpi-wet-cartons strong{color:var(--dash-amber);}
 
 .dashboard-flow{
   padding:14px 22px;display:flex;align-items:center;justify-content:space-between;gap:14px;overflow-x:auto;
@@ -1510,6 +1511,97 @@ input,select,textarea,button{max-width:100%;}
   max-width:calc(100vw - 24px);
   text-align:center;
   white-space:normal;
+}
+
+/* ---------- konfirmasi hapus ---------- */
+.delete-confirm-modal{
+  position:fixed;
+  inset:0;
+  z-index:10050;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:20px;
+  background:rgba(27,37,48,.58);
+  backdrop-filter:blur(3px);
+  opacity:0;
+  transition:opacity .14s ease;
+}
+.delete-confirm-modal.is-visible{opacity:1;}
+.delete-confirm-modal.is-closing{opacity:0;}
+.delete-confirm-dialog{
+  width:min(430px,100%);
+  overflow:hidden;
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:14px;
+  box-shadow:0 24px 70px rgba(15,23,42,.3);
+  transform:translateY(8px) scale(.98);
+  transition:transform .14s ease;
+}
+.delete-confirm-modal.is-visible .delete-confirm-dialog{
+  transform:translateY(0) scale(1);
+}
+.delete-confirm-icon{
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:48px;
+  height:48px;
+  margin:24px 24px 0;
+  color:var(--danger);
+  background:var(--danger-soft);
+  border-radius:50%;
+}
+.delete-confirm-icon svg{width:24px;height:24px;fill:currentColor;}
+.delete-confirm-content{padding:14px 24px 22px;}
+.delete-confirm-eyebrow{
+  margin:0 0 5px;
+  color:var(--danger);
+  font-size:10.5px;
+  font-weight:800;
+  letter-spacing:.1em;
+  text-transform:uppercase;
+}
+.delete-confirm-content h3{font-size:20px;color:var(--ink);}
+.delete-confirm-message{
+  margin:9px 0 0;
+  color:var(--ink-soft);
+  font-size:13.5px;
+  line-height:1.55;
+}
+.delete-confirm-item{
+  margin:14px 0 0;
+  padding:10px 12px;
+  overflow-wrap:anywhere;
+  color:var(--ink);
+  background:var(--surface-2);
+  border:1px solid var(--line);
+  border-radius:var(--radius-sm);
+  font-size:13px;
+  font-weight:700;
+}
+.delete-confirm-actions{
+  display:flex;
+  justify-content:flex-end;
+  gap:10px;
+  padding:16px 24px;
+  background:var(--surface-2);
+  border-top:1px solid var(--line);
+}
+.delete-confirm-submit{
+  color:#fff;
+  background:var(--danger);
+  border-color:var(--danger);
+}
+.delete-confirm-submit:hover{background:#a93423;border-color:#a93423;}
+@media(max-width:480px){
+  .delete-confirm-modal{padding:14px;}
+  .delete-confirm-actions{display:grid;grid-template-columns:1fr 1fr;}
+  .delete-confirm-actions .btn{justify-content:center;}
+}
+@media(prefers-reduced-motion:reduce){
+  .delete-confirm-modal,.delete-confirm-dialog{transition:none;}
 }
 
 /* ===========================================================
