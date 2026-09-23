@@ -42,7 +42,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbw6iJ52TdPNHR-PgXyM1FsHqBqXAD3PJ8doxRCykl2H_WPuHsTZdYWHqteStm9vDSKY1A/exec",
+      "https://script.google.com/macros/s/AKfycbyDamlDV6QbB-WdG8NX64YI_Ki8BVmB2-7a2YEw9SJgf0LHI3sOO59jCPR3CeOshSHZvQ/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -1195,6 +1195,16 @@
     renderUserHeader();
     applyAccessControl();
     if (Array.isArray(data.reportEntries)) selectAvailableKpiMonth();
+    renderDashboard();
+    if (typeof window.refreshLaporanAutoPreview === "function") {
+      window.refreshLaporanAutoPreview();
+    }
+    if (typeof window.refreshKpiLaporanAutoPreview === "function") {
+      window.refreshKpiLaporanAutoPreview();
+    }
+  }
+
+  function refreshKpiAfterApdChange() {
     renderDashboard();
     if (typeof window.refreshLaporanAutoPreview === "function") {
       window.refreshLaporanAutoPreview();
@@ -3625,6 +3635,7 @@
           resetForm();
           renderApdPreview();
           renderApdSavedToday();
+          refreshKpiAfterApdChange();
           toast(
             "Data APD tersimpan berhasil diperbarui tanpa membuat duplikat.",
           );
@@ -3791,6 +3802,7 @@
             resetForm();
           renderApdPreview();
           renderApdSavedToday();
+          refreshKpiAfterApdChange();
           toast("Data APD tersimpan berhasil dihapus.");
         } catch (err) {
           deleteBtn.disabled = false;
@@ -3834,6 +3846,7 @@
         persistPreview();
         renderApdPreview();
         renderApdSavedToday();
+        refreshKpiAfterApdChange();
         toast(
           `${Number(response.savedCount) || rows.length} data APD berhasil disimpan ke sheet APD.`,
         );
@@ -5495,6 +5508,62 @@
       .toLowerCase();
   }
 
+  function kpiOperatorIdentityKey(value) {
+    return kpiOperatorKey(value)
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]/g, "");
+  }
+
+  function kpiDateKey(value) {
+    const raw = String(value || "").trim();
+    const iso = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(raw);
+    if (iso) {
+      return `${iso[1]}-${String(Number(iso[2])).padStart(2, "0")}-${String(Number(iso[3])).padStart(2, "0")}`;
+    }
+    const localized = /^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/.exec(raw);
+    if (localized) {
+      return `${localized[3]}-${String(Number(localized[2])).padStart(2, "0")}-${String(Number(localized[1])).padStart(2, "0")}`;
+    }
+    return raw;
+  }
+
+  function kpiPercentageNumber(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    const normalized = String(value ?? "")
+      .trim()
+      .replace(/\s/g, "")
+      .replace(/%$/, "")
+      .replace(",", ".");
+    if (!normalized) return null;
+    const number = Number(normalized);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function kpiNameSimilarity(left, right) {
+    const a = kpiOperatorIdentityKey(left);
+    const b = kpiOperatorIdentityKey(right);
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    if (a.includes(b) || b.includes(a)) {
+      return Math.min(a.length, b.length) / Math.max(a.length, b.length);
+    }
+
+    const previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+    for (let i = 1; i <= a.length; i += 1) {
+      const current = [i];
+      for (let j = 1; j <= b.length; j += 1) {
+        current[j] = Math.min(
+          current[j - 1] + 1,
+          previous[j] + 1,
+          previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1),
+        );
+      }
+      previous.splice(0, previous.length, ...current);
+    }
+    return 1 - previous[b.length] / Math.max(a.length, b.length);
+  }
+
   function averageKpiValues(values) {
     const valid = (values || [])
       .filter(
@@ -6077,20 +6146,51 @@
   }
 
   function buildKpiApdActual(operatorKey, period) {
+    const normalizedOperatorKey = kpiOperatorIdentityKey(operatorKey);
+    const periodEntries = (state.apdEntries || []).filter(
+      (item) =>
+        item && dashboardDateInPeriod(kpiDateKey(item.tanggal), period),
+    );
+    const exactEntries = periodEntries.filter(
+      (item) =>
+        kpiOperatorIdentityKey(item.operator) === normalizedOperatorKey,
+    );
+
+    let matchedEntries = exactEntries;
+    if (!matchedEntries.length) {
+      const candidates = new Map();
+      periodEntries.forEach((item) => {
+        const name = String(item.operator || "").trim();
+        const key = kpiOperatorIdentityKey(name);
+        if (!key || candidates.has(key)) return;
+        candidates.set(key, {
+          key,
+          similarity: kpiNameSimilarity(operatorKey, name),
+        });
+      });
+      const ranked = Array.from(candidates.values()).sort(
+        (a, b) => b.similarity - a.similarity,
+      );
+      const best = ranked[0];
+      const second = ranked[1];
+      if (
+        best &&
+        best.similarity >= 0.85 &&
+        (!second || best.similarity - second.similarity >= 0.05)
+      ) {
+        matchedEntries = periodEntries.filter(
+          (item) => kpiOperatorIdentityKey(item.operator) === best.key,
+        );
+      }
+    }
+
     const apdByDate = new Map();
-    (state.apdEntries || [])
-      .filter(
-        (item) =>
-          item &&
-          String(item.operator || "")
-            .trim()
-            .toLowerCase() === operatorKey &&
-          dashboardDateInPeriod(item.tanggal, period),
-      )
-      .forEach((item) => {
-        const dateKey = String(item.tanggal || "");
+    matchedEntries.forEach((item) => {
+        const dateKey = kpiDateKey(item.tanggal);
+        const percentage = kpiPercentageNumber(item.percentage);
+        if (percentage === null) return;
         if (!apdByDate.has(dateKey)) apdByDate.set(dateKey, []);
-        apdByDate.get(dateKey).push(Number(item.percentage) || 0);
+        apdByDate.get(dateKey).push(percentage);
       });
 
     const apdDailyValues = Array.from(apdByDate.values()).map((values) =>
@@ -6100,17 +6200,27 @@
   }
 
   function buildKpiAttendance(operatorProduction, savedProduction) {
-    // Mempertahankan logic lama: hari kerja KPI mengikuti hari produksi aktif
-    // perusahaan (Filling/Press), dan operator dianggap hadir bila memiliki
-    // pengerjaan Filling atau Press pada tanggal aktif tersebut.
-    const productionDates = new Set(
-      savedProduction
-        .map((entry) => String(entry.tanggal || ""))
-        .filter(Boolean),
-    );
+    // Acuan kehadiran satu periode adalah jumlah hari kerja unik terbanyak
+    // yang dicatat oleh seorang karyawan pada periode tersebut. Beberapa entri
+    // pada tanggal yang sama tetap dihitung sebagai satu hari hadir.
+    const attendanceByOperator = new Map();
+    (savedProduction || []).forEach((entry) => {
+      const employeeKey = kpiOperatorIdentityKey(entry?.operator);
+      const dateKey = kpiDateKey(entry?.tanggal);
+      if (!employeeKey || !dateKey) return;
+      if (!attendanceByOperator.has(employeeKey)) {
+        attendanceByOperator.set(employeeKey, new Set());
+      }
+      attendanceByOperator.get(employeeKey).add(dateKey);
+    });
+
+    let productionDates = new Set();
+    attendanceByOperator.forEach((dates) => {
+      if (dates.size > productionDates.size) productionDates = dates;
+    });
     const presentDates = new Set(
       operatorProduction
-        .map((entry) => String(entry.tanggal || ""))
+        .map((entry) => kpiDateKey(entry.tanggal))
         .filter(Boolean),
     );
     const attendanceActual = productionDates.size
@@ -6130,7 +6240,7 @@
     outputTargetMonthly = getKpiPressOutputTarget(),
   ) {
     const operator = String(operatorName || "").trim();
-    const operatorKey = operator.toLowerCase();
+    const operatorKey = kpiOperatorKey(operator);
     const period = kpiPressMonthPeriod(monthValue);
     if (!operator || !period) return null;
 
@@ -6143,10 +6253,7 @@
     );
 
     const operatorProduction = savedProduction.filter(
-      (entry) =>
-        String(entry.operator || "")
-          .trim()
-          .toLowerCase() === operatorKey,
+      (entry) => kpiOperatorKey(entry.operator) === operatorKey,
     );
 
     const pressEntries = operatorProduction.filter(
@@ -6304,7 +6411,7 @@
     outputTargetMonthly = getKpiFillingOutputTarget(),
   ) {
     const operator = String(operatorName || "").trim();
-    const operatorKey = operator.toLowerCase();
+    const operatorKey = kpiOperatorKey(operator);
     const period = kpiPressMonthPeriod(monthValue);
     if (!operator || !period) return null;
 
@@ -6317,10 +6424,7 @@
     );
 
     const operatorProduction = savedProduction.filter(
-      (entry) =>
-        String(entry.operator || "")
-          .trim()
-          .toLowerCase() === operatorKey,
+      (entry) => kpiOperatorKey(entry.operator) === operatorKey,
     );
 
     const fillingEntries = operatorProduction.filter(
@@ -6692,6 +6796,27 @@
       </tr>`;
   }
 
+  function setKpiToggleVisual(button, expanded, toggleAll = false) {
+    if (!button) return;
+    const iconName = toggleAll
+      ? expanded
+        ? "fa-angles-up"
+        : "fa-angles-down"
+      : expanded
+        ? "fa-chevron-up"
+        : "fa-chevron-down";
+    const currentIcon = qs("i, svg", button);
+    const replacement = document.createElement("i");
+    replacement.className = `fa-solid ${iconName}`;
+    replacement.setAttribute("aria-hidden", "true");
+    if (currentIcon) currentIcon.replaceWith(replacement);
+    else button.prepend(replacement);
+
+    const label = qs("span", button);
+    if (label) label.textContent = expanded ? "Collapse" : "Expand";
+    button.setAttribute("aria-expanded", expanded ? "true" : "false");
+  }
+
   function kpiPressEmployeeCardHtml(report, index, expanded = false) {
     const detailId = `kpi-employee-detail-${index}`;
     return `
@@ -6748,7 +6873,7 @@
             ${
               report.kpiType === "shift"
                 ? `<span>Hari Produksi <strong>${report.productionDays}</strong></span><span>Karyawan Aktif <strong>${report.presentDays}</strong></span><span>Entri Produksi <strong>${report.lineDays}</strong></span>`
-                : `<span>Hari Produksi <strong>${report.productionDays}</strong></span><span>Hari Hadir <strong>${report.presentDays}</strong></span><span>Hari ${esc(report.lineLabel || "Produksi")} <strong>${report.lineDays || 0}</strong></span>`
+                : `<span>Acuan Kehadiran <strong>${report.productionDays} hari</strong></span><span>Hari Hadir <strong>${report.presentDays}</strong></span><span>Hari ${esc(report.lineLabel || "Produksi")} <strong>${report.lineDays || 0}</strong></span>`
             }
           </div>
         </div>
@@ -6775,16 +6900,8 @@
       const details = qsa(".kpi-employee-detail", container);
       const hasCards = details.length > 0;
       const allExpanded = hasCards && details.every((detail) => !detail.hidden);
-      const icon = qs("i", toggleAllButton);
-      const label = qs("span", toggleAllButton);
       toggleAllButton.disabled = !hasCards;
-      toggleAllButton.setAttribute(
-        "aria-expanded",
-        allExpanded ? "true" : "false",
-      );
-      if (icon)
-        icon.className = `fa-solid ${allExpanded ? "fa-angles-up" : "fa-angles-down"}`;
-      if (label) label.textContent = allExpanded ? "Collapse" : "Expand";
+      setKpiToggleVisual(toggleAllButton, allExpanded, true);
     }
 
     const summary = el("lap-kpi-page-summary");
@@ -6986,7 +7103,7 @@
           <div class="compact">
             Output ${esc(kpiPressQtyText(report.outputActual))} · ${qualitySummary} ·
             APD ${esc(kpiPressPercentText(report.apdActual, 2))} ${isShift ? "" : `· Kehadiran ${esc(kpiPressPercentText(report.attendanceActual, 2))}`} ·
-            Hari produksi ${report.productionDays} · ${
+            ${isShift ? "Hari produksi" : "Acuan kehadiran"} ${report.productionDays} · ${
               isShift
                 ? `Karyawan aktif ${report.presentDays} · Entri produksi ${report.lineDays}`
                 : `Hari hadir ${report.presentDays} · Hari ${esc(report.lineLabel)} ${report.lineDays || 0}`
@@ -7058,7 +7175,7 @@
   <div class="notes">
     ${notes}
     <p>${isShift ? "APD menggunakan rata-rata nilai tiap karyawan aktif pada bulan yang sama. Target > 95%." : "APD menggunakan rata-rata nilai APD operator pada bulan yang sama. Target ≥ 95%."}</p>
-    ${isShift ? "" : "<p>Kehadiran mempertahankan logic sebelumnya: menggunakan tanggal produksi aktif perusahaan; operator hadir bila memiliki data Filling atau Press pada tanggal tersebut.</p>"}
+    ${isShift ? "" : "<p>Kehadiran dihitung dari jumlah tanggal kerja unik karyawan dibandingkan jumlah tanggal kerja terbanyak milik satu karyawan pada periode yang sama. Bobot Kehadiran tetap 15.</p>"}
   </div>
 </body>
 </html>`;
@@ -7213,12 +7330,7 @@
       detail.hidden = !willExpand;
       const card = toggle.closest(".kpi-employee-card");
       if (card) card.classList.toggle("is-expanded", willExpand);
-      toggle.setAttribute("aria-expanded", willExpand ? "true" : "false");
-      const icon = qs("i", toggle);
-      const label = qs("span", toggle);
-      if (icon)
-        icon.className = `fa-solid ${willExpand ? "fa-chevron-up" : "fa-chevron-down"}`;
-      if (label) label.textContent = willExpand ? "Collapse" : "Expand";
+      setKpiToggleVisual(toggle, willExpand);
       syncKpiToggleAllButton();
     });
 
@@ -7230,14 +7342,8 @@
       const details = qsa(".kpi-employee-detail", container);
       const hasCards = details.length > 0;
       const allExpanded = hasCards && details.every((detail) => !detail.hidden);
-      const icon = qs("i", button);
-      const label = qs("span", button);
-
       button.disabled = !hasCards;
-      button.setAttribute("aria-expanded", allExpanded ? "true" : "false");
-      if (icon)
-        icon.className = `fa-solid ${allExpanded ? "fa-angles-up" : "fa-angles-down"}`;
-      if (label) label.textContent = allExpanded ? "Collapse" : "Expand";
+      setKpiToggleVisual(button, allExpanded, true);
     }
 
     function setAllKpiCardsExpanded(expanded) {
@@ -7251,12 +7357,7 @@
         detail.hidden = !expanded;
       });
       qsa(".kpi-card-toggle", container).forEach((toggle) => {
-        toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-        const icon = qs("i", toggle);
-        const label = qs("span", toggle);
-        if (icon)
-          icon.className = `fa-solid ${expanded ? "fa-chevron-up" : "fa-chevron-down"}`;
-        if (label) label.textContent = expanded ? "Collapse" : "Expand";
+        setKpiToggleVisual(toggle, expanded);
       });
       syncKpiToggleAllButton();
     }

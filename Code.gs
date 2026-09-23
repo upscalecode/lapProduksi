@@ -137,7 +137,9 @@ function doGet(e) {
       const readDashboard = can_(session.user, 'accessDashboard');
       const readFilling = can_(session.user, 'accessFilling');
       const readPress = can_(session.user, 'accessPress');
-      const readKpi = can_(session.user, 'accessKpiReport') || can_(session.user, 'accessKpiFillingReport') || can_(session.user, 'accessKpiPressReport');
+      const readKpi = can_(session.user, 'accessKpiReport') ||
+        canLevel_(session.user, 'kpiFilling', 'read') ||
+        canLevel_(session.user, 'kpiPress', 'read');
       const readReports = can_(session.user, 'accessWorkReport') || readKpi;
       const readApd = can_(session.user, 'accessApd') || readKpi || readDashboard;
       const allEntries = (readDashboard || readFilling || readPress || readReports) ? getEntries_() : [];
@@ -681,6 +683,14 @@ function apdEntryKey_(tanggal, operator) {
 
 function apdRowToObject_(row, rowNumber) {
   const values = row || [];
+  const percentageRaw = values[10];
+  let percentage = Number(percentageRaw);
+  if (!isFinite(percentage)) {
+    percentage = Number(String(percentageRaw || '')
+      .replace(/\s/g, '')
+      .replace(/%$/, '')
+      .replace(',', '.'));
+  }
   return {
     id: String(values[12] || '').trim(),
     rowNumber: rowNumber,
@@ -696,7 +706,7 @@ function apdRowToObject_(row, rowNumber) {
       kebersihanSepatu: number_(values[8])
     },
     totalPoints: number_(values[9]),
-    percentage: number_(values[10]),
+    percentage: isFinite(percentage) ? percentage : 0,
     alasan: String(values[11] || ''),
     photoFileId: String(values[16] || ''),
     createdBy: String(values[13] || ''),
