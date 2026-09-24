@@ -47,12 +47,6 @@
         border-radius: 16px !important;
         box-shadow: 0 24px 70px rgba(15, 23, 42, 0.35) !important;
       }
-      /* Pertahankan daftar rekomendasi sebagai bagian visual dialog. Tanpa
-         ruang ini, daftar melampaui panel putih dan tap-nya tampak seperti
-         menyentuh backdrop, terutama pada tablet dan ponsel. */
-      #spkModal > .spk-dialog:has(.master-search-input:focus) {
-        min-height: min(430px, calc(100dvh - 48px)) !important;
-      }
       #spkModal .master-suggest {
         z-index: 2 !important;
         overscroll-behavior: contain;
@@ -67,8 +61,6 @@
         }
         #spkModal > .spk-dialog {
           padding: 18px !important;
-          max-height: calc(100dvh - 24px) !important;
-          overflow-y: auto !important;
         }
         #spkModal .spk-input-grid {
           grid-template-columns: 1fr !important;
