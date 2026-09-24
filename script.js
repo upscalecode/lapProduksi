@@ -44,7 +44,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbwto7kRRtE58KtLQxlpxZ72Q6w7fWTlZpKoxivRYx-5s6nD5ArgOdtvNUsV0_NE8HfibQ/exec",
+      "https://script.google.com/macros/s/AKfycbz44O8dq5iUoPZ95LnkHwxy3LystpcVC9l85o5xCkAei8R4x6tb2PZvxEJw0JJiSrsVCA/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -3612,8 +3612,7 @@
     const photos = Array.isArray(dataUrls) ? dataUrls : [dataUrls];
     const overlay = document.createElement("div");
     overlay.className = "apd-photo-overlay";
-    overlay.innerHTML =
-      `<div class="apd-photo-dialog" role="dialog" aria-modal="true" aria-label="Foto bukti APD"><button type="button" class="btn btn-ghost apd-photo-close">x</button><div class="apd-photo-gallery">${photos.map((url, index) => `<img src="${url}" alt="Foto bukti APD ${index + 1}" />`).join("")}</div></div>`;
+    overlay.innerHTML = `<div class="apd-photo-dialog" role="dialog" aria-modal="true" aria-label="Foto bukti APD"><button type="button" class="btn btn-ghost apd-photo-close">x</button><div class="apd-photo-gallery">${photos.map((url, index) => `<img src="${url}" alt="Foto bukti APD ${index + 1}" />`).join("")}</div></div>`;
     const close = () => overlay.remove();
     qs(".apd-photo-close", overlay).addEventListener("click", close);
     overlay.addEventListener("click", (event) => {
@@ -3628,17 +3627,15 @@
 
   async function viewApdPhoto(item, source) {
     if (source === "preview") {
-      const ids = item.photoFileIds || (item.photoFileId ? [item.photoFileId] : []);
+      const ids =
+        item.photoFileIds || (item.photoFileId ? [item.photoFileId] : []);
       const responses = await Promise.all(
         ids.map((photoFileId) => apiGet("apd.photo.preview", { photoFileId })),
       );
       showApdPhotoPopup(responses.map((response) => response.dataUrl));
       return;
     }
-    const response = await apiGet(
-      "apd.photo.get",
-      { id: item.id },
-    );
+    const response = await apiGet("apd.photo.get", { id: item.id });
     showApdPhotoPopup(response.dataUrls || response.dataUrl);
   }
 
@@ -3671,7 +3668,7 @@
         <div class="apd-record-cell apd-record-reason">
           <span class="apd-reason-text">${esc(item.alasan || "—")}</span>
           ${item.alasan ? '<button type="button" class="apd-reason-toggle" aria-expanded="false">Tampilkan selengkapnya</button>' : ""}
-          ${(item.photoFileIds?.length || item.photoFileId) ? `<button type="button" class="btn btn-ghost apd-photo-view" data-id="${esc(item.id)}">Lihat Bukti (${item.photoFileIds?.length || 1})</button>` : ""}
+          ${item.photoFileIds?.length || item.photoFileId ? `<button type="button" class="btn btn-ghost apd-photo-view" data-id="${esc(item.id)}">Lihat Bukti (${item.photoFileIds?.length || 1})</button>` : ""}
         </div>
         <div class="apd-record-cell apd-record-actions" ${canChange ? "" : "hidden"}>
           <button type="button" class="btn btn-ghost ${isSaved ? "apd-saved-edit" : "apd-edit"}" data-id="${esc(item.id)}">Edit</button>
@@ -3884,7 +3881,10 @@
       if (photoPreviewBox) {
         photoPreviewBox.hidden = photos.length === 0;
         photoPreviewBox.innerHTML = photos
-          .map((photo, index) => `<div class="apd-photo-thumb"><button type="button" class="apd-photo-thumb-view" data-index="${index}" aria-label="Buka foto ${index + 1}">${photo.url ? `<img src="${photo.url}" alt="Foto bukti ${index + 1}" />` : `<span>Foto ${index + 1}<small>Tersimpan</small></span>`}</button><button type="button" class="apd-photo-remove" data-index="${index}" aria-label="Hapus foto ${index + 1}" title="Hapus foto"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></div>`)
+          .map(
+            (photo, index) =>
+              `<div class="apd-photo-thumb"><button type="button" class="apd-photo-thumb-view" data-index="${index}" aria-label="Buka foto ${index + 1}">${photo.url ? `<img src="${photo.url}" alt="Foto bukti ${index + 1}" />` : `<span>Foto ${index + 1}<small>Tersimpan</small></span>`}</button><button type="button" class="apd-photo-remove" data-index="${index}" aria-label="Hapus foto ${index + 1}" title="Hapus foto"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></div>`,
+          )
           .join("");
       }
       if (photoInfo)
@@ -4051,17 +4051,25 @@
       const index = Number((remove || view)?.dataset.index);
       if (!Number.isInteger(index)) return;
       if (remove) {
-        if (index < currentPhotoFileIds.length) currentPhotoFileIds.splice(index, 1);
+        if (index < currentPhotoFileIds.length)
+          currentPhotoFileIds.splice(index, 1);
         else pendingPhotoDataUrls.splice(index - currentPhotoFileIds.length, 1);
         renderPhotoPreviews();
         return;
       }
       if (index < currentPhotoFileIds.length) {
         try {
-          const response = await apiGet("apd.photo.preview", { photoFileId: currentPhotoFileIds[index] });
+          const response = await apiGet("apd.photo.preview", {
+            photoFileId: currentPhotoFileIds[index],
+          });
           showApdPhotoPopup(response.dataUrl);
-        } catch (err) { toast(err.message, true); }
-      } else showApdPhotoPopup(pendingPhotoDataUrls[index - currentPhotoFileIds.length]);
+        } catch (err) {
+          toast(err.message, true);
+        }
+      } else
+        showApdPhotoPopup(
+          pendingPhotoDataUrls[index - currentPhotoFileIds.length],
+        );
     });
     photoInput?.addEventListener("change", () =>
       handleApdPhotoChange(photoInput),
@@ -4170,8 +4178,8 @@
       const source = editingId?.dataset.source || "";
       const previousPreviewPhotoIds =
         source === "preview"
-          ? ((state.preview.apd || []).find((row) => row.id === id)
-              ?.photoFileIds || [])
+          ? (state.preview.apd || []).find((row) => row.id === id)
+              ?.photoFileIds || []
           : [];
       const formDate = tanggal?.value || todayStr();
 
@@ -4364,10 +4372,12 @@
           resetForm();
         renderApdPreview();
         renderApdSavedToday();
-        (removed?.photoFileIds || (removed?.photoFileId ? [removed.photoFileId] : []))
-          .forEach((photoFileId) =>
-            apiPost("apd.photo.discard", { photoFileId }).catch(() => {}),
-          );
+        (
+          removed?.photoFileIds ||
+          (removed?.photoFileId ? [removed.photoFileId] : [])
+        ).forEach((photoFileId) =>
+          apiPost("apd.photo.discard", { photoFileId }).catch(() => {}),
+        );
         toast("Data APD dihapus dari preview.");
       }
     });
@@ -4472,7 +4482,8 @@
           operator: item.operator,
           scores: { kebersihanSepatu: 0, ...item.scores },
           alasan: item.alasan || "",
-          photoFileIds: item.photoFileIds || (item.photoFileId ? [item.photoFileId] : []),
+          photoFileIds:
+            item.photoFileIds || (item.photoFileId ? [item.photoFileId] : []),
           clientRequestId: item.id,
         }));
         const response = await enqueueWrite(() =>

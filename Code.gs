@@ -2175,6 +2175,58 @@ function closePressRemainder_(user, data) {
 
 let SPK_READY_SHEET_ = null;
 
+function isSpkDateLike_(value) {
+  if (value instanceof Date) return !isNaN(value.getTime());
+  const text = String(value || '').trim();
+  return /^\d{4}-\d{2}-\d{2}(?:[T\s].*)?$/.test(text);
+}
+
+/**
+ * Memperbaiki baris SPK yang telanjur memakai susunan delapan kolom lama,
+ * tetapi header-nya sudah berubah ke skema baru yang mempunyai kolom Qty.
+ * Perbaikan dilakukan per baris supaya data baru yang sudah benar tidak ikut
+ * bergeser ketika sheet berisi campuran data lama dan baru.
+ */
+function repairLegacySpkRows_(sh) {
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return;
+
+  const width = APP.SPK_HEADERS.length;
+  const range = sh.getRange(2, 1, lastRow - 1, width);
+  const rows = range.getValues();
+  const repairedRows = [];
+
+  rows.forEach(function (row, index) {
+    const hasBatch = String(row[0] || '').trim();
+    const qtyContainsCreator = String(row[4] || '').trim();
+    const columnFContainsCreatedAt = isSpkDateLike_(row[5]);
+    const currentUpdateColumnEmpty = String(row[8] || '').trim() === '';
+
+    if (!hasBatch || !qtyContainsCreator || !columnFContainsCreatedAt || !currentUpdateColumnEmpty) return;
+
+    repairedRows.push({
+      rowNumber: index + 2,
+      values: [
+        row[0], row[1], row[2], row[3], '',
+        row[4], row[5], row[6], row[7]
+      ]
+    });
+  });
+
+  const groups = [];
+  repairedRows.forEach(function (item) {
+    const group = groups[groups.length - 1];
+    if (group && item.rowNumber === group.startRow + group.values.length) {
+      group.values.push(item.values);
+    } else {
+      groups.push({ startRow: item.rowNumber, values: [item.values] });
+    }
+  });
+  groups.forEach(function (group) {
+    sh.getRange(group.startRow, 1, group.values.length, width).setValues(group.values);
+  });
+}
+
 function ensureSpkSheet_(ss, forceSetup) {
   if (SPK_READY_SHEET_ && !forceSetup) return SPK_READY_SHEET_;
   let sh = ss.getSheetByName(APP.SHEETS.SPK);
@@ -2198,6 +2250,7 @@ function ensureSpkSheet_(ss, forceSetup) {
     sh.insertColumnsAfter(sh.getMaxColumns(), APP.SPK_HEADERS.length - sh.getMaxColumns());
   }
   sh.getRange(1, 1, 1, APP.SPK_HEADERS.length).setValues([APP.SPK_HEADERS]);
+  if (!isOldSchema) repairLegacySpkRows_(sh);
   styleHeader_(sh, APP.SPK_HEADERS.length);
   sh.setFrozenRows(1);
   SPK_READY_SHEET_ = sh;
