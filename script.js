@@ -1047,6 +1047,35 @@
   let pressFormTrigger = null;
   let fillingFormTrigger = null;
 
+  function bindPopupBackdropClose(popup, closePopup) {
+    if (!popup || typeof closePopup !== "function") return;
+
+    // Pada perangkat sentuh, keyboard virtual dan suggestion yang menghilang
+    // dapat membuat click sintetis jatuh ke backdrop. Tutup modal hanya jika
+    // interaksi pointer memang dimulai dan berakhir langsung di backdrop.
+    if (window.PointerEvent) {
+      let backdropPointerId = null;
+      popup.addEventListener("pointerdown", (event) => {
+        backdropPointerId = event.target === popup ? event.pointerId : null;
+      });
+      popup.addEventListener("pointerup", (event) => {
+        const shouldClose =
+          backdropPointerId === event.pointerId && event.target === popup;
+        backdropPointerId = null;
+        if (shouldClose) closePopup();
+      });
+      popup.addEventListener("pointercancel", () => {
+        backdropPointerId = null;
+      });
+      return;
+    }
+
+    // Fallback untuk browser lama yang belum mendukung Pointer Events.
+    popup.addEventListener("click", (event) => {
+      if (event.target === popup) closePopup();
+    });
+  }
+
   function openFillingFormPopup(trigger) {
     const popup = el("fillingFormPopup");
     if (!popup) return;
@@ -1087,9 +1116,7 @@
     form.before(popup);
     popup.appendChild(form);
     closeButton.addEventListener("click", closeFillingFormPopup);
-    popup.addEventListener("click", (event) => {
-      if (event.target === popup) closeFillingFormPopup();
-    });
+    bindPopupBackdropClose(popup, closeFillingFormPopup);
     popup.addEventListener("keydown", (event) => {
       if (event.key === "Escape") closeFillingFormPopup();
     });
@@ -1218,9 +1245,7 @@
       form.before(popup);
       popup.appendChild(form);
       closeButton.addEventListener("click", closePressFormPopup);
-      popup.addEventListener("click", (event) => {
-        if (event.target === popup) closePressFormPopup();
-      });
+      bindPopupBackdropClose(popup, closePressFormPopup);
       popup.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -1733,7 +1758,14 @@
       selectMasterValue(btn);
     });
 
+    // Jangan biarkan awal tap pada suggestion dianggap sebagai tap backdrop
+    // oleh modal induk ketika daftar ditutup setelah nilai dipilih.
+    list.addEventListener("pointerdown", (event) => {
+      event.stopPropagation();
+    });
+
     list.addEventListener("click", (event) => {
+      event.stopPropagation();
       selectMasterValue(event.target.closest("button[data-value]"));
     });
 
