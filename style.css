@@ -5968,3 +5968,79 @@ button {
     overflow-y: auto;
   }
 }
+
+/* APD form: compact composition without an empty preview column. */
+#view-apd .apd-form-heading {
+  padding-block: 16px;
+}
+
+#view-apd .apd-input-layout.apd-unified-form {
+  gap: 12px 18px;
+  margin-bottom: 18px;
+  padding: 16px;
+}
+
+#view-apd .apd-input-top {
+  gap: 18px;
+}
+
+#view-apd .apd-indicators {
+  padding-top: 12px;
+}
+
+#view-apd .apd-indicators legend {
+  padding-bottom: 9px;
+}
+
+#view-apd .apd-indicator-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
+}
+
+#view-apd .apd-indicator-grid .apd-shoe-score {
+  margin-top: 0;
+}
+
+#view-apd .apd-indicator-grid .apd-reason-cell-input,
+#view-apd .apd-indicator-grid .apd-photo-field {
+  grid-column: auto;
+}
+
+#view-apd .apd-input-layout .apd-photo-field {
+  grid-template-columns: minmax(130px, 0.7fr) minmax(180px, 1.3fr);
+  grid-template-rows: auto auto auto;
+  min-height: 0;
+}
+
+#view-apd .apd-photo-preview-box[hidden] {
+  display: none;
+}
+
+#view-apd .apd-input-layout .apd-inline-actions {
+  gap: 10px;
+}
+
+@media (max-width: 640px) {
+  #view-apd .apd-form-heading {
+    padding-block: 12px;
+  }
+
+  #view-apd .apd-input-layout.apd-unified-form {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  #view-apd .apd-indicator-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #view-apd .apd-indicator-grid .apd-reason-cell-input,
+  #view-apd .apd-indicator-grid .apd-photo-field {
+    grid-column: 1;
+  }
+
+  #view-apd .apd-input-layout .apd-photo-field {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
+  }
+}
