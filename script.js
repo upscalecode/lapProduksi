@@ -37,7 +37,8 @@
     REQUEST_TIMEOUT: 60000, // Apps Script dapat melambat saat sinkronisasi Sheet
     PAGE_SIZE: 20,
     APD_PREVIEW_PAGE_SIZE: 5,
-    PRESS_BALANCE_PAGE_SIZE: 5,
+    FILLING_SPK_PAGE_SIZE: 10,
+    PRESS_BALANCE_PAGE_SIZE: 10,
     DASHBOARD_PRIORITY_PAGE_SIZE: 6,
     DASHBOARD_PRESS_KPI_PAGE_SIZE: 7,
 
@@ -5339,13 +5340,14 @@
         item.tanggal === today ||
         (includeYesterday && item.tanggal === yesterday),
     );
-    const totalPages = Math.max(1, Math.ceil(rows.length / 5));
+    const pageSize = CONFIG.FILLING_SPK_PAGE_SIZE;
+    const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
     state.spk.fillingPage = Math.min(
       Math.max(1, state.spk.fillingPage),
       totalPages,
     );
-    const start = (state.spk.fillingPage - 1) * 5;
-    const visibleRows = rows.slice(start, start + 5);
+    const start = (state.spk.fillingPage - 1) * pageSize;
+    const visibleRows = rows.slice(start, start + pageSize);
     const fillingRows = [
       ...(state.entries || []).filter((item) => item.tab === "filling"),
       ...(state.preview.filling || []),
@@ -5369,7 +5371,7 @@
       : '<tr><td colspan="5" class="empty-row">Belum ada SPK tersimpan hari ini.</td></tr>';
     dashboardSetText(
       "fillingSpkSummary",
-      `${rows.length ? start + 1 : 0}–${Math.min(start + 5, rows.length)} dari ${rows.length} SPK ${includeYesterday ? "hari ini + kemarin (hingga 19.00)" : "hari ini"} · ${fillingRows.length} total input Filling`,
+      `${rows.length ? start + 1 : 0}–${Math.min(start + pageSize, rows.length)} dari ${rows.length} SPK ${includeYesterday ? "hari ini + kemarin (hingga 19.00)" : "hari ini"} · ${fillingRows.length} total input Filling`,
     );
     renderPagination(
       el("fillingSpkPagination"),
