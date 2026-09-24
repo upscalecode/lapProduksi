@@ -5573,9 +5573,7 @@
     produkInput.addEventListener("change", syncCancelState);
     botolInput.addEventListener("input", syncCancelState);
     botolInput.addEventListener("change", syncCancelState);
-    modal.addEventListener("click", (event) => {
-      if (event.target === modal) close();
-    });
+    bindPopupBackdropClose(modal, close);
     modal.addEventListener("keydown", (event) => {
       if (event.key === "Escape") close();
     });

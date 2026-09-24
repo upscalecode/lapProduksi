@@ -15,7 +15,7 @@
       crossorigin="anonymous"
       defer
     ></script>
-    <link rel="stylesheet" href="style.css?v=20260924-v36-apd-actions-right" />
+    <link rel="stylesheet" href="style.css?v=20260924-v37-popup-touch-fix" />
 
     <style>
       /* Aturan inti modal SPK ditempatkan bersama dokumen agar tidak dapat
@@ -47,6 +47,17 @@
         border-radius: 16px !important;
         box-shadow: 0 24px 70px rgba(15, 23, 42, 0.35) !important;
       }
+      /* Pertahankan daftar rekomendasi sebagai bagian visual dialog. Tanpa
+         ruang ini, daftar melampaui panel putih dan tap-nya tampak seperti
+         menyentuh backdrop, terutama pada tablet dan ponsel. */
+      #spkModal > .spk-dialog:has(.master-search-input:focus) {
+        min-height: min(430px, calc(100dvh - 48px)) !important;
+      }
+      #spkModal .master-suggest {
+        z-index: 2 !important;
+        overscroll-behavior: contain;
+        touch-action: pan-y;
+      }
       #spkModal .spk-input-grid {
         grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
       }
@@ -56,6 +67,8 @@
         }
         #spkModal > .spk-dialog {
           padding: 18px !important;
+          max-height: calc(100dvh - 24px) !important;
+          overflow-y: auto !important;
         }
         #spkModal .spk-input-grid {
           grid-template-columns: 1fr !important;
@@ -2399,7 +2412,7 @@
             (event.lineno ? " (baris " + event.lineno + ")" : "");
       });
     </script>
-    <script src="script.js?v=20260924-v78-faster-sync"></script>
+    <script src="script.js?v=20260924-v79-spk-touch-fix"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>
