@@ -2447,21 +2447,12 @@ body.filling-popup-open {
   display: none;
 }
 .press-form-popup > .form-panel {
-  position: relative;
-  isolation: isolate;
   width: 100%;
   max-width: 980px;
   max-height: calc(100dvh - 48px);
   overflow-y: auto;
-  overscroll-behavior: contain;
   margin: 0;
   box-shadow: 0 20px 60px rgba(15, 23, 42, 0.25);
-}
-.press-form-popup .master-suggest {
-  z-index: 5;
-  max-height: min(220px, 35dvh);
-  overscroll-behavior: contain;
-  touch-action: pan-y;
 }
 .press-form-popup .panel-head {
   flex-wrap: wrap;

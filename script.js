@@ -1047,38 +1047,6 @@
   let pressFormTrigger = null;
   let fillingFormTrigger = null;
 
-  function bindPopupBackdropClose(popup, closePopup) {
-    if (!popup || typeof closePopup !== "function") return;
-
-    // Pada perangkat sentuh, keyboard virtual dan suggestion yang menghilang
-    // dapat membuat click sintetis jatuh ke backdrop. Karena itu tap dengan
-    // touch/pen tidak pernah menutup modal; pengguna tetap dapat memakai
-    // tombol Tutup. Backdrop hanya dapat menutup modal lewat mouse desktop.
-    if (window.PointerEvent) {
-      let backdropPointerId = null;
-      popup.addEventListener("pointerdown", (event) => {
-        backdropPointerId =
-          event.pointerType === "mouse" && event.target === popup
-            ? event.pointerId
-            : null;
-      });
-      popup.addEventListener("pointerup", (event) => {
-        const shouldClose =
-          backdropPointerId === event.pointerId && event.target === popup;
-        backdropPointerId = null;
-        if (shouldClose) closePopup();
-      });
-      popup.addEventListener("pointercancel", () => {
-        backdropPointerId = null;
-      });
-      return;
-    }
-
-    // Browser lama tanpa Pointer Events tetap dapat menutup lewat tombol
-    // Tutup atau Escape. Backdrop sengaja tidak dipakai agar ghost-click dari
-    // perangkat sentuh tidak bisa menutup form.
-  }
-
   function openFillingFormPopup(trigger) {
     const popup = el("fillingFormPopup");
     if (!popup) return;
@@ -1119,7 +1087,6 @@
     form.before(popup);
     popup.appendChild(form);
     closeButton.addEventListener("click", closeFillingFormPopup);
-    bindPopupBackdropClose(popup, closeFillingFormPopup);
     popup.addEventListener("keydown", (event) => {
       if (event.key === "Escape") closeFillingFormPopup();
     });
@@ -1248,7 +1215,6 @@
       form.before(popup);
       popup.appendChild(form);
       closeButton.addEventListener("click", closePressFormPopup);
-      bindPopupBackdropClose(popup, closePressFormPopup);
       popup.addEventListener("keydown", (event) => {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -5513,6 +5479,7 @@
     const cancelButton = el("spkCancel");
     const submitButton = el("spkAdd");
     let editingSpk = null;
+    let spkFormInitialized = false;
     if (!modal || !form || !openButton) return;
     state.spk.date = state.spk.date || todayStr();
     const dateFilter = el("spkDateFilter");
@@ -5562,7 +5529,10 @@
       if (dateFilter) dateFilter.value = state.spk.date;
       renderSpkToday();
       closeMasterSuggestions();
-      reset();
+      if (!spkFormInitialized) {
+        reset();
+        spkFormInitialized = true;
+      }
       modal.hidden = false;
       document.body.classList.add("spk-popup-open");
       el("spkModalClose")?.focus();
@@ -5576,7 +5546,6 @@
     produkInput.addEventListener("change", syncCancelState);
     botolInput.addEventListener("input", syncCancelState);
     botolInput.addEventListener("change", syncCancelState);
-    bindPopupBackdropClose(modal, close);
     modal.addEventListener("keydown", (event) => {
       if (event.key === "Escape") close();
     });
@@ -5669,6 +5638,7 @@
         return toast("Anda tidak memiliki akses mengelola SPK ini.", true);
 
       if (editButton) {
+        spkFormInitialized = true;
         editingSpk = { source, key };
         batchInput.value = item.batchNo;
         produkInput.value = item.produk;
