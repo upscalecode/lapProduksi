@@ -26,6 +26,7 @@ const APP = {
     PRESS_ADJUSTMENTS: 'Penutupan Press',
     PRESS_REMAINDERS: 'Sisa Press',
     APD: 'APD',
+    SPK: 'SPK',
     SETTINGS: 'Settings'
   },
   ENTRY_HEADERS: [
@@ -39,6 +40,9 @@ const APP = {
   PRESS_ADJUSTMENT_HEADERS: ['id', 'tanggal', 'produk', 'botol', 'qtyDitutup', 'alasan', 'closedBy', 'closedByName', 'createdAt', 'qtyBotolPerKardus'],
   PRESS_REMAINDER_HEADERS: ['id', 'tanggalAsal', 'produk', 'botol', 'qtyFilling', 'qtyPressTerpakai', 'qtyDitutup', 'sisaQty', 'status', 'updatedAt'],
   SETTINGS_HEADERS: ['key', 'value', 'updatedAt', 'updatedBy'],
+  // Audit SPK disimpan terpisah dan tidak pernah digabungkan ke updateCount
+  // Pengerjaan yang menjadi sumber perhitungan KPI Karyawan.
+  SPK_HEADERS: ['No Batch', 'Tanggal', 'Nama Produk', 'Botol', 'Dibuat Oleh', 'Dibuat Pada', 'Di-update Pada', 'Jumlah Update'],
   APD_HEADERS: [
     'Tanggal', 'Nama Operator',
     'Masker tidak sesuai', 'Lengan ditarik ke atas', 'Sepatu diinjak',
@@ -61,6 +65,7 @@ function setupSpreadsheet() {
   ensureSheet_(ss, APP.SHEETS.PRESS_ADJUSTMENTS, APP.PRESS_ADJUSTMENT_HEADERS);
   ensureSheet_(ss, APP.SHEETS.PRESS_REMAINDERS, APP.PRESS_REMAINDER_HEADERS);
   ensureApdSheet_(ss, true);
+  ensureSheet_(ss, APP.SHEETS.SPK, APP.SPK_HEADERS);
   ensureSettingsSheet_(ss);
 
   if (master.getLastRow() < 2) {
@@ -136,10 +141,12 @@ function doGet(e) {
       const session = requireSession_(param_(e, 'token'));
       const readDashboard = can_(session.user, 'accessDashboard');
       const readFilling = can_(session.user, 'accessFilling');
+      const readSpk = can_(session.user, 'accessSpk');
       const readPress = can_(session.user, 'accessPress');
       const readKpi = can_(session.user, 'accessKpiReport') ||
         canLevel_(session.user, 'kpiFilling', 'read') ||
         canLevel_(session.user, 'kpiPress', 'read');
+      const readSpkReport = canLevel_(session.user, 'spkReport', 'read');
       const readReports = can_(session.user, 'accessWorkReport') || readKpi;
       const readApd = can_(session.user, 'accessApd') || readKpi || readDashboard;
       const allEntries = (readDashboard || readFilling || readPress || readReports) ? getEntries_() : [];
@@ -155,6 +162,9 @@ function doGet(e) {
       const reportEntries = allEntries.filter(function (entry) {
         return (entry.tab === 'filling' || entry.tab === 'press') && readReports;
       });
+      // Pada Dashboard, entries dan reportEntries berasal dari sumber yang sama.
+      // Hindari mengirim salinan kedua agar respons awal lebih kecil.
+      const reportEntriesSameAsEntries = readDashboard && readReports;
       const pressAdjustments = readPress ? getPressAdjustments_() : [];
       const includeBootstrap = param_(e, 'includeBootstrap') === '1';
       return json_({
@@ -162,9 +172,11 @@ function doGet(e) {
         user: includeBootstrap ? publicUser_(session.user) : undefined,
         master: includeBootstrap ? getMaster_() : undefined,
         entries: visibleEntries,
-        reportEntries: reportEntries,
+        reportEntries: reportEntriesSameAsEntries ? undefined : reportEntries,
+        reportEntriesSameAsEntries: reportEntriesSameAsEntries,
         adjustments: pressAdjustments,
         remainders: readPress ? getPressRemainders_(allEntries, pressAdjustments) : [],
+        spkEntries: (readDashboard || readSpk || readFilling || readPress || readSpkReport) ? getSpkEntries_() : [],
         // KPI pada Dashboard/Laporan membutuhkan nilai APD meskipun user tidak membuka tab APD.
         apdEntries: readApd ? getApdEntries_() : [],
         users: session.user.role === 'superuser' ? getUsers_() : [],
@@ -225,8 +237,37 @@ function doPost(e) {
 
       case 'entry.delete':
         return withWriteLock_(function () {
-          deleteEntry_(session.user, param_(e, 'id'));
-          return json_({ ok: true, remainders: getPressRemainders_() });
+          const deleted = deleteEntry_(session.user, param_(e, 'id'));
+          return json_({ ok: true, deletedIds: deleted.deletedIds, remainders: deleted.remainders });
+        });
+
+      case 'spk.create':
+        requireLevel_(session.user, 'spk', 'write');
+        return withWriteLock_(function () {
+          const spk = createSpk_(session.user, parseJsonParam_(e, 'data'));
+          return json_({ ok: true, spk: spk });
+        });
+
+      case 'spk.batchCreate':
+        requireLevel_(session.user, 'spk', 'write');
+        return withWriteLock_(function () {
+          const rows = parseJsonParam_(e, 'data');
+          if (!Array.isArray(rows) || !rows.length) throw new Error('Preview SPK kosong.');
+          if (rows.length > 99) throw new Error('Maksimal 99 SPK per sekali simpan.');
+          const saved = createSpkEntriesBatch_(session.user, rows);
+          return json_({ ok: true, saved: saved });
+        });
+
+      case 'spk.update':
+        return withWriteLock_(function () {
+          const spk = updateSpk_(session.user, param_(e, 'batchNo'), parseJsonParam_(e, 'data'));
+          return json_({ ok: true, spk: spk });
+        });
+
+      case 'spk.delete':
+        return withWriteLock_(function () {
+          deleteSpk_(session.user, param_(e, 'batchNo'));
+          return json_({ ok: true, deletedBatchNo: param_(e, 'batchNo') });
         });
 
       // Dipertahankan untuk kompatibilitas data/versi lama.
@@ -249,7 +290,7 @@ function doPost(e) {
             newCount: result.newCount,
             duplicateIds: result.duplicateIds,
             savedIds: result.savedIds,
-            apdEntries: result.apdEntries
+            entries: result.entries
           });
         });
 
@@ -257,14 +298,14 @@ function doPost(e) {
         requireLevel_(session.user, 'apd', 'write');
         return withWriteLock_(function () {
           const updated = updateApdEntry_(session.user, param_(e, 'id'), parseJsonParam_(e, 'data'));
-          return json_({ ok: true, entry: updated.entry, apdEntries: updated.apdEntries });
+          return json_({ ok: true, entry: updated.entry });
         });
 
       case 'apd.delete':
         requireLevel_(session.user, 'apd', 'write');
         return withWriteLock_(function () {
           const deleted = deleteApdEntry_(session.user, param_(e, 'id'));
-          return json_({ ok: true, deletedId: deleted.deletedId, apdEntries: deleted.apdEntries });
+          return json_({ ok: true, deletedId: deleted.deletedId });
         });
 
       case 'apd.photo.upload':
@@ -646,9 +687,6 @@ function buildApdRecord_(raw, index, user, existingPhotoId) {
   const requestId = String(data.clientRequestId || '').trim();
   const validRequestId = /^[A-Za-z0-9-]{16,100}$/.test(requestId) ? requestId : '';
   const photoFileId = String(data.photoFileId || '').trim();
-  if (percentage < 100 && !photoFileId) {
-    throw new Error('Data APD ke-' + (index + 1) + ': foto bukti wajib saat nilai kurang dari 100%.');
-  }
   if (photoFileId) {
     const file = apdPhotoFile_(photoFileId);
     if (photoFileId !== String(existingPhotoId || '') &&
@@ -871,7 +909,6 @@ function createApdEntriesBatch_(user, dataList) {
   if (rowsToWrite.length) {
     const startRow = Math.max(lastRow + 1, 2);
     sh.getRange(startRow, 1, rowsToWrite.length, APP.APD_HEADERS.length).setValues(rowsToWrite);
-    SpreadsheetApp.flush();
   }
 
   return {
@@ -879,7 +916,9 @@ function createApdEntriesBatch_(user, dataList) {
     newCount: rowsToWrite.length,
     duplicateIds: duplicateIds,
     savedIds: savedIds,
-    apdEntries: apdRowsToEntries_(existingRows.concat(rowsToWrite))
+    entries: rowsToWrite.map(function (row, index) {
+      return apdRowToObject_(row, Math.max(lastRow + 1, 2) + index);
+    })
   };
 }
 
@@ -921,8 +960,7 @@ function updateApdEntry_(user, id, rawData) {
 
   const updatedRow = sh.getRange(rowNumber, 1, 1, APP.APD_HEADERS.length).getValues()[0];
   return {
-    entry: apdRowToObject_(updatedRow, rowNumber),
-    apdEntries: getApdEntries_()
+    entry: apdRowToObject_(updatedRow, rowNumber)
   };
 }
 
@@ -938,8 +976,7 @@ function deleteApdEntry_(user, id) {
     try { apdPhotoFile_(photoFileId).setTrashed(true); } catch (_) {}
   }
   return {
-    deletedId: String(id),
-    apdEntries: getApdEntries_()
+    deletedId: String(id)
   };
 }
 
@@ -977,6 +1014,7 @@ function createEntriesBatch_(user, dataList) {
 
   // Ambil master sekali saja untuk seluruh batch.
   const master = getMaster_();
+  const spkEntries = getSpkEntries_();
   const now = new Date();
   const newEntries = [];
   const resultEntries = [];
@@ -1001,6 +1039,7 @@ function createEntriesBatch_(user, dataList) {
     data.operator = canonicalMasterValue_(master.operator, data.operator, 'Operator');
     data.produk = canonicalMasterValue_(master.produk, data.produk, 'Produk');
     data.botol = canonicalMasterValue_(master.botol, data.botol, 'Botol');
+    data.batchNo = validateSpkBatchForEntry_(data, spkEntries);
 
     const qtyKardus = Number(data.qtyKardus);
     const qtyBotol = Number(data.qtyBotolPerKardus);
@@ -1050,7 +1089,7 @@ function createEntriesBatch_(user, dataList) {
       (previewUpdateCount > 0 ? createdAt.toISOString() : '');
     const entry = {
       id: id,
-      reportId: makeReportId_(line, createdAt),
+      reportId: makeReportId_(line, createdAt, data.batchNo),
       tab: line,
       tanggal: String(data.tanggal),
       operator: String(data.operator).trim(),
@@ -1141,7 +1180,7 @@ function createEntry_(user, data) {
   }
 
   const id = validRequestedId || Utilities.getUuid();
-  const reportId = makeReportId_(line, createdAt);
+  const reportId = makeReportId_(line, createdAt, data.batchNo);
   const qtyKardus = number_(data.qtyKardus);
   const qtyBotol = number_(data.qtyBotolPerKardus);
   const qtyPecah = number_(data.qtyBotolPecah);
@@ -1211,7 +1250,9 @@ function updateEntry_(user, id, data) {
 
   const updated = {
     id: existing.id,
-    reportId: existing.reportId,
+    reportId: data.batchNo
+      ? makeReportId_(updatedLine, new Date(), data.batchNo)
+      : existing.reportId,
     tab: updatedLine,
     tanggal: String(data.tanggal),
     operator: String(data.operator).trim(),
@@ -1241,21 +1282,66 @@ function updateEntry_(user, id, data) {
 }
 
 function deleteEntry_(user, id) {
-  const found = findEntryRow_(id);
+  const sh = entrySheet_();
+  const values = sh.getDataRange().getValues();
+  const currentEntries = [];
+  let found = null;
+  for (let i = 1; i < values.length; i++) {
+    if (!values[i][0]) continue;
+    const entry = rowToEntry_(values[i]);
+    currentEntries.push(entry);
+    if (String(entry.id) === String(id)) found = { row: i + 1, values: values[i], entry: entry };
+  }
   if (!found) throw new Error('Data tidak ditemukan.');
 
-  const existing = rowToEntry_(found.values);
+  const existing = found.entry;
   const isOwn = existing.createdBy === user.username;
   requireManage_(user, existing.tab, isOwn ? 'own' : 'others');
 
-  // Menghapus Press selalu mengembalikan saldo. Hanya penghapusan Filling yang
-  // dapat mengurangi persediaan dan perlu divalidasi terhadap Press historis.
+  const deletedIds = [String(existing.id)];
+  const adjustments = getPressAdjustments_();
+  const currentModel = buildPressAllocationModel_(currentEntries, adjustments);
+
+  // Filling tidak boleh dihapus setelah dipakai sedikit ataupun seluruhnya oleh
+  // Press. Press harus dihapus lebih dahulu agar jumlahnya kembali ke saldo
+  // pengerjaan yang belum di-press.
   if (existing.tab === 'filling') {
-    assertProjectedBalance_([existing], existing.id);
+    const batchNo = reportBatchNo_(existing.reportId);
+    const relatedPress = currentEntries.filter(function (entry) {
+      if (entry.tab !== 'press') return false;
+      const allocation = currentModel.pressMeta[String(entry.id)] || {};
+      const consumesFilling = (allocation.consumedLotIds || []).indexOf(String(existing.id)) >= 0;
+      const hasSameBatch = batchNo && reportBatchNo_(entry.reportId) === batchNo;
+      return consumesFilling || hasSameBatch;
+    });
+    if (relatedPress.length) {
+      throw new Error(
+        'Data Filling tidak dapat dihapus karena sudah dilakukan Press, baik sebagian maupun seluruh qty. ' +
+        'Hapus data Press terkait terlebih dahulu agar qty kembali ke pengerjaan belum di-press.'
+      );
+    }
   }
 
-  entrySheet_().deleteRow(found.row);
-  rebuildPressRemainders_();
+  const projectedEntries = currentEntries.filter(function (entry) {
+    return String(entry.id) !== String(existing.id);
+  });
+  const projectedModel = buildPressAllocationModel_(projectedEntries, adjustments);
+  if (existing.tab === 'filling') {
+    const blocking = newOrWorsenedPressOverflow_(projectedModel, currentEntries, adjustments, []);
+    if (blocking.length) {
+      throw new Error('Data Filling tidak dapat dihapus karena saldo sudah digunakan pada riwayat Press/penutupan.');
+    }
+  }
+
+  sh.deleteRow(found.row);
+  // Snapshot proyeksi yang sama langsung dipakai untuk menulis saldo baru.
+  const remainders = writePressModel_(projectedEntries, projectedModel, adjustments);
+  return { deletedIds: deletedIds, remainders: remainders };
+}
+
+function reportBatchNo_(reportId) {
+  const match = /^(?:FILL|PRESS)\s*-\s*(\d{2}-\d{8})$/i.exec(String(reportId || '').trim());
+  return match ? match[1] : '';
 }
 
 function getEntries_() {
@@ -1321,6 +1407,7 @@ function validateEntry_(data) {
   data.operator = canonicalMasterValue_(getMaster_().operator, data.operator, 'Operator');
   data.produk = canonicalMasterValue_(getMaster_().produk, data.produk, 'Produk');
   data.botol = canonicalMasterValue_(getMaster_().botol, data.botol, 'Botol');
+  data.batchNo = validateSpkBatchForEntry_(data);
 
   const qtyKardusRaw = Number(data.qtyKardus);
   const qtyBotolRaw = Number(data.qtyBotolPerKardus);
@@ -1647,6 +1734,7 @@ function buildPressAllocationModel_(entries, adjustments) {
 
       pressMeta[event.id] = {
         tanggalAsal: carryDates.join(', '),
+        consumedLotIds: unique_(consumed.map(function (item) { return item.lotId; })),
         keterangan: carryDates.length
           ? 'Sisa tinggalan Press tanggal ' + carryDates.map(formatTanggalIndonesia_).join(', ')
           : ''
@@ -1978,7 +2066,196 @@ function closePressRemainder_(user, data) {
   return adjustment;
 }
 
-function makeReportId_(line, date) {
+function getSpkEntries_() {
+  const sh = ensureSheet_(spreadsheet_(), APP.SHEETS.SPK, APP.SPK_HEADERS);
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return [];
+  return sh.getRange(2, 1, lastRow - 1, APP.SPK_HEADERS.length).getValues()
+    .filter(function (row) { return String(row[0] || '').trim(); })
+    .map(function (row) {
+      return {
+        batchNo: String(row[0] || '').trim(),
+        tanggal: formatDateCell_(row[1]),
+        produk: String(row[2] || '').trim(),
+        botol: String(row[3] || '').trim(),
+        createdBy: String(row[4] || '').trim(),
+        createdAt: isoCell_(row[5]),
+        updatedAt: isoCell_(row[6]),
+        updateCount: Math.max(0, Math.floor(number_(row[7])))
+      };
+    });
+}
+
+function createSpk_(user, data) {
+  data = data && typeof data === 'object' ? data : {};
+  const master = getMaster_();
+  const produk = canonicalMasterValue_(master.produk, data.produk, 'Produk');
+  const botol = canonicalMasterValue_(master.botol, data.botol, 'Botol');
+  const now = new Date();
+  const tz = Session.getScriptTimeZone() || 'Asia/Jakarta';
+  const tanggal = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+  const dateStamp = Utilities.formatDate(now, tz, 'ddMMyyyy');
+  const entries = getSpkEntries_();
+  const todayEntries = entries.filter(function (item) { return item.tanggal === tanggal; });
+  if (todayEntries.length >= 99) throw new Error('Nomor urut SPK hari ini sudah mencapai 99.');
+  const nextNumber = todayEntries.reduce(function (max, item) {
+    const match = /^(\d{2})-\d{8}$/.exec(item.batchNo);
+    return Math.max(max, match ? Number(match[1]) : 0);
+  }, 0) + 1;
+  const batchNo = String(nextNumber).padStart(2, '0') + '-' + dateStamp;
+  const previewUpdateCount = Math.max(0, Math.floor(number_(data.updateCount)));
+  const previewUpdatedAt = normalizeIsoTimestamp_(data.updatedAt) ||
+    (previewUpdateCount > 0 ? now.toISOString() : '');
+  const row = [
+    batchNo, tanggal, produk, botol, user.username, now.toISOString(),
+    previewUpdatedAt, previewUpdateCount
+  ];
+  ensureSheet_(spreadsheet_(), APP.SHEETS.SPK, APP.SPK_HEADERS).appendRow(row);
+  return {
+    batchNo: batchNo,
+    tanggal: tanggal,
+    produk: produk,
+    botol: botol,
+    createdBy: user.username,
+    createdAt: now.toISOString(),
+    updatedAt: previewUpdatedAt,
+    updateCount: previewUpdateCount
+  };
+}
+
+/** Simpan seluruh preview SPK dengan satu kali baca dan satu kali tulis. */
+function createSpkEntriesBatch_(user, dataList) {
+  if (!Array.isArray(dataList) || !dataList.length) throw new Error('Preview SPK kosong.');
+  if (dataList.length > 99) throw new Error('Maksimal 99 SPK per sekali simpan.');
+
+  const master = getMaster_();
+  const sh = ensureSheet_(spreadsheet_(), APP.SHEETS.SPK, APP.SPK_HEADERS);
+  const entries = getSpkEntries_();
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const tz = Session.getScriptTimeZone() || 'Asia/Jakarta';
+  const tanggal = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+  const dateStamp = Utilities.formatDate(now, tz, 'ddMMyyyy');
+  const todayEntries = entries.filter(function (item) { return item.tanggal === tanggal; });
+  if (todayEntries.length + dataList.length > 99) {
+    throw new Error('Jumlah SPK hari ini akan melebihi batas 99.');
+  }
+
+  let nextNumber = todayEntries.reduce(function (max, item) {
+    const match = /^(\d{2})-\d{8}$/.exec(item.batchNo);
+    return Math.max(max, match ? Number(match[1]) : 0);
+  }, 0) + 1;
+  const saved = [];
+  const rows = dataList.map(function (data) {
+    data = data && typeof data === 'object' ? data : {};
+    const produk = canonicalMasterValue_(master.produk, data.produk, 'Produk');
+    const botol = canonicalMasterValue_(master.botol, data.botol, 'Botol');
+    const batchNo = String(nextNumber++).padStart(2, '0') + '-' + dateStamp;
+    const updateCount = Math.max(0, Math.floor(number_(data.updateCount)));
+    const updatedAt = normalizeIsoTimestamp_(data.updatedAt) || (updateCount > 0 ? nowIso : '');
+    const item = {
+      batchNo: batchNo, tanggal: tanggal, produk: produk, botol: botol,
+      createdBy: user.username, createdAt: nowIso,
+      updatedAt: updatedAt, updateCount: updateCount
+    };
+    saved.push(item);
+    return [item.batchNo, item.tanggal, item.produk, item.botol, item.createdBy,
+      item.createdAt, item.updatedAt, item.updateCount];
+  });
+  sh.getRange(Math.max(2, sh.getLastRow() + 1), 1, rows.length, APP.SPK_HEADERS.length).setValues(rows);
+  return saved;
+}
+
+function findSpkRow_(batchNo) {
+  const target = String(batchNo || '').trim();
+  if (!target) return null;
+  const sh = ensureSheet_(spreadsheet_(), APP.SHEETS.SPK, APP.SPK_HEADERS);
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return null;
+  const values = sh.getRange(2, 1, lastRow - 1, APP.SPK_HEADERS.length).getValues();
+  for (let i = 0; i < values.length; i += 1) {
+    if (String(values[i][0] || '').trim() === target) return { sheet: sh, row: i + 2, values: values[i] };
+  }
+  return null;
+}
+
+function assertSpkUnused_(batchNo) {
+  const suffix = ' - ' + String(batchNo || '').trim();
+  const used = getEntries_().some(function (entry) {
+    return String(entry.reportId || '').endsWith(suffix);
+  });
+  if (used) throw new Error('SPK ' + batchNo + ' sudah digunakan pada data Filling/Press sehingga tidak dapat diubah atau dihapus.');
+}
+
+function updateSpk_(user, batchNo, data) {
+  const found = findSpkRow_(batchNo);
+  if (!found) throw new Error('SPK yang akan di-update tidak ditemukan.');
+  const createdBy = String(found.values[4] || '').trim();
+  requireManage_(user, 'spk', createdBy === user.username ? 'own' : 'others');
+  assertSpkUnused_(batchNo);
+  data = data && typeof data === 'object' ? data : {};
+  const master = getMaster_();
+  const produk = canonicalMasterValue_(master.produk, data.produk, 'Produk');
+  const botol = canonicalMasterValue_(master.botol, data.botol, 'Botol');
+  const updatedAt = new Date().toISOString();
+  const updateCount = Math.max(0, Math.floor(number_(found.values[7]))) + 1;
+  found.sheet.getRange(found.row, 3, 1, 6).setValues([[
+    produk, botol, found.values[4], found.values[5], updatedAt, updateCount
+  ]]);
+  return {
+    batchNo: String(found.values[0] || '').trim(),
+    tanggal: formatDateCell_(found.values[1]),
+    produk: produk,
+    botol: botol,
+    createdBy: createdBy,
+    createdAt: isoCell_(found.values[5]),
+    updatedAt: updatedAt,
+    updateCount: updateCount
+  };
+}
+
+function deleteSpk_(user, batchNo) {
+  const found = findSpkRow_(batchNo);
+  if (!found) throw new Error('SPK yang akan dihapus tidak ditemukan.');
+  const createdBy = String(found.values[4] || '').trim();
+  requireManage_(user, 'spk', createdBy === user.username ? 'own' : 'others');
+  assertSpkUnused_(batchNo);
+  found.sheet.deleteRow(found.row);
+}
+
+function validateSpkBatchForEntry_(data, spkEntries) {
+  const batchNo = String(data && data.batchNo || '').trim();
+  if (!batchNo) throw new Error('No Batch SPK wajib tersedia untuk pengerjaan ini. Input SPK terlebih dahulu.');
+  const entries = Array.isArray(spkEntries) ? spkEntries : getSpkEntries_();
+  const spk = entries.find(function (item) { return item.batchNo === batchNo; });
+  if (!spk) throw new Error('No Batch SPK "' + batchNo + '" tidak ditemukan.');
+  if (String(spk.produk).toLowerCase() !== String(data.produk || '').trim().toLowerCase() ||
+      String(spk.botol).toLowerCase() !== String(data.botol || '').trim().toLowerCase()) {
+    throw new Error('Produk atau Botol tidak sesuai dengan No Batch SPK ' + batchNo + '.');
+  }
+  if (data.line === 'filling' && spk.tanggal !== String(data.tanggal || '')) {
+    const tz = Session.getScriptTimeZone() || 'Asia/Jakarta';
+    const now = new Date();
+    const today = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
+    const yesterdayDate = new Date(now.getTime());
+    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
+    const yesterday = Utilities.formatDate(yesterdayDate, tz, 'yyyy-MM-dd');
+    const currentHour = Number(Utilities.formatDate(now, tz, 'H'));
+    const allowedFromPreviousNight =
+      String(data.tanggal || '') === today &&
+      spk.tanggal === yesterday &&
+      currentHour < 19;
+    if (!allowedFromPreviousNight) {
+      throw new Error('No Batch SPK harus berasal dari tanggal Filling yang sama, kecuali SPK kemarin yang masih berlaku sampai pukul 19.00 hari ini.');
+    }
+  }
+  return spk.batchNo;
+}
+
+function makeReportId_(line, date, batchNo) {
+  if (String(batchNo || '').trim()) {
+    return (line === 'press' ? 'PRESS - ' : 'FILL - ') + String(batchNo).trim();
+  }
   const tz = Session.getScriptTimeZone() || 'Asia/Jakarta';
   const stamp = Utilities.formatDate(date, tz, 'yyyyMMdd-HHmmss');
   const prefix = line === 'press' ? 'PRS' : 'FIL';
@@ -2250,8 +2527,8 @@ function addUser_(name, username, password, role) {
 
   const permissions = defaultPermissions_(role);
   if (role === 'user') permissions.levels = {
-    dashboard: 'none', filling: 'write', press: 'write', apd: 'write',
-    reports: 'none', workReport: 'none', kpiFilling: 'none', kpiPress: 'none',
+    dashboard: 'none', spk: 'write', filling: 'write', press: 'write', apd: 'write',
+    reports: 'none', workReport: 'none', spkReport: 'none', kpiFilling: 'none', kpiPress: 'none',
     master: 'none', kpiSettings: 'none'
   };
   sheet_(APP.SHEETS.USERS).appendRow([username, hashPassword_(password), name, role, true, new Date(), JSON.stringify(permissions)]);
@@ -2385,12 +2662,14 @@ function defaultPermissions_(role) {
     return {
       accessDashboard: true,
       accessFilling: true,
+      accessSpk: true,
       accessPress: true,
       accessExportFillingCsv: true,
       accessExportPressCsv: true,
       accessApd: true,
       accessReports: true,
       accessWorkReport: true,
+      accessSpkReport: true,
       accessKpiReport: true,
       accessKpiFillingReport: true,
       accessKpiPressReport: true,
@@ -2407,12 +2686,14 @@ function defaultPermissions_(role) {
   return {
     accessDashboard: false,
     accessFilling: true,
+    accessSpk: true,
     accessPress: true,
     accessExportFillingCsv: false,
     accessExportPressCsv: false,
     accessApd: true,
     accessReports: false,
     accessWorkReport: false,
+    accessSpkReport: false,
     accessKpiReport: false,
     accessKpiFillingReport: false,
     accessKpiPressReport: false,
@@ -2437,6 +2718,8 @@ function normalizePermissions_(role, raw) {
   }
   // User lama dengan izin gabungan tetap mendapat akses yang sama.
   if (!Object.prototype.hasOwnProperty.call(parsed, 'accessWorkReport')) parsed.accessWorkReport = parsed.accessReports === true;
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'accessSpk')) parsed.accessSpk = parsed.accessFilling === true;
+  if (!Object.prototype.hasOwnProperty.call(parsed, 'accessSpkReport')) parsed.accessSpkReport = parsed.accessReports === true;
   if (!Object.prototype.hasOwnProperty.call(parsed, 'accessKpiReport')) parsed.accessKpiReport = parsed.accessReports === true;
   if (!Object.prototype.hasOwnProperty.call(parsed, 'accessKpiFillingReport')) parsed.accessKpiFillingReport = parsed.accessReports === true;
   if (!Object.prototype.hasOwnProperty.call(parsed, 'accessKpiPressReport')) parsed.accessKpiPressReport = parsed.accessReports === true;
@@ -2449,16 +2732,16 @@ function normalizePermissions_(role, raw) {
     defaults.accessKpiReport = false;
   }
   const scopes = {
-    dashboard: 'accessDashboard', filling: 'accessFilling', press: 'accessPress', apd: 'accessApd',
+    dashboard: 'accessDashboard', spk: 'accessSpk', filling: 'accessFilling', press: 'accessPress', apd: 'accessApd',
     reports: 'accessReports',
-    workReport: 'accessWorkReport', kpiFilling: 'accessKpiFillingReport',
+    workReport: 'accessWorkReport', spkReport: 'accessSpkReport', kpiFilling: 'accessKpiFillingReport',
     kpiPress: 'accessKpiPressReport', master: 'accessMaster', kpiSettings: 'accessKpiSettings'
   };
   const levels = {};
   const hasLevels = parsed.levels && typeof parsed.levels === 'object';
   Object.keys(scopes).forEach(function (scope) {
     const explicit = hasLevels && scope === 'reports' && !Object.prototype.hasOwnProperty.call(parsed.levels, 'reports')
-      ? (['workReport', 'kpiFilling', 'kpiPress'].some(function (child) {
+      ? (['workReport', 'spkReport', 'kpiFilling', 'kpiPress'].some(function (child) {
           return ['read', 'write', 'admin'].indexOf(parsed.levels[child]) >= 0;
         }) ? 'read' : 'none')
       : hasLevels && parsed.levels[scope];
@@ -2467,24 +2750,24 @@ function normalizePermissions_(role, raw) {
       defaults[scopes[scope]] = levels[scope] !== 'none';
     } else {
       const allowed = scope === 'reports'
-        ? defaults.accessReports || defaults.accessWorkReport || defaults.accessKpiReport || defaults.accessKpiFillingReport || defaults.accessKpiPressReport
+        ? defaults.accessReports || defaults.accessWorkReport || defaults.accessSpkReport || defaults.accessKpiReport || defaults.accessKpiFillingReport || defaults.accessKpiPressReport
         : defaults[scopes[scope]] || (scope.indexOf('kpi') === 0 && defaults.accessKpiReport);
       levels[scope] = !allowed ? 'none' :
         scope === 'reports' && defaults.accessReports ? 'admin' :
-        (scope === 'filling' || scope === 'press') && defaults.viewAllData && defaults.editOthers && defaults.deleteOthers ? 'admin' :
+        (scope === 'spk' || scope === 'filling' || scope === 'press') && defaults.viewAllData && defaults.editOthers && defaults.deleteOthers ? 'admin' :
         scope === 'apd' ? 'admin' :
-        (scope === 'filling' || scope === 'press' || scope === 'master' || scope === 'kpiSettings') ? 'write' :
+        (scope === 'spk' || scope === 'filling' || scope === 'press' || scope === 'master' || scope === 'kpiSettings') ? 'write' :
         defaults.viewAllData ? 'admin' : 'read';
     }
   });
   if (hasLevels) {
     const parent = levels.reports;
-    ['workReport', 'kpiFilling', 'kpiPress'].forEach(function (scope) {
+    ['workReport', 'spkReport', 'kpiFilling', 'kpiPress'].forEach(function (scope) {
       defaults[scopes[scope]] = parent === 'admin' || (parent !== 'none' && levels[scope] !== 'none');
     });
   }
   defaults.management = {};
-  ['filling', 'press', 'apd'].forEach(function (scope) {
+  ['spk', 'filling', 'press', 'apd'].forEach(function (scope) {
     const admin = levels[scope] === 'admin';
     const write = levels[scope] === 'write';
     const selected = parsed.management && parsed.management[scope];
@@ -2504,7 +2787,7 @@ function canLevel_(user, scope, minimum) {
   if (user.role === 'superuser') return true;
   const levels = normalizePermissions_(user.role, user.permissions || user.permissionsJson || '').levels;
   const rank = { none: 0, read: 1, write: 2, admin: 3 };
-  if (['workReport', 'kpiFilling', 'kpiPress'].indexOf(scope) >= 0) {
+  if (['workReport', 'spkReport', 'kpiFilling', 'kpiPress'].indexOf(scope) >= 0) {
     if (levels.reports === 'admin') return true;
     if (levels.reports === 'none') return false;
   }

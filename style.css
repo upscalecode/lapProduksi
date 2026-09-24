@@ -966,8 +966,9 @@ button {
 
 /* ---------- toast ---------- */
 #toast {
-  position: fixed;
-  bottom: 22px;
+  position: absolute;
+  top: calc(100% + 8px);
+  bottom: auto;
   left: 50%;
   transform: translateX(-50%) translateY(12px);
   background: var(--ink);
@@ -983,6 +984,34 @@ button {
     opacity 0.2s ease,
     transform 0.2s ease;
   z-index: 999;
+}
+
+.spk-head-actions {
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.spk-date-filter {
+  min-width: 170px;
+}
+
+#lap-spk-date-wrap[hidden],
+#lap-spk-start-wrap[hidden],
+#lap-spk-end-wrap[hidden] {
+  display: none !important;
+}
+
+#spkOpenButton[hidden],
+#spkSaveButton[hidden] {
+  display: none !important;
+}
+
+#view-spk.spk-read-only #spkTableBody td:last-child,
+#view-spk.spk-read-only .data-table thead th:last-child {
+  display: none !important;
 }
 #toast.show {
   opacity: 1;
@@ -2394,7 +2423,8 @@ body[data-page="login"] .login-screen {
 /* ===========================================================
    APD — form + preview menjadi satu lembar
    =========================================================== */
-body.press-popup-open {
+body.press-popup-open,
+body.filling-popup-open {
   overflow: hidden;
 }
 
@@ -2747,6 +2777,8 @@ body.press-popup-open {
   min-height: 44px;
   padding: 9px 10px;
   white-space: normal;
+  justify-content: center;
+  text-align: center;
 }
 .apd-photo-options {
   position: absolute;
@@ -2901,14 +2933,14 @@ body.press-popup-open {
   height: 44px;
   border-radius: 50%;
   font-size: 20px;
-  background: var(--accent-2-soft);
+  background: transparent;
   color: var(--accent-2);
 }
 .apd-input-layout .apd-percentage-card {
   background: var(--success-soft);
 }
 .apd-percentage-card .apd-result-icon {
-  background: var(--surface);
+  background: transparent;
   color: var(--success);
 }
 .apd-input-layout .apd-unified-cell input,
@@ -2997,7 +3029,7 @@ body.press-popup-open {
 .apd-input-layout .apd-inline-actions {
   display: flex;
   flex-direction: row;
-  justify-content: flex-start;
+  justify-content: flex-end;
   gap: 14px;
   padding: 0;
   overflow: visible;
@@ -3215,6 +3247,13 @@ body.press-popup-open {
   margin-top: 0;
   border-top: 1px solid var(--line);
 }
+.apd-preview-footer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-left: auto;
+}
 .apd-percent-badge {
   display: inline-flex;
   align-items: center;
@@ -3260,6 +3299,10 @@ body.press-popup-open {
   .apd-unified-footer {
     padding: 12px 18px 18px;
     align-items: flex-start;
+  }
+  .apd-preview-footer-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 
@@ -5662,6 +5705,14 @@ button {
 #view-filling .update-count-col,
 #view-press .update-count-col {
   display: none;
+}
+
+/* Semua notifikasi tetap berada di tengah, tepat di bawah tab utama. */
+#toast {
+  position: absolute;
+  top: calc(100% + 8px);
+  bottom: auto;
+  left: 50%;
 }
 
 /* ===========================================================

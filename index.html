@@ -15,9 +15,53 @@
       crossorigin="anonymous"
       defer
     ></script>
-    <link rel="stylesheet" href="style.css?v=20260923-v33-press-popup-blur" />
+    <link rel="stylesheet" href="style.css?v=20260924-v36-apd-actions-right" />
 
-    <style></style>
+    <style>
+      /* Aturan inti modal SPK ditempatkan bersama dokumen agar tidak dapat
+         tertinggal oleh cache stylesheet ketika versi aplikasi diperbarui. */
+      #spkModal.spk-modal {
+        position: fixed !important;
+        inset: 0 !important;
+        z-index: 10020 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 24px !important;
+        overflow: auto !important;
+        background: rgba(15, 23, 42, 0.62) !important;
+        -webkit-backdrop-filter: blur(10px) !important;
+        backdrop-filter: blur(10px) !important;
+      }
+      #spkModal.spk-modal[hidden] {
+        display: none !important;
+      }
+      #spkModal > .spk-dialog {
+        position: relative !important;
+        width: min(720px, calc(100vw - 32px)) !important;
+        max-width: 720px !important;
+        margin: auto !important;
+        padding: 24px !important;
+        background: #fff !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 16px !important;
+        box-shadow: 0 24px 70px rgba(15, 23, 42, 0.35) !important;
+      }
+      #spkModal .spk-input-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+      }
+      @media (max-width: 700px) {
+        #spkModal.spk-modal {
+          padding: 12px !important;
+        }
+        #spkModal > .spk-dialog {
+          padding: 18px !important;
+        }
+        #spkModal .spk-input-grid {
+          grid-template-columns: 1fr !important;
+        }
+      }
+    </style>
   </head>
   <body data-page="app">
     <div id="startupError" class="panel" role="alert" hidden>
@@ -69,6 +113,7 @@
           <button class="tab-btn active" data-view="dashboard">
             DASHBOARD
           </button>
+          <button class="tab-btn" data-view="spk">SPK</button>
           <button class="tab-btn" data-view="filling">FILLING</button>
           <button class="tab-btn" data-view="press">PRESS</button>
           <button class="tab-btn" data-view="apd">APD</button>
@@ -618,8 +663,109 @@
           </div>
         </section>
 
+        <section class="view" id="view-spk" hidden>
+          <div class="line-stack">
+            <section class="panel table-panel spk-list-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Surat Perintah Kerja</p>
+                  <h2>Daftar SPK</h2>
+                </div>
+                <div class="spk-head-actions">
+                  <label class="field field-inline spk-date-filter">
+                    <span>Filter Tanggal</span>
+                    <input type="date" id="spkDateFilter" />
+                  </label>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    id="spkOpenButton"
+                  >
+                    <i class="fa-solid fa-file-circle-plus"></i> Tambah SPK
+                  </button>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>No Batch</th>
+                      <th>Tanggal</th>
+                      <th>Nama Produk</th>
+                      <th>Botol</th>
+                      <th>Status</th>
+                      <th>Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody id="spkTableBody">
+                    <tr>
+                      <td colspan="6" class="empty-row">
+                        Belum ada SPK hari ini.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="table-footer">
+                <p class="table-summary" id="spkSummary">0 SPK hari ini</p>
+                <div
+                  id="spkPagination"
+                  class="pagination"
+                  aria-label="Navigasi halaman SPK"
+                ></div>
+                <button
+                  type="button"
+                  class="btn btn-primary"
+                  id="spkSaveButton"
+                  disabled
+                >
+                  <i class="fa-solid fa-cloud-arrow-up"></i> Simpan SPK
+                </button>
+              </div>
+            </section>
+          </div>
+        </section>
+
         <section class="view" id="view-filling" data-line="filling" hidden>
           <div class="line-stack">
+            <section class="panel table-panel filling-spk-panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">SPK → Filling</p>
+                  <h2>SPK Hari Ini untuk Dikerjakan</h2>
+                </div>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>No Batch</th>
+                      <th>Nama Produk</th>
+                      <th>Botol</th>
+                      <th>Status</th>
+                      <th>Aksi</th>
+                    </tr>
+                  </thead>
+                  <tbody id="fillingSpkBody">
+                    <tr>
+                      <td colspan="5" class="empty-row">
+                        Belum ada SPK hari ini.
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="table-footer">
+                <p class="table-summary" id="fillingSpkSummary">
+                  0 SPK tersedia
+                </p>
+                <div
+                  id="fillingSpkPagination"
+                  class="pagination"
+                  aria-label="Navigasi halaman SPK Filling"
+                ></div>
+              </div>
+            </section>
             <form
               class="panel form-panel"
               id="form-filling"
@@ -635,11 +781,13 @@
               </div>
 
               <input type="hidden" class="f-editing-id" value="" />
+              <input type="hidden" class="f-batch-no" value="" />
 
               <div class="input-grid">
                 <label class="field">
-                  <span>Tanggal</span>
-                  <input type="text" class="f-tanggal mono" readonly />
+                  <span>No Batch</span>
+                  <input type="text" class="f-batch-display mono" readonly />
+                  <input type="hidden" class="f-tanggal" />
                 </label>
                 <label class="field">
                   <span>Nama Operator</span>
@@ -789,7 +937,7 @@
                 <table class="data-table">
                   <thead>
                     <tr>
-                      <th>ID</th>
+                      <th>No Batch</th>
                       <th>Tanggal</th>
                       <th>Operator</th>
                       <th>Produk</th>
@@ -837,28 +985,14 @@
             <section class="panel apd-unified-panel">
               <div class="apd-form-heading">
                 <div class="apd-form-title">
-                  <span class="apd-form-title-icon" aria-hidden="true"
-                    ><i class="fa-solid fa-user-secret"></i
-                  ></span>
+                  <span class="apd-form-title-icon" aria-hidden="true">
+                    <i class="fa-solid fa-file-lines"></i>
+                  </span>
                   <div>
-                    <h2>Form Penilaian APD Produksi</h2>
+                    <h2>Penilaian APD Produksi</h2>
                   </div>
                 </div>
 
-                <div class="apd-heading-actions">
-                  <!-- <label class="apd-system-date">
-                    <span>Tanggal</span>
-                    <input type="text" id="apdTanggal" class="mono" readonly />
-                  </label> -->
-                  <button
-                    type="button"
-                    class="btn btn-secondary"
-                    id="apdSaveBtn"
-                    disabled
-                  >
-                    <i class="fa-solid fa-cloud-arrow-up"></i> Simpan
-                  </button>
-                </div>
               </div>
 
               <span class="stamp apd-edit-stamp" id="apdStamp"
@@ -894,7 +1028,7 @@
                       class="apd-unified-cell apd-result-cell apd-points-card"
                     >
                       <i
-                        class="fa-solid fa-trophy apd-result-icon"
+                        class="fa-solid fa-star apd-result-icon"
                         aria-hidden="true"
                       ></i>
                       <span class="apd-input-label">Total Poin</span>
@@ -910,7 +1044,7 @@
                       class="apd-unified-cell apd-result-cell apd-percentage-card"
                     >
                       <i
-                        class="fa-solid fa-chart-simple apd-result-icon"
+                        class="fa-solid fa-chart-pie apd-result-icon"
                         aria-hidden="true"
                       ></i>
                       <span class="apd-input-label">Total Persentase</span>
@@ -1057,7 +1191,7 @@
                       >
                     </label>
                     <div class="apd-photo-field" id="apdPhotoField" hidden>
-                      <span class="apd-photo-label">Unggah Foto <b>*</b></span>
+                      <span class="apd-photo-label">Unggah Foto (Opsional)</span>
                       <div class="apd-photo-picker">
                         <button
                           type="button"
@@ -1066,6 +1200,7 @@
                           aria-expanded="false"
                           aria-controls="apdPhotoOptions"
                         >
+                          <i class="fa-solid fa-paperclip" aria-hidden="true"></i>
                           Ambil/Unggah Foto
                         </button>
                         <div
@@ -1125,8 +1260,8 @@
                 </fieldset>
                 <div class="apd-inline-actions">
                   <button type="submit" class="btn btn-primary" id="apdAddBtn">
-                    <i class="fa-solid fa-plus" aria-hidden="true"></i> Simpan
-                    Penilaian
+                    <i class="fa-solid fa-file-circle-plus" aria-hidden="true"></i>
+                    Tambah
                   </button>
                   <button
                     type="button"
@@ -1201,11 +1336,21 @@
 
               <div class="table-footer apd-unified-footer">
                 <p id="apdPreviewSummary" class="table-summary"></p>
-                <div
-                  id="apdPagination"
-                  class="pagination"
-                  aria-label="Navigasi halaman preview APD"
-                ></div>
+                <div class="apd-preview-footer-actions">
+                  <div
+                    id="apdPagination"
+                    class="pagination"
+                    aria-label="Navigasi halaman preview APD"
+                  ></div>
+                  <button
+                    type="button"
+                    class="btn btn-secondary"
+                    id="apdSaveBtn"
+                    disabled
+                  >
+                    <i class="fa-solid fa-cloud-arrow-up"></i> Simpan
+                  </button>
+                </div>
               </div>
             </section>
 
@@ -1334,7 +1479,16 @@
               role="tab"
               aria-selected="true"
             >
-              <i class="fa-solid fa-table-list"></i> Laporan Hasil Pengerjaan
+              <i class="fa-solid fa-table-list"></i> Laporan Hasil Produksi
+            </button>
+            <button
+              type="button"
+              class="laporan-subnav-btn"
+              data-laporan-view="spk"
+              role="tab"
+              aria-selected="false"
+            >
+              <i class="fa-solid fa-file-lines"></i> Data SPK
             </button>
             <button
               type="button"
@@ -1349,7 +1503,7 @@
 
           <div class="laporan-subview" id="laporan-subview-hasil">
             <div class="panel">
-              <div class="panel-head"><h2>Laporan Hasil Pengerjaan</h2></div>
+              <div class="panel-head"><h2>Laporan Hasil Produksi</h2></div>
               <div class="search-bar laporan-production-filters">
                 <label class="field field-inline">
                   <span>Line</span>
@@ -1449,7 +1603,7 @@
                   <table class="data-table">
                     <thead>
                       <tr>
-                        <th>ID</th>
+                        <th>No Batch</th>
                         <th>Line</th>
                         <th>Tanggal</th>
                         <th>Operator</th>
@@ -1486,6 +1640,66 @@
                 </div>
               </div>
             </div>
+          </div>
+
+          <div class="laporan-subview" id="laporan-subview-spk" hidden>
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Laporan</p>
+                  <h2>Data SPK</h2>
+                </div>
+                <button type="button" class="btn btn-primary" id="lap-spk-pdf">
+                  <i class="fa-solid fa-file-pdf"></i> Save PDF
+                </button>
+              </div>
+              <div class="search-bar">
+                <label class="field field-inline"
+                  ><span>Mode Filter</span
+                  ><select id="lap-spk-mode">
+                    <option value="week">7 Hari Terakhir</option>
+                    <option value="date">Tanggal</option>
+                    <option value="range">Rentang Tanggal</option>
+                  </select></label
+                >
+                <label class="field field-inline" id="lap-spk-date-wrap" hidden
+                  ><span>Tanggal</span><input type="date" id="lap-spk-date"
+                /></label>
+                <label class="field field-inline" id="lap-spk-start-wrap" hidden
+                  ><span>Dari</span><input type="date" id="lap-spk-start"
+                /></label>
+                <label class="field field-inline" id="lap-spk-end-wrap" hidden
+                  ><span>Sampai</span><input type="date" id="lap-spk-end"
+                /></label>
+                <button type="button" class="btn btn-ghost" id="lap-spk-reset">
+                  <i class="fa-solid fa-rotate-left"></i> Reset
+                </button>
+              </div>
+              <div class="table-wrap">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>No Batch</th>
+                      <th>Tanggal</th>
+                      <th>Produk</th>
+                      <th>Botol</th>
+                      <th>Dibuat Oleh</th>
+                      <th>Dibuat Pada</th>
+                      <th>Update</th>
+                    </tr>
+                  </thead>
+                  <tbody id="lap-spk-tbody"></tbody>
+                </table>
+              </div>
+              <div class="table-footer">
+                <p class="table-summary" id="lap-spk-summary"></p>
+                <div
+                  id="lap-spk-pagination"
+                  class="pagination"
+                  aria-label="Navigasi halaman laporan SPK"
+                ></div>
+              </div>
+            </section>
           </div>
 
           <div class="laporan-subview" id="laporan-subview-kpi" hidden>
@@ -2117,7 +2331,75 @@
       </main>
     </div>
 
-    <script src="script.js?v=20260923-v42-wet-cartons-today"></script>
+    <div id="spkModal" class="spk-modal" hidden>
+      <form class="spk-dialog" id="spkForm" autocomplete="off">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Surat Perintah Kerja</p>
+            <h2>Input / Update SPK</h2>
+          </div>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            id="spkModalClose"
+            aria-label="Tutup popup SPK"
+          >
+            Tutup
+          </button>
+        </div>
+        <div class="input-grid spk-input-grid">
+          <label class="field">
+            <span>No Batch</span>
+            <input type="text" id="spkBatchNo" class="mono" readonly />
+          </label>
+          <label class="field">
+            <span>Nama Produk</span>
+            <input
+              type="text"
+              id="spkProduk"
+              class="master-search-input"
+              data-master="produk"
+              placeholder="Cari produk…"
+              required
+            />
+          </label>
+          <label class="field">
+            <span>Botol yang Digunakan</span>
+            <input
+              type="text"
+              id="spkBotol"
+              class="master-search-input"
+              data-master="botol"
+              placeholder="Cari jenis botol…"
+              required
+            />
+          </label>
+        </div>
+        <p class="form-error" id="spkError" hidden></p>
+        <div class="form-actions">
+          <button type="submit" class="btn btn-primary" id="spkAdd">
+            <i class="fa-solid fa-circle-plus"></i> Tambah
+          </button>
+          <button type="button" class="btn btn-ghost" id="spkCancel" disabled>
+            <i class="fa-solid fa-ban"></i> Batal Edit
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <script>
+      window.addEventListener("error", function (event) {
+        var box = document.getElementById("startupError");
+        var message = document.getElementById("startupErrorMessage");
+        if (box) box.hidden = false;
+        if (message)
+          message.textContent =
+            "JavaScript: " +
+            (event.message || "gagal dimuat") +
+            (event.lineno ? " (baris " + event.lineno + ")" : "");
+      });
+    </script>
+    <script src="script.js?v=20260924-v78-faster-sync"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>

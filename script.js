@@ -34,15 +34,16 @@
     MASTER_KEY: "ppr_master_cache_v3",
     PREVIEW_KEY: "ppr_preview_cache_v4",
     FORM_DRAFT_KEY: "ppr_form_draft_v4",
-    REQUEST_TIMEOUT: 30000, // safety net; simpan batch normalnya jauh lebih cepat
+    REQUEST_TIMEOUT: 60000, // Apps Script dapat melambat saat sinkronisasi Sheet
     PAGE_SIZE: 20,
+    APD_PREVIEW_PAGE_SIZE: 5,
     PRESS_BALANCE_PAGE_SIZE: 5,
     DASHBOARD_PRIORITY_PAGE_SIZE: 6,
     DASHBOARD_PRESS_KPI_PAGE_SIZE: 7,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbyDamlDV6QbB-WdG8NX64YI_Ki8BVmB2-7a2YEw9SJgf0LHI3sOO59jCPR3CeOshSHZvQ/exec",
+      "https://script.google.com/macros/s/AKfycbx61CE7Ft05yP3HvbQ1ApH6PudzHThmqO91aUR5sXggzRD9LWF-WSh9RXYHFXQJ3x9fxg/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -57,8 +58,9 @@
     reportEntries: [],
     adjustments: [],
     remainders: [],
+    spkEntries: [],
     apdEntries: [],
-    preview: { filling: [], press: [], apd: [] },
+    preview: { filling: [], press: [], apd: [], spk: [] },
     users: [],
     settings: {
       kpiPressOutputTargetMonthly: 70000,
@@ -77,6 +79,7 @@
       kpiLaporan: 1,
     },
     savedPages: { filling: 1, press: 1 },
+    spk: { page: 1, fillingPage: 1, reportPage: 1, date: "", fillingDate: "" },
     pressBalance: { search: "", page: 1 },
     dashboard: {
       chartMode: "7days",
@@ -128,12 +131,14 @@
   const DEFAULT_USER_PERMISSIONS = Object.freeze({
     accessDashboard: false,
     accessFilling: true,
+    accessSpk: true,
     accessPress: true,
     accessExportFillingCsv: false,
     accessExportPressCsv: false,
     accessApd: true,
     accessReports: false,
     accessWorkReport: false,
+    accessSpkReport: false,
     accessKpiReport: false,
     accessKpiFillingReport: false,
     accessKpiPressReport: false,
@@ -158,6 +163,8 @@
     return {
       ...DEFAULT_USER_PERMISSIONS,
       accessWorkReport: saved.accessWorkReport ?? saved.accessReports ?? false,
+      accessSpk: saved.accessSpk ?? saved.accessFilling ?? false,
+      accessSpkReport: saved.accessSpkReport ?? saved.accessReports ?? false,
       accessKpiReport: saved.accessKpiReport ?? saved.accessReports ?? false,
       accessKpiFillingReport:
         saved.accessKpiFillingReport ?? saved.accessReports ?? false,
@@ -182,11 +189,13 @@
     const perms = permissionsOf(user);
     const flags = {
       dashboard: "accessDashboard",
+      spk: "accessSpk",
       filling: "accessFilling",
       press: "accessPress",
       apd: "accessApd",
       reports: "accessReports",
       workReport: "accessWorkReport",
+      spkReport: "accessSpkReport",
       kpiFilling: "accessKpiFillingReport",
       kpiPress: "accessKpiPressReport",
       master: "accessMaster",
@@ -194,10 +203,12 @@
     };
     const fallback = !perms[flags[scope]]
       ? "none"
-      : ["filling", "press", "apd", "master", "kpiSettings"].includes(scope)
+      : ["spk", "filling", "press", "apd", "master", "kpiSettings"].includes(
+            scope,
+          )
         ? "write"
         : "read";
-    if (["workReport", "kpiFilling", "kpiPress"].includes(scope)) {
+    if (["workReport", "spkReport", "kpiFilling", "kpiPress"].includes(scope)) {
       const parent =
         perms.levels?.reports || (perms.accessReports ? "admin" : "read");
       if (parent === "admin") return true;
@@ -225,7 +236,10 @@
   function canOpenReports() {
     return (
       canLevel("reports") &&
-      (canLevel("workReport") || canKpiType("filling") || canKpiType("press"))
+      (canLevel("workReport") ||
+        canLevel("spkReport") ||
+        canKpiType("filling") ||
+        canKpiType("press"))
     );
   }
 
@@ -258,8 +272,17 @@
     );
   }
 
+  function canManageSpk(spk) {
+    if (!state.currentUser || !spk) return false;
+    return canManage(
+      "spk",
+      spk.createdBy === state.currentUser.username ? "own" : "others",
+    );
+  }
+
   function firstAllowedView() {
     if (can("accessDashboard")) return "dashboard";
+    if (can("accessSpk")) return "spk";
     if (can("accessFilling")) return "filling";
     if (can("accessPress")) return "press";
     if (can("accessApd")) return "apd";
@@ -271,6 +294,7 @@
   function applyAccessControl() {
     const accessMap = {
       dashboard: can("accessDashboard"),
+      spk: can("accessSpk"),
       filling: can("accessFilling"),
       press: can("accessPress"),
       apd: can("accessApd"),
@@ -287,6 +311,10 @@
         !canLevel(scope, "write"),
       );
     });
+    el("view-spk")?.classList.toggle(
+      "spk-read-only",
+      !canLevel("spk", "write"),
+    );
     qsa("#view-filling .f-export-btn").forEach((button) => {
       button.hidden = !can("accessExportFillingCsv");
     });
@@ -312,11 +340,17 @@
       btn.hidden =
         btn.dataset.laporanView === "hasil"
           ? !can("accessWorkReport")
-          : !(canKpiType("filling") || canKpiType("press"));
+          : btn.dataset.laporanView === "spk"
+            ? !canLevel("spkReport")
+            : !(canKpiType("filling") || canKpiType("press"));
     });
     const activeReport = qs(".laporan-subnav-btn.active");
     if (activeReport?.hidden) {
-      const fallback = can("accessWorkReport") ? "hasil" : "kpi";
+      const fallback = can("accessWorkReport")
+        ? "hasil"
+        : canLevel("spkReport")
+          ? "spk"
+          : "kpi";
       qsa(".laporan-subnav-btn").forEach((btn) => {
         const selected = btn.dataset.laporanView === fallback;
         btn.classList.toggle("active", selected);
@@ -394,6 +428,7 @@
         filling: Array.isArray(saved.filling) ? saved.filling : [],
         press: Array.isArray(saved.press) ? saved.press : [],
         apd: Array.isArray(saved.apd) ? saved.apd : [],
+        spk: Array.isArray(saved.spk) ? saved.spk : [],
       };
     } catch (err) {
       console.warn("Preview lokal tidak dapat dibaca:", err);
@@ -422,6 +457,7 @@
         qtyBotolPerKardus: qs(".f-qty-botol", form)?.value || "",
         qtyBotolPecah: qs(".f-qty-pecah", form)?.value || "0",
         qtyKardusBasah: qs(".f-qty-kardus-basah", form)?.value || "0",
+        batchNo: qs(".f-batch-no", form)?.value || "",
         editingId: qs(".f-editing-id", form)?.value || "",
         savedAt: nowIso(),
       };
@@ -462,6 +498,8 @@
     const botolPecah = qs(".f-botol-pecah", form);
     const total = qs(".f-total", form);
     const editing = qs(".f-editing-id", form);
+    const batchNo = qs(".f-batch-no", form);
+    const batchDisplay = qs(".f-batch-display", form);
     const submitBtn = qs(".f-submit-btn", form);
     const cancelBtn = qs(".f-cancel-btn", form);
     const stamp = qs(".stamp", form);
@@ -476,6 +514,13 @@
     if (qtyBotol) qtyBotol.value = draft.qtyBotolPerKardus ?? "";
     if (qtyPecah) qtyPecah.value = draft.qtyBotolPecah ?? "0";
     if (qtyKardusBasah) qtyKardusBasah.value = draft.qtyKardusBasah ?? "0";
+    if (batchNo)
+      batchNo.value =
+        draft.batchNo ||
+        (line === "filling"
+          ? findSpkBatch(todayStr(), produk?.value, botol?.value)
+          : "");
+    if (batchDisplay) batchDisplay.value = batchNo?.value || "";
     if (botolPecah) botolPecah.value = (botol && botol.value) || "-";
     if (total)
       total.value = (
@@ -665,7 +710,7 @@
 
     setConnection(
       "loading",
-      action === "login" ? "Memeriksa login…" : "Menyimpan cepat…",
+      action === "login" ? "Memeriksa login…" : "Loading...",
     );
     try {
       const response = await fetchWithTimeout(base, {
@@ -699,6 +744,43 @@
     const d = new Date();
     const p = (n) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  }
+
+  function findSpkBatch(tanggal, produk, botol) {
+    const productKey = String(produk || "")
+      .trim()
+      .toLowerCase();
+    const bottleKey = String(botol || "")
+      .trim()
+      .toLowerCase();
+    if (!tanggal || !productKey || !bottleKey) return "";
+    const matches = (state.spkEntries || []).filter(
+      (item) =>
+        item.tanggal === tanggal &&
+        String(item.produk || "")
+          .trim()
+          .toLowerCase() === productKey &&
+        String(item.botol || "")
+          .trim()
+          .toLowerCase() === bottleKey,
+    );
+    return matches.length
+      ? String(matches[matches.length - 1].batchNo || "")
+      : "";
+  }
+
+  function nextSpkBatchNo() {
+    const today = todayStr();
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, "0");
+    const datePart = `${p(d.getDate())}${p(d.getMonth() + 1)}${d.getFullYear()}`;
+    const max = [...(state.spkEntries || []), ...(state.preview.spk || [])]
+      .filter((item) => item.tanggal === today)
+      .reduce((value, item) => {
+        const match = /^(\d{2})-\d{8}$/.exec(String(item.batchNo || ""));
+        return Math.max(value, match ? Number(match[1]) : 0);
+      }, 0);
+    return `${p(max + 1)}-${datePart}`;
   }
 
   function nowIso() {
@@ -786,7 +868,7 @@
     if (!toastEl) {
       toastEl = document.createElement("div");
       toastEl.id = "toast";
-      document.body.appendChild(toastEl);
+      (el("mainTabbar")?.parentElement || document.body).appendChild(toastEl);
     }
     toastEl.textContent = message;
     toastEl.className = isError ? "err show" : "show";
@@ -963,15 +1045,65 @@
 
   /* ------------------------- APP COMMON ------------------------- */
   let pressFormTrigger = null;
+  let fillingFormTrigger = null;
+
+  function openFillingFormPopup(trigger) {
+    const popup = el("fillingFormPopup");
+    if (!popup) return;
+    closeMasterSuggestions();
+    fillingFormTrigger = trigger || document.activeElement;
+    popup.hidden = false;
+    document.body.classList.add("filling-popup-open");
+    qs(".filling-popup-close", popup)?.focus();
+  }
+
+  function closeFillingFormPopup() {
+    const popup = el("fillingFormPopup");
+    if (!popup || popup.hidden) return;
+    document.activeElement?.blur();
+    popup.hidden = true;
+    document.body.classList.remove("filling-popup-open");
+    if (fillingFormTrigger?.isConnected) fillingFormTrigger.focus();
+    fillingFormTrigger = null;
+  }
+
+  function buildFillingPopup() {
+    const form = el("form-filling");
+    if (!form || el("fillingFormPopup")) return;
+    qsa(".f-produk, .f-botol", form).forEach((input) => {
+      input.readOnly = true;
+    });
+    const popup = document.createElement("div");
+    popup.id = "fillingFormPopup";
+    popup.className = "press-form-popup filling-form-popup";
+    popup.hidden = true;
+    popup.setAttribute("role", "dialog");
+    popup.setAttribute("aria-modal", "true");
+    const closeButton = document.createElement("button");
+    closeButton.type = "button";
+    closeButton.className = "btn btn-ghost filling-popup-close";
+    closeButton.textContent = "Tutup";
+    qs(".panel-head", form)?.appendChild(closeButton);
+    form.before(popup);
+    popup.appendChild(form);
+    closeButton.addEventListener("click", closeFillingFormPopup);
+    popup.addEventListener("click", (event) => {
+      if (event.target === popup) closeFillingFormPopup();
+    });
+    popup.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") closeFillingFormPopup();
+    });
+  }
 
   function openPressFormPopup(trigger) {
     const popup = el("pressFormPopup");
     if (!popup) return;
+    closeMasterSuggestions();
     pressFormTrigger = trigger || document.activeElement;
     popup.hidden = false;
     document.body.classList.add("press-popup-open");
     updatePressAvailabilityHint(qs(".form-panel", popup));
-    qs(".f-operator", popup)?.focus();
+    qs(".press-popup-close", popup)?.focus();
   }
 
   function closePressFormPopup() {
@@ -994,6 +1126,7 @@
     clone.id = "view-press";
     clone.dataset.line = "press";
     clone.hidden = true;
+    qs(".filling-spk-panel", clone)?.remove();
     qsa("[data-line]", clone).forEach((node) => {
       node.dataset.line = "press";
     });
@@ -1184,6 +1317,10 @@
       const produk = qs(".f-produk", pressForm);
       const botol = qs(".f-botol", pressForm);
       const perKardusInput = qs(".f-qty-botol", pressForm);
+      const batchInput = qs(".f-batch-no", pressForm);
+      const batchDisplay = qs(".f-batch-display", pressForm);
+      if (batchInput) batchInput.value = useBtn.dataset.batchNo || "";
+      if (batchDisplay) batchDisplay.value = useBtn.dataset.batchNo || "";
       if (perKardusInput && Number(useBtn.dataset.perKardus) > 0) {
         perKardusInput.value = useBtn.dataset.perKardus;
         perKardusInput.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1241,9 +1378,13 @@
     if (Array.isArray(data.entries)) state.entries = data.entries;
     if (Array.isArray(data.reportEntries))
       state.reportEntries = data.reportEntries;
-    else if (Array.isArray(data.entries)) state.reportEntries = data.entries;
+    else if (data.reportEntriesSameAsEntries && Array.isArray(data.entries))
+      state.reportEntries = data.entries;
+    else if (Array.isArray(data.entries) && !state.reportEntries.length)
+      state.reportEntries = data.entries;
     if (Array.isArray(data.adjustments)) state.adjustments = data.adjustments;
     if (Array.isArray(data.remainders)) state.remainders = data.remainders;
+    if (Array.isArray(data.spkEntries)) state.spkEntries = data.spkEntries;
     if (Array.isArray(data.apdEntries)) state.apdEntries = data.apdEntries;
     if (Array.isArray(data.users)) state.users = data.users;
     if (data.settings && typeof data.settings === "object") {
@@ -1270,13 +1411,19 @@
     renderEntries("filling");
     renderEntries("press");
     renderPressBalance();
+    renderSpkToday();
+    renderFillingSpkQueue();
+    renderSpkReport();
     renderMasterChips();
     renderUsers();
     renderKpiPressSetting();
     renderKpiFillingSetting();
     renderUserHeader();
     applyAccessControl();
-    if (Array.isArray(data.reportEntries)) selectAvailableKpiMonth();
+    if (el("spkOpenButton"))
+      el("spkOpenButton").hidden = !canLevel("spk", "write");
+    if (Array.isArray(data.reportEntries) || data.reportEntriesSameAsEntries)
+      selectAvailableKpiMonth();
     renderDashboard();
     if (typeof window.refreshLaporanAutoPreview === "function") {
       window.refreshLaporanAutoPreview();
@@ -1314,7 +1461,11 @@
       if (!data.settings) data.settings = bootstrap.settings;
     }
     applyBootstrap(data);
-    if (!Array.isArray(data.reportEntries) && canOpenReports()) {
+    if (
+      !Array.isArray(data.reportEntries) &&
+      !data.reportEntriesSameAsEntries &&
+      canOpenReports()
+    ) {
       setConnection("error", "Backend laporan perlu diperbarui");
       toast(
         "Backend laporan belum diperbarui. Deploy ulang Code.gs agar data semua user tersedia.",
@@ -1493,6 +1644,7 @@
     function selectMasterValue(button) {
       if (!button) return;
       input.value = button.dataset.value;
+      input.dataset.masterTouched = "1";
       input.setCustomValidity("");
       input.classList.remove("is-invalid");
       input.dispatchEvent(new Event("change", { bubbles: true }));
@@ -1502,6 +1654,7 @@
 
     input.addEventListener("focus", renderList);
     input.addEventListener("input", () => {
+      input.dataset.masterTouched = "1";
       if (!input.classList.contains("filter-master-search")) {
         input.setCustomValidity("");
         input.classList.remove("is-invalid");
@@ -1532,8 +1685,26 @@
         )
           return;
         list.hidden = true;
+        // Fokus saja, perpindahan tab, atau reset form tidak boleh langsung
+        // menandai field kosong sebagai error sebelum pengguna mengetik/memilih.
+        if (
+          input.dataset.masterTouched !== "1" &&
+          !String(input.value || "").trim()
+        ) {
+          input.setCustomValidity("");
+          input.classList.remove("is-invalid");
+          return;
+        }
         validateMasterInput(input);
       }, 120);
+    });
+
+    input.form?.addEventListener("reset", () => {
+      window.setTimeout(() => {
+        delete input.dataset.masterTouched;
+        input.setCustomValidity("");
+        input.classList.remove("is-invalid");
+      }, 0);
     });
 
     list.addEventListener("keydown", (event) => {
@@ -1672,10 +1843,66 @@
   // benar-benar disimpan ke Spreadsheet. Preview Press tetap boleh dibuat/edit.
   function hasUnsavedFillingPreview() {
     return (
-      can("accessFilling") &&
-      Array.isArray(state.preview.filling) &&
-      state.preview.filling.length > 0
+      Array.isArray(state.preview.filling) && state.preview.filling.length > 0
     );
+  }
+
+  function validatePressBatchAgainstSavedFilling(previewRows) {
+    const pressRows = (previewRows || []).filter(
+      (item) => item.tab === "press",
+    );
+    if (!pressRows.length) return "";
+
+    // Hanya saldo resmi dari Spreadsheet yang boleh menjadi dasar Simpan Press.
+    // Preview Filling sengaja tidak dimasukkan karena belum tersedia di backend.
+    const savedFilling = (state.remainders || [])
+      .map((item) => ({
+        ...item,
+        tanggal: item.tanggalAsal || item.tanggal || "",
+        qtyBotolPerKardus: getQtyBotolPerKardusFromRemainder(item),
+        remaining: Math.max(0, Number(item.sisaQty ?? item.remaining) || 0),
+      }))
+      .sort(
+        (a, b) =>
+          String(a.tanggal || "").localeCompare(String(b.tanggal || "")) ||
+          String(a.createdAt || "").localeCompare(String(b.createdAt || "")),
+      );
+    const allPress = [...pressRows].sort(
+      (a, b) =>
+        String(a.tanggal || "").localeCompare(String(b.tanggal || "")) ||
+        String(a.createdAt || "").localeCompare(String(b.createdAt || "")),
+    );
+
+    for (const press of allPress) {
+      let needed = Math.max(
+        0,
+        Number(press.totalQty) ||
+          (Number(press.qtyKardus) || 0) *
+            (Number(press.qtyBotolPerKardus) || 0),
+      );
+      for (const filling of savedFilling) {
+        if (needed <= 0) break;
+        if (filling.remaining <= 0) continue;
+        if (String(filling.tanggal || "") > String(press.tanggal || ""))
+          continue;
+        if (
+          balanceKey(filling.produk, filling.botol) !==
+          balanceKey(press.produk, press.botol)
+        )
+          continue;
+        if (
+          Number(filling.qtyBotolPerKardus) !== Number(press.qtyBotolPerKardus)
+        )
+          continue;
+        const used = Math.min(needed, filling.remaining);
+        filling.remaining -= used;
+        needed -= used;
+      }
+      if (needed > 0) {
+        return `Preview Press melebihi saldo Filling tersimpan untuk ${press.produk} / ${press.botol}. Kekurangan ${needed.toLocaleString("id-ID")} botol. Simpan Filling terlebih dahulu atau kurangi Qty Press.`;
+      }
+    }
+    return "";
   }
 
   function updateSaveButtonState(line) {
@@ -1837,6 +2064,14 @@
     return Number(sourceEntry && sourceEntry.qtyBotolPerKardus) || 0;
   }
 
+  function entryBatchNo(entry) {
+    if (entry && entry.batchNo) return String(entry.batchNo);
+    const match = /^(?:FILL|PRESS)\s*-\s*(\d{2}-\d{8})$/i.exec(
+      String((entry && entry.reportId) || ""),
+    );
+    return match ? match[1] : "";
+  }
+
   function getPressBalanceRows(options = {}) {
     const excludePreviewId = options.excludePreviewId || "";
     const lots = [];
@@ -1845,11 +2080,16 @@
     (state.remainders || []).forEach((item) => {
       const remaining = Number(item.sisaQty ?? item.remaining) || 0;
       if (remaining <= 0) return;
+      const sourceEntry = (state.entries || []).find(
+        (entry) =>
+          entry.tab === "filling" && String(entry.id) === String(item.id),
+      );
       lots.push({
         id: String(item.id || ""),
         tanggalAsal: String(item.tanggalAsal || item.tanggal || ""),
         produk: String(item.produk || "").trim(),
         botol: String(item.botol || "").trim(),
+        batchNo: entryBatchNo(sourceEntry),
         qtyBotolPerKardus: getQtyBotolPerKardusFromRemainder(item),
         qtyBotolPerKardusValues: [],
         qtyFilling: Number(item.qtyFilling) || remaining,
@@ -1869,6 +2109,7 @@
         tanggalAsal: String(item.tanggal || todayStr()),
         produk: String(item.produk || "").trim(),
         botol: String(item.botol || "").trim(),
+        batchNo: entryBatchNo(item),
         qtyBotolPerKardus: Number(item.qtyBotolPerKardus) || 0,
         qtyFilling: qty,
         qtyPressTerpakai: 0,
@@ -1897,6 +2138,7 @@
       const botolKey = balanceKey(press.produk, press.botol);
       const perKardus = Number(press.qtyBotolPerKardus) || 0;
       const pressDate = String(press.tanggal || todayStr());
+      const pressBatchNo = entryBatchNo(press);
 
       lots
         .filter(
@@ -1907,6 +2149,7 @@
               .toLowerCase() === key &&
             balanceKey(lot.produk, lot.botol) === botolKey &&
             Number(lot.qtyBotolPerKardus) === perKardus &&
+            (!pressBatchNo || lot.batchNo === pressBatchNo) &&
             (!lot.tanggalAsal || lot.tanggalAsal <= pressDate),
         )
         .sort(
@@ -1940,6 +2183,8 @@
       const key =
         tanggal +
         "|" +
+        String(lot.batchNo || "") +
+        "|" +
         balanceKey(lot.produk, lot.botol) +
         "|" +
         (Number(lot.qtyBotolPerKardus) || 0);
@@ -1947,6 +2192,7 @@
         grouped.set(key, {
           id: `balance-${key}`,
           tanggalAsal: tanggal,
+          batchNo: String(lot.batchNo || ""),
           produk: String(lot.produk || "").trim(),
           botol: String(lot.botol || "").trim(),
           qtyFilling: 0,
@@ -2096,6 +2342,7 @@
           <div class="press-balance-actions">
             <button type="button" class="btn btn-ghost press-balance-use"
               data-produk="${esc(row.produk)}" data-botol="${esc(row.botol)}"
+              data-batch-no="${esc(row.batchNo || "")}" data-tanggal-asal="${esc(row.tanggalAsal || "")}"
               data-per-kardus="${Number(row.qtyBotolPerKardus[0]) || 0}"
               ${!produkAktif ? 'disabled title="Produk sudah tidak ada di Master."' : ""}>Gunakan</button>
             ${
@@ -2320,9 +2567,10 @@
   }
 
   function renderPreviewRow(entry) {
+    const previewBatch = entryBatchNo(entry);
     return `
       <tr>
-        <td><span class="id-badge">PREVIEW</span></td>
+        <td><span class="id-badge">PREVIEW${previewBatch ? ` - ${esc(previewBatch)}` : ""}</span></td>
         <td>${esc(entry.tanggal)}</td>
         <td>${esc(entry.operator)}</td>
         <td>${esc(entry.produk)}</td>
@@ -2409,6 +2657,7 @@
       state.pages[line] = nextPage;
       renderPreview(line);
     });
+    if (line === "filling") renderFillingSpkQueue();
   }
 
   function wireLineView(line) {
@@ -2422,6 +2671,8 @@
     const botol = qs(".f-botol", form);
     const botolPecah = qs(".f-botol-pecah", form);
     const editing = qs(".f-editing-id", form);
+    const batchNo = qs(".f-batch-no", form);
+    const batchDisplay = qs(".f-batch-display", form);
     const tanggal = qs(".f-tanggal", form);
     const qtyKardus = qs(".f-qty-kardus", form);
     const qtyBotol = qs(".f-qty-botol", form);
@@ -2445,11 +2696,26 @@
       if (botolPecah) botolPecah.value = botol.value || "-";
     }
 
+    function syncFillingBatch() {
+      if (line !== "filling" || !batchNo) return;
+      batchNo.value = findSpkBatch(
+        tanggal.value || todayStr(),
+        produk?.value,
+        botol?.value,
+      );
+      if (batchDisplay) batchDisplay.value = batchNo.value;
+      stamp.textContent = batchNo.value
+        ? `No Batch ${batchNo.value}`
+        : "SPK belum dipilih";
+    }
+
     function resetForm() {
       if (botolPecah) botolPecah.value = "-";
       form.reset();
       editing.value = "";
       editing.dataset.source = "";
+      if (batchNo) batchNo.value = "";
+      if (batchDisplay) batchDisplay.value = "";
       tanggal.value = todayStr();
       total.value = "0";
       qtyPecah.value = "0";
@@ -2469,19 +2735,24 @@
       clearFormDraft(line);
       if (line === "press") updatePressAvailabilityHint(form);
       if (line === "press") closePressFormPopup();
+      if (line === "filling") closeFillingFormPopup();
     }
 
     botol.addEventListener("change", () => {
       syncBotolPecah();
+      syncFillingBatch();
       if (line === "press") updatePressAvailabilityHint(form);
     });
     produk?.addEventListener("change", () => {
+      syncFillingBatch();
       if (line === "press") updatePressAvailabilityHint(form);
     });
     produk?.addEventListener("input", () => {
+      syncFillingBatch();
       if (line === "press") updatePressAvailabilityHint(form);
     });
     botol.addEventListener("input", () => {
+      syncFillingBatch();
       if (line === "press") updatePressAvailabilityHint(form);
     });
     qtyKardus.addEventListener("input", () => {
@@ -2513,6 +2784,7 @@
         operator: payload.operator,
         produk: payload.produk,
         botol: payload.botol,
+        batchNo: payload.batchNo,
         qtyKardus: payload.qtyKardus,
         qtyBotolPerKardus: payload.qtyBotolPerKardus,
         totalQty: payload.qtyKardus * payload.qtyBotolPerKardus,
@@ -2566,6 +2838,7 @@
       }
       const payload = {
         line,
+        batchNo: batchNo?.value || "",
         tanggal: tanggal.value || todayStr(),
         operator: qs(".f-operator", form).value,
         produk: qs(".f-produk", form).value,
@@ -2597,6 +2870,15 @@
       payload.produk = canonicalMasterValue("produk", produk.value);
       payload.botol = canonicalMasterValue("botol", botol.value);
       payload.botolPecahJenis = payload.botol;
+
+      if (!payload.batchNo) {
+        errorEl.textContent =
+          line === "filling"
+            ? "SPK untuk tanggal, produk, dan botol ini belum tersedia. Input SPK dari Dashboard terlebih dahulu."
+            : "No Batch SPK tidak ditemukan pada lot Filling yang dipilih.";
+        errorEl.hidden = false;
+        return;
+      }
 
       if (
         !Number.isFinite(payload.qtyKardus) ||
@@ -2669,6 +2951,7 @@
             operator: payload.operator,
             produk: payload.produk,
             botol: payload.botol,
+            batchNo: payload.batchNo,
             qtyKardus: payload.qtyKardus,
             qtyBotolPerKardus: payload.qtyBotolPerKardus,
             totalQty: payload.qtyKardus * payload.qtyBotolPerKardus,
@@ -2705,6 +2988,7 @@
         operator: payload.operator,
         produk: payload.produk,
         botol: payload.botol,
+        batchNo: payload.batchNo,
         qtyKardus: payload.qtyKardus,
         qtyBotolPerKardus: payload.qtyBotolPerKardus,
         totalQty: payload.qtyKardus * payload.qtyBotolPerKardus,
@@ -2769,6 +3053,15 @@
           return;
         }
 
+        if (line === "press") {
+          const balanceError =
+            validatePressBatchAgainstSavedFilling(previewRows);
+          if (balanceError) {
+            toast(balanceError, true);
+            return;
+          }
+        }
+
         saveBtn.disabled = true;
         saveBtn.textContent = `Menyimpan ${previewRows.length} data...`;
 
@@ -2777,6 +3070,7 @@
         // lalu menghitung Sisa Press sekali untuk seluruh batch.
         const batchPayload = previewRows.map((item) => ({
           line: item.tab,
+          batchNo: entryBatchNo(item),
           tanggal: item.tanggal,
           operator: item.operator,
           produk: item.produk,
@@ -2843,16 +3137,12 @@
     const exportButton = qs(".f-export-btn", section);
     if (exportButton) {
       exportButton.hidden = !can(
-        line === "filling"
-          ? "accessExportFillingCsv"
-          : "accessExportPressCsv",
+        line === "filling" ? "accessExportFillingCsv" : "accessExportPressCsv",
       );
     }
     exportButton?.addEventListener("click", () => {
       const exportPermission =
-        line === "filling"
-          ? "accessExportFillingCsv"
-          : "accessExportPressCsv";
+        line === "filling" ? "accessExportFillingCsv" : "accessExportPressCsv";
       if (!can(exportPermission))
         return toast("Anda tidak memiliki akses Export CSV.", true);
       const rows = filteredPreviewEntries(line);
@@ -2897,6 +3187,40 @@
       downloadText(`laporan-${line}-${todayStr()}.csv`, csv);
     });
 
+    const hasRelatedPress = (fillingEntry) => {
+      const fillingBatch = entryBatchNo(fillingEntry);
+      return [
+        ...(state.entries || []).filter((item) => item.tab === "press"),
+        ...(state.preview.press || []),
+      ].some((press) => {
+        const pressBatch = entryBatchNo(press);
+        if (fillingBatch && pressBatch) return pressBatch === fillingBatch;
+        return (
+          String(press.produk || "")
+            .trim()
+            .toLowerCase() ===
+            String(fillingEntry.produk || "")
+              .trim()
+              .toLowerCase() &&
+          String(press.botol || "")
+            .trim()
+            .toLowerCase() ===
+            String(fillingEntry.botol || "")
+              .trim()
+              .toLowerCase() &&
+          Number(press.qtyBotolPerKardus) ===
+            Number(fillingEntry.qtyBotolPerKardus) &&
+          String(press.tanggal || "") >= String(fillingEntry.tanggal || "")
+        );
+      });
+    };
+
+    const showFillingDeleteBlocked = () =>
+      toast(
+        "Data Filling tidak dapat dihapus karena sudah dilakukan Press, baik sebagian maupun seluruh qty. Hapus data Press terkait terlebih dahulu.",
+        true,
+      );
+
     qs(".f-tbody", section).addEventListener("click", async (event) => {
       // Data tersimpan memakai tombol Update/Hapus seperti sebelumnya.
       const savedEditBtn = event.target.closest(".btn-edit");
@@ -2910,6 +3234,8 @@
           return toast("Anda tidak memiliki akses mengedit data ini.", true);
         editing.value = entry.id;
         editing.dataset.source = "saved";
+        if (batchNo) batchNo.value = entryBatchNo(entry);
+        if (batchDisplay) batchDisplay.value = entryBatchNo(entry);
         tanggal.value = entry.tanggal;
         operator.value = entry.operator;
         produk.value = entry.produk;
@@ -2925,6 +3251,7 @@
         cancelBtn.hidden = false;
         stamp.textContent = "EDIT DATA";
         if (line === "press") openPressFormPopup(savedEditBtn);
+        else if (line === "filling") openFillingFormPopup(savedEditBtn);
         else form.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
@@ -2935,6 +3262,8 @@
         );
         if (!entry || !canDeleteEntry(entry))
           return toast("Anda tidak memiliki akses menghapus data ini.", true);
+        if (entry.tab === "filling" && hasRelatedPress(entry))
+          return showFillingDeleteBlocked();
         if (
           !(await confirmDelete({
             title: "Hapus data produksi?",
@@ -2948,15 +3277,29 @@
           const response = await enqueueWrite(() =>
             apiPost("entry.delete", { id: entry.id }),
           );
-          state.entries = state.entries.filter((x) => x.id !== entry.id);
+          const deletedIds = new Set(
+            (response.deletedIds || [entry.id]).map(String),
+          );
+          state.entries = state.entries.filter(
+            (x) => !deletedIds.has(String(x.id)),
+          );
           state.reportEntries = state.reportEntries.filter(
-            (x) => x.id !== entry.id,
+            (x) => !deletedIds.has(String(x.id)),
           );
           if (Array.isArray(response.remainders))
             state.remainders = response.remainders;
           renderPreview(line);
           renderPressBalance();
-          toast("Data berhasil dihapus.");
+          renderDashboard();
+          if (typeof window.refreshLaporanAutoPreview === "function")
+            window.refreshLaporanAutoPreview();
+          if (typeof window.refreshKpiLaporanAutoPreview === "function")
+            window.refreshKpiLaporanAutoPreview();
+          toast(
+            entry.tab === "press"
+              ? "Data Press berhasil dihapus dan qty dikembalikan ke pengerjaan belum di-press."
+              : "Data berhasil dihapus.",
+          );
         } catch (err) {
           savedDeleteBtn.disabled = false;
           toast(err.message, true);
@@ -2975,6 +3318,8 @@
         if (!entry) return;
         editing.value = entry.id;
         editing.dataset.source = "preview";
+        if (batchNo) batchNo.value = entryBatchNo(entry);
+        if (batchDisplay) batchDisplay.value = entryBatchNo(entry);
         tanggal.value = entry.tanggal;
         qs(".f-operator", form).value = entry.operator;
         qs(".f-produk", form).value = entry.produk;
@@ -2992,11 +3337,17 @@
         saveFormDraft(line, form);
         if (line === "press") updatePressAvailabilityHint(form);
         if (line === "press") openPressFormPopup(previewEditBtn);
+        else if (line === "filling") openFillingFormPopup(previewEditBtn);
         else form.scrollIntoView({ behavior: "smooth", block: "start" });
         return;
       }
 
       if (previewDeleteBtn) {
+        const previewEntry = state.preview[line].find(
+          (item) => item.id === previewDeleteBtn.dataset.id,
+        );
+        if (line === "filling" && previewEntry && hasRelatedPress(previewEntry))
+          return showFillingDeleteBlocked();
         state.preview[line] = state.preview[line].filter(
           (x) => x.id !== previewDeleteBtn.dataset.id,
         );
@@ -3173,12 +3524,12 @@
       );
     const totalPages = Math.max(
       1,
-      Math.ceil(allRows.length / CONFIG.PAGE_SIZE),
+      Math.ceil(allRows.length / CONFIG.APD_PREVIEW_PAGE_SIZE),
     );
     state.pages.apd = Math.min(Math.max(1, state.pages.apd || 1), totalPages);
     const page = state.pages.apd;
-    const start = (page - 1) * CONFIG.PAGE_SIZE;
-    const rows = allRows.slice(start, start + CONFIG.PAGE_SIZE);
+    const start = (page - 1) * CONFIG.APD_PREVIEW_PAGE_SIZE;
+    const rows = allRows.slice(start, start + CONFIG.APD_PREVIEW_PAGE_SIZE);
 
     container.innerHTML = rows
       .map((item) =>
@@ -3187,7 +3538,7 @@
       .join("");
 
     const from = allRows.length ? start + 1 : 0;
-    const to = Math.min(start + CONFIG.PAGE_SIZE, allRows.length);
+    const to = Math.min(start + CONFIG.APD_PREVIEW_PAGE_SIZE, allRows.length);
     const avg = allRows.length
       ? allRows.reduce((sum, item) => sum + (Number(item.percentage) || 0), 0) /
         allRows.length
@@ -3387,7 +3738,7 @@
       if (percentage) percentage.value = "0%";
       if (addBtn) {
         addBtn.innerHTML =
-          '<i class="fa-solid fa-plus" aria-hidden="true"></i> Simpan Penilaian';
+          '<i class="fa-solid fa-file-circle-plus" aria-hidden="true"></i> Tambah';
         addBtn.disabled = false;
       }
       if (cancelBtn) cancelBtn.hidden = false;
@@ -3396,6 +3747,7 @@
       if (operator) {
         operator.setCustomValidity("");
         operator.classList.remove("is-invalid");
+        delete operator.dataset.masterTouched;
       }
       refreshCalculation();
       refreshReasonCounter();
@@ -3588,19 +3940,6 @@
       );
       const scores = scoresFromForm();
       const result = calculateApd(scores);
-      if (
-        result.percentage < 100 &&
-        !pendingPhotoDataUrl &&
-        !currentPhotoFileId
-      ) {
-        if (errorEl) {
-          errorEl.textContent =
-            "Foto bukti wajib untuk nilai APD kurang dari 100%.";
-          errorEl.hidden = false;
-        }
-        photoChooseBtn?.focus();
-        return;
-      }
       const id = editingId?.value || "";
       const source = editingId?.dataset.source || "";
       const previousPreviewPhotoId =
@@ -3618,11 +3957,10 @@
             canonicalOperator.toLowerCase(),
       );
       if (duplicatePreview) {
-        if (errorEl) {
-          errorEl.textContent =
-            "Operator ini sudah ada di preview APD pada tanggal yang sama. Gunakan tombol Edit pada baris preview tersebut.";
-          errorEl.hidden = false;
-        }
+        toast(
+          "Operator ini sudah ada di preview APD pada tanggal yang sama. Gunakan tombol Edit pada baris preview tersebut.",
+          true,
+        );
         return;
       }
 
@@ -3634,11 +3972,10 @@
             canonicalOperator.toLowerCase(),
       );
       if (duplicateSaved) {
-        if (errorEl) {
-          errorEl.textContent =
-            "Operator ini sudah memiliki data APD yang tersimpan pada tanggal yang sama. Gunakan tombol Edit pada section Data Tersimpan Hari Ini.";
-          errorEl.hidden = false;
-        }
+        toast(
+          "Operator ini sudah memiliki data APD tersimpan pada tanggal yang sama. Gunakan tombol Edit pada data tersimpan.",
+          true,
+        );
         return;
       }
 
@@ -3684,8 +4021,12 @@
           const response = await enqueueWrite(() =>
             apiPost("apd.update", { id, data: payload }),
           );
-          if (Array.isArray(response.apdEntries))
-            state.apdEntries = response.apdEntries;
+          if (response.entry) {
+            const updatedId = String(response.entry.id);
+            state.apdEntries = state.apdEntries.map((row) =>
+              String(row.id) === updatedId ? response.entry : row,
+            );
+          }
           state.pages.apdSaved = 1;
           resetForm();
           renderApdPreview();
@@ -3743,7 +4084,6 @@
       resetForm();
       renderApdPreview();
       renderApdSavedToday();
-      setTimeout(() => operator?.focus(), 0);
     });
 
     previewBody?.addEventListener("click", (event) => {
@@ -3898,8 +4238,14 @@
         state.preview.apd = (state.preview.apd || []).filter(
           (item) => !savedIds.has(item.id),
         );
-        if (Array.isArray(response.apdEntries))
-          state.apdEntries = response.apdEntries;
+        if (Array.isArray(response.entries)) {
+          const newIds = new Set(
+            response.entries.map((item) => String(item.id)),
+          );
+          state.apdEntries = state.apdEntries
+            .filter((item) => !newIds.has(String(item.id)))
+            .concat(response.entries);
+        }
         state.pages.apd = 1;
         state.pages.apdSaved = 1;
         persistPreview();
@@ -4977,6 +5323,410 @@
     renderDashboardPressKpi(entries);
   }
 
+  function renderFillingSpkQueue() {
+    const tbody = el("fillingSpkBody");
+    if (!tbody) return;
+    const now = new Date();
+    const today = todayStr();
+    const previousDate = new Date(now);
+    previousDate.setDate(previousDate.getDate() - 1);
+    const p = (value) => String(value).padStart(2, "0");
+    const yesterday = `${previousDate.getFullYear()}-${p(previousDate.getMonth() + 1)}-${p(previousDate.getDate())}`;
+    const includeYesterday = now.getHours() < 19;
+    const rows = (state.spkEntries || []).filter(
+      (item) =>
+        item.tanggal === today ||
+        (includeYesterday && item.tanggal === yesterday),
+    );
+    const totalPages = Math.max(1, Math.ceil(rows.length / 5));
+    state.spk.fillingPage = Math.min(
+      Math.max(1, state.spk.fillingPage),
+      totalPages,
+    );
+    const start = (state.spk.fillingPage - 1) * 5;
+    const visibleRows = rows.slice(start, start + 5);
+    const fillingRows = [
+      ...(state.entries || []).filter((item) => item.tab === "filling"),
+      ...(state.preview.filling || []),
+    ];
+    tbody.innerHTML = visibleRows.length
+      ? visibleRows
+          .map((item) => {
+            const fillingCount = fillingRows.filter(
+              (entry) => entryBatchNo(entry) === item.batchNo,
+            ).length;
+            return `<tr>
+            <td><span class="id-badge">${esc(item.batchNo)}</span></td>
+            <td>${esc(item.produk)}</td><td>${esc(item.botol)}</td>
+            <td><span class="sync-badge ${fillingCount ? "saved" : "pending"}">${fillingCount ? `${fillingCount} Input Filling` : "Belum ada Filling"}</span></td>
+            <td><button type="button" class="btn btn-primary filling-spk-use"
+              data-batch-no="${esc(item.batchNo)}" data-produk="${esc(item.produk)}" data-botol="${esc(item.botol)}"
+              >Gunakan</button></td>
+          </tr>`;
+          })
+          .join("")
+      : '<tr><td colspan="5" class="empty-row">Belum ada SPK tersimpan hari ini.</td></tr>';
+    dashboardSetText(
+      "fillingSpkSummary",
+      `${rows.length ? start + 1 : 0}–${Math.min(start + 5, rows.length)} dari ${rows.length} SPK ${includeYesterday ? "hari ini + kemarin (hingga 19.00)" : "hari ini"} · ${fillingRows.length} total input Filling`,
+    );
+    renderPagination(
+      el("fillingSpkPagination"),
+      state.spk.fillingPage,
+      totalPages,
+      (page) => {
+        state.spk.fillingPage = page;
+        renderFillingSpkQueue();
+      },
+    );
+  }
+
+  function initFillingSpkQueue() {
+    el("fillingSpkBody")?.addEventListener("click", (event) => {
+      const button = event.target.closest(".filling-spk-use");
+      if (!button || button.disabled) return;
+      const form = el("form-filling");
+      if (!form) return;
+      if (qs(".f-editing-id", form)?.value) qs(".f-cancel-btn", form)?.click();
+      qs(".f-batch-no", form).value = button.dataset.batchNo || "";
+      qs(".f-batch-display", form).value = button.dataset.batchNo || "";
+      qs(".f-produk", form).value = button.dataset.produk || "";
+      qs(".f-botol", form).value = button.dataset.botol || "";
+      qs(".f-produk", form).dispatchEvent(
+        new Event("change", { bubbles: true }),
+      );
+      qs(".f-botol", form).dispatchEvent(
+        new Event("change", { bubbles: true }),
+      );
+      saveFormDraft("filling", form);
+      openFillingFormPopup(button);
+    });
+    const fillingQueueWindowKey = () =>
+      `${todayStr()}-${new Date().getHours() < 19 ? "before-19" : "after-19"}`;
+    state.spk.fillingDate = fillingQueueWindowKey();
+    window.setInterval(() => {
+      const currentWindow = fillingQueueWindowKey();
+      if (state.spk.fillingDate === currentWindow) return;
+      state.spk.fillingDate = currentWindow;
+      state.spk.fillingPage = 1;
+      renderFillingSpkQueue();
+    }, 60000);
+    renderFillingSpkQueue();
+  }
+
+  function renderSpkToday() {
+    const tbody = el("spkTableBody");
+    if (!tbody) return;
+    const filterInput = el("spkDateFilter");
+    const selectedDate = state.spk.date || todayStr();
+    if (filterInput && filterInput.value !== selectedDate)
+      filterInput.value = selectedDate;
+    const saved = (state.spkEntries || [])
+      .filter((item) => item.tanggal === selectedDate)
+      .map((item) => ({ ...item, preview: false }));
+    const preview = (state.preview.spk || [])
+      .filter((item) => item.tanggal === selectedDate)
+      .map((item) => ({ ...item, preview: true }));
+    const rows = [...saved, ...preview];
+    const totalPages = Math.max(1, Math.ceil(rows.length / 20));
+    state.spk.page = Math.min(Math.max(1, state.spk.page), totalPages);
+    const start = (state.spk.page - 1) * 20;
+    const visibleRows = rows.slice(start, start + 20);
+    tbody.innerHTML = visibleRows.length
+      ? visibleRows
+          .map(
+            (item) => `<tr>
+      <td><span class="id-badge">${esc(item.batchNo)}</span></td><td>${esc(item.tanggal)}</td>
+      <td>${esc(item.produk)}</td><td>${esc(item.botol)}</td>
+      <td><span class="sync-badge ${item.preview ? "pending" : "saved"}">${item.preview ? "Preview" : "Tersimpan"}</span></td>
+      <td class="row-actions">
+        ${item.preview || canManageSpk(item) ? `<button type="button" class="btn btn-ghost spk-edit" data-source="${item.preview ? "preview" : "saved"}" data-key="${esc(item.preview ? item.id : item.batchNo)}">Update</button>` : ""}
+        ${item.preview || canManageSpk(item) ? `<button type="button" class="btn btn-danger spk-delete" data-source="${item.preview ? "preview" : "saved"}" data-key="${esc(item.preview ? item.id : item.batchNo)}">Hapus</button>` : ""}
+      </td>
+    </tr>`,
+          )
+          .join("")
+      : '<tr><td colspan="6" class="empty-row">Belum ada SPK hari ini.</td></tr>';
+    dashboardSetText(
+      "spkSummary",
+      `${rows.length ? start + 1 : 0}–${Math.min(start + 20, rows.length)} dari ${rows.length} SPK tanggal ${selectedDate} · ${preview.length} preview belum disimpan`,
+    );
+    renderPagination(
+      el("spkPagination"),
+      state.spk.page,
+      totalPages,
+      (page) => {
+        state.spk.page = page;
+        renderSpkToday();
+      },
+    );
+    const saveButton = el("spkSaveButton");
+    if (saveButton) {
+      saveButton.hidden = !canLevel("spk", "write");
+      saveButton.disabled = !preview.length;
+    }
+  }
+
+  function initSpkModal() {
+    const modal = el("spkModal");
+    const form = el("spkForm");
+    const openButton = el("spkOpenButton");
+    const batchInput = el("spkBatchNo");
+    const produkInput = el("spkProduk");
+    const botolInput = el("spkBotol");
+    const errorEl = el("spkError");
+    const cancelButton = el("spkCancel");
+    const submitButton = el("spkAdd");
+    let editingSpk = null;
+    if (!modal || !form || !openButton) return;
+    state.spk.date = state.spk.date || todayStr();
+    const dateFilter = el("spkDateFilter");
+    if (dateFilter) {
+      dateFilter.value = state.spk.date;
+      dateFilter.addEventListener("change", () => {
+        state.spk.date = dateFilter.value || todayStr();
+        state.spk.page = 1;
+        renderSpkToday();
+      });
+    }
+
+    const syncCancelState = () => {
+      if (!cancelButton) return;
+      cancelButton.disabled = !(
+        String(batchInput.value || "").trim() &&
+        String(produkInput.value || "").trim() &&
+        String(botolInput.value || "").trim()
+      );
+    };
+
+    const close = () => {
+      modal.hidden = true;
+      document.body.classList.remove("spk-popup-open");
+      openButton.focus();
+    };
+    const reset = () => {
+      editingSpk = null;
+      form.reset();
+      batchInput.value = nextSpkBatchNo();
+      submitButton.innerHTML = '<i class="fa-solid fa-circle-plus"></i> Tambah';
+      submitButton.disabled = false;
+      errorEl.hidden = true;
+      qsa(".master-search-input", form).forEach((input) => {
+        input.setCustomValidity("");
+        input.classList.remove("is-invalid");
+      });
+      syncCancelState();
+    };
+
+    openButton.hidden = !canLevel("spk", "write");
+    openButton.addEventListener("click", () => {
+      if (!canLevel("spk", "write"))
+        return toast("Anda tidak memiliki akses input SPK.", true);
+      state.spk.date = todayStr();
+      state.spk.page = 1;
+      if (dateFilter) dateFilter.value = state.spk.date;
+      renderSpkToday();
+      closeMasterSuggestions();
+      reset();
+      modal.hidden = false;
+      document.body.classList.add("spk-popup-open");
+      el("spkModalClose")?.focus();
+    });
+    el("spkModalClose")?.addEventListener("click", close);
+    cancelButton?.addEventListener("click", () => {
+      reset();
+      el("spkModalClose")?.focus();
+    });
+    produkInput.addEventListener("input", syncCancelState);
+    produkInput.addEventListener("change", syncCancelState);
+    botolInput.addEventListener("input", syncCancelState);
+    botolInput.addEventListener("change", syncCancelState);
+    modal.addEventListener("click", (event) => {
+      if (event.target === modal) close();
+    });
+    modal.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") close();
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      errorEl.hidden = true;
+      if (
+        !validateMasterInput(produkInput) ||
+        !validateMasterInput(botolInput)
+      ) {
+        errorEl.textContent =
+          "Nama Produk dan Botol harus dipilih dari data Master.";
+        errorEl.hidden = false;
+        return;
+      }
+      const edit = editingSpk;
+      const values = {
+        id: edit?.source === "preview" ? edit.key : makeClientRequestId(),
+        batchNo: batchInput.value,
+        tanggal: todayStr(),
+        produk: canonicalMasterValue("produk", produkInput.value),
+        botol: canonicalMasterValue("botol", botolInput.value),
+        createdAt:
+          edit?.source === "preview"
+            ? state.preview.spk.find((item) => item.id === edit.key)
+                ?.createdAt || nowIso()
+            : nowIso(),
+        updatedAt: edit?.source === "preview" ? nowIso() : "",
+        updateCount:
+          edit?.source === "preview"
+            ? Math.max(
+                0,
+                Math.floor(
+                  Number(
+                    state.preview.spk.find((item) => item.id === edit.key)
+                      ?.updateCount,
+                  ) || 0,
+                ),
+              ) + 1
+            : 0,
+      };
+      if (edit?.source === "saved") {
+        submitButton.disabled = true;
+        try {
+          const response = await enqueueWrite(() =>
+            apiPost("spk.update", {
+              batchNo: edit.key,
+              data: { produk: values.produk, botol: values.botol },
+            }),
+          );
+          if (response.spk) {
+            state.spkEntries = state.spkEntries.map((row) =>
+              row.batchNo === edit.key ? response.spk : row,
+            );
+          }
+          renderFillingSpkQueue();
+          toast(`SPK ${edit.key} berhasil di-update.`);
+        } catch (err) {
+          submitButton.disabled = false;
+          return toast(`Gagal meng-update SPK: ${err.message}`, true);
+        }
+      } else if (edit?.source === "preview") {
+        state.preview.spk = state.preview.spk.map((item) =>
+          item.id === edit.key ? values : item,
+        );
+        toast(`Preview SPK ${values.batchNo} berhasil di-update.`);
+      } else {
+        state.preview.spk.push(values);
+        toast("SPK ditambahkan ke preview. Belum disimpan ke Spreadsheet.");
+      }
+      persistPreview();
+      renderSpkToday();
+      reset();
+      if (edit) close();
+      else el("spkModalClose")?.focus();
+    });
+
+    el("spkTableBody")?.addEventListener("click", async (event) => {
+      const editButton = event.target.closest(".spk-edit");
+      const deleteButton = event.target.closest(".spk-delete");
+      const button = editButton || deleteButton;
+      if (!button) return;
+      const source = button.dataset.source;
+      const key = button.dataset.key;
+      const item =
+        source === "preview"
+          ? state.preview.spk.find((row) => row.id === key)
+          : state.spkEntries.find((row) => row.batchNo === key);
+      if (!item || (source === "saved" && !canManageSpk(item)))
+        return toast("Anda tidak memiliki akses mengelola SPK ini.", true);
+
+      if (editButton) {
+        editingSpk = { source, key };
+        batchInput.value = item.batchNo;
+        produkInput.value = item.produk;
+        botolInput.value = item.botol;
+        submitButton.innerHTML =
+          '<i class="fa-solid fa-cloud-arrow-up"></i> Simpan Update';
+        syncCancelState();
+        modal.hidden = false;
+        document.body.classList.add("spk-popup-open");
+        el("spkModalClose")?.focus();
+        return;
+      }
+
+      if (
+        !(await confirmDelete({
+          title: "Hapus SPK?",
+          message:
+            source === "saved"
+              ? "SPK tersimpan akan dihapus permanen dari Spreadsheet."
+              : "SPK akan dihapus dari daftar preview.",
+          item: item.batchNo,
+        }))
+      )
+        return;
+      if (source === "preview") {
+        state.preview.spk = state.preview.spk.filter((row) => row.id !== key);
+        persistPreview();
+        renderSpkToday();
+        return;
+      }
+      deleteButton.disabled = true;
+      try {
+        const response = await enqueueWrite(() =>
+          apiPost("spk.delete", { batchNo: key }),
+        );
+        state.spkEntries =
+          response.spkEntries ||
+          state.spkEntries.filter((row) => row.batchNo !== key);
+        renderSpkToday();
+        renderFillingSpkQueue();
+        renderSpkReport();
+        toast(`SPK ${key} berhasil dihapus.`);
+      } catch (err) {
+        deleteButton.disabled = false;
+        toast(`Gagal menghapus SPK: ${err.message}`, true);
+      }
+    });
+
+    el("spkSaveButton")?.addEventListener("click", async () => {
+      const rows = [...(state.preview.spk || [])];
+      if (!rows.length) return;
+      const saveButton = el("spkSaveButton");
+      const oldText = saveButton.innerHTML;
+      saveButton.disabled = true;
+      saveButton.textContent = `Menyimpan ${rows.length} SPK…`;
+      try {
+        const response = await enqueueWrite(() =>
+          apiPost("spk.batchCreate", {
+            data: rows.map((item) => ({
+              produk: item.produk,
+              botol: item.botol,
+              updatedAt: item.updatedAt || "",
+              updateCount: Math.max(
+                0,
+                Math.floor(Number(item.updateCount) || 0),
+              ),
+            })),
+          }),
+        );
+        if (Array.isArray(response.saved)) {
+          const savedBatchNos = new Set(
+            response.saved.map((item) => String(item.batchNo)),
+          );
+          state.spkEntries = state.spkEntries
+            .filter((item) => !savedBatchNos.has(String(item.batchNo)))
+            .concat(response.saved);
+        }
+        state.preview.spk = [];
+        persistPreview();
+        renderFillingSpkQueue();
+        toast(`${rows.length} SPK berhasil disimpan ke Spreadsheet.`);
+      } catch (err) {
+        toast(`Gagal menyimpan SPK: ${err.message}`, true);
+      } finally {
+        saveButton.innerHTML = oldText;
+        renderSpkToday();
+      }
+    });
+    renderSpkToday();
+  }
+
   function initDashboard() {
     /* =====================================================
      FILTER CHART DASHBOARD
@@ -5190,6 +5940,7 @@
     });
 
     renderDashboard();
+    renderFillingSpkQueue();
   }
 
   function initTabs() {
@@ -5201,6 +5952,7 @@
       const view = btn.dataset.view;
       const permissionMap = {
         dashboard: "accessDashboard",
+        spk: "accessSpk",
         filling: "accessFilling",
         press: "accessPress",
         apd: "accessApd",
@@ -5230,6 +5982,7 @@
         node.classList.toggle("active", node === btn);
       });
       if (view !== "press") closePressFormPopup();
+      if (view !== "filling") closeFillingFormPopup();
       qsa(".content > .view").forEach((node) => {
         node.hidden = node.id !== "view-" + view;
       });
@@ -5283,7 +6036,7 @@
     const headerRow = table?.querySelector("thead tr");
     if (headerRow) {
       headerRow.innerHTML = `
-        <th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th>
+        <th>No Batch</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th>
         ${metricColumns.map((column) => `<th>${esc(column.label)}</th>`).join("")}
       `;
     }
@@ -5301,7 +6054,7 @@
       .map(
         (e) => `
       <tr>
-        <td><span class="id-badge">${esc(e.reportId)}</span></td>
+        <td><span class="id-badge">${esc(entryBatchNo(e) || e.reportId)}</span></td>
         <td>${esc(LINE_LABEL[e.tab] || e.tab)}</td>
         <td>${esc(e.tanggal)}</td>
         <td>${esc(e.operator)}</td>
@@ -5385,7 +6138,7 @@
       .map(
         (e) => `
       <tr>
-        <td class="mono">${esc(e.reportId)}</td>
+        <td class="mono">${esc(entryBatchNo(e) || e.reportId)}</td>
         <td>${esc(LINE_LABEL[e.tab] || e.tab)}</td>
         <td>${esc(e.tanggal)}</td>
         <td>${esc(e.operator)}</td>
@@ -5467,7 +6220,7 @@
     <table>
       <thead>
         <tr>
-          <th>ID</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Qty (Kardus / Pcs)</th><th>Total Qty</th><th>Qty Pecah</th>${metricColumns.map((column) => `<th>${esc(column.label)}</th>`).join("")}
+          <th>No Batch</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Qty (Kardus / Pcs)</th><th>Total Qty</th><th>Qty Pecah</th>${metricColumns.map((column) => `<th>${esc(column.label)}</th>`).join("")}
         </tr>
       </thead>
       <tbody>${bodyRows}</tbody>
@@ -6207,12 +6960,10 @@
   function buildKpiApdActual(operatorKey, period) {
     const normalizedOperatorKey = kpiOperatorIdentityKey(operatorKey);
     const periodEntries = (state.apdEntries || []).filter(
-      (item) =>
-        item && dashboardDateInPeriod(kpiDateKey(item.tanggal), period),
+      (item) => item && dashboardDateInPeriod(kpiDateKey(item.tanggal), period),
     );
     const exactEntries = periodEntries.filter(
-      (item) =>
-        kpiOperatorIdentityKey(item.operator) === normalizedOperatorKey,
+      (item) => kpiOperatorIdentityKey(item.operator) === normalizedOperatorKey,
     );
 
     let matchedEntries = exactEntries;
@@ -6245,12 +6996,12 @@
 
     const apdByDate = new Map();
     matchedEntries.forEach((item) => {
-        const dateKey = kpiDateKey(item.tanggal);
-        const percentage = kpiPercentageNumber(item.percentage);
-        if (percentage === null) return;
-        if (!apdByDate.has(dateKey)) apdByDate.set(dateKey, []);
-        apdByDate.get(dateKey).push(percentage);
-      });
+      const dateKey = kpiDateKey(item.tanggal);
+      const percentage = kpiPercentageNumber(item.percentage);
+      if (percentage === null) return;
+      if (!apdByDate.has(dateKey)) apdByDate.set(dateKey, []);
+      apdByDate.get(dateKey).push(percentage);
+    });
 
     const apdDailyValues = Array.from(apdByDate.values()).map((values) =>
       averageKpiValues(values),
@@ -7279,6 +8030,7 @@
     const buttons = qsa(".laporan-subnav-btn", nav);
     const views = {
       hasil: el("laporan-subview-hasil"),
+      spk: el("laporan-subview-spk"),
       kpi: el("laporan-subview-kpi"),
     };
 
@@ -7286,11 +8038,15 @@
       const target =
         name === "hasil" && can("accessWorkReport")
           ? "hasil"
-          : name === "kpi" && (canKpiType("filling") || canKpiType("press"))
-            ? "kpi"
-            : can("accessWorkReport")
-              ? "hasil"
-              : "kpi";
+          : name === "spk" && canLevel("spkReport")
+            ? "spk"
+            : name === "kpi" && (canKpiType("filling") || canKpiType("press"))
+              ? "kpi"
+              : can("accessWorkReport")
+                ? "hasil"
+                : canLevel("spkReport")
+                  ? "spk"
+                  : "kpi";
       buttons.forEach((btn) => {
         const active = btn.dataset.laporanView === target;
         btn.classList.toggle("active", active);
@@ -7306,6 +8062,7 @@
       ) {
         window.refreshKpiLaporanAutoPreview();
       }
+      if (target === "spk") renderSpkReport();
     }
 
     nav.addEventListener("click", (event) => {
@@ -7314,7 +8071,129 @@
       showLaporanSubview(btn.dataset.laporanView || "hasil");
     });
 
-    showLaporanSubview(can("accessWorkReport") ? "hasil" : "kpi");
+    // initAppPage memasang event sebelum profil/cache pengguna selesai dimuat.
+    // Jangan memilih fallback KPI ketika currentUser masih null; pertahankan
+    // markup default "Laporan Hasil Produksi", lalu applyAccessControl akan
+    // memindahkannya ke KPI hanya jika user memang tidak memiliki akses hasil.
+    if (state.currentUser) {
+      showLaporanSubview(
+        can("accessWorkReport")
+          ? "hasil"
+          : canLevel("spkReport")
+            ? "spk"
+            : "kpi",
+      );
+    }
+  }
+
+  function spkReportRows() {
+    const mode = el("lap-spk-mode")?.value || "week";
+    const endDefault = todayStr();
+    const startDefaultDate = new Date();
+    startDefaultDate.setDate(startDefaultDate.getDate() - 6);
+    const p = (n) => String(n).padStart(2, "0");
+    const startDefault = `${startDefaultDate.getFullYear()}-${p(startDefaultDate.getMonth() + 1)}-${p(startDefaultDate.getDate())}`;
+    let start = startDefault;
+    let end = endDefault;
+    if (mode === "date") start = end = el("lap-spk-date")?.value || endDefault;
+    if (mode === "range") {
+      start = el("lap-spk-start")?.value || startDefault;
+      end = el("lap-spk-end")?.value || endDefault;
+    }
+    if (start > end) [start, end] = [end, start];
+    return (state.spkEntries || [])
+      .filter((item) => item.tanggal >= start && item.tanggal <= end)
+      .sort(
+        (a, b) =>
+          String(b.tanggal).localeCompare(String(a.tanggal)) ||
+          String(b.batchNo).localeCompare(String(a.batchNo)),
+      );
+  }
+
+  function renderSpkReport() {
+    const tbody = el("lap-spk-tbody");
+    if (!tbody) return;
+    const rows = spkReportRows();
+    const totalPages = Math.max(1, Math.ceil(rows.length / 20));
+    state.spk.reportPage = Math.min(
+      Math.max(1, state.spk.reportPage || 1),
+      totalPages,
+    );
+    const start = (state.spk.reportPage - 1) * 20;
+    const visibleRows = rows.slice(start, start + 20);
+    tbody.innerHTML = visibleRows.length
+      ? visibleRows
+          .map(
+            (item) =>
+              `<tr><td><span class="id-badge">${esc(item.batchNo)}</span></td><td>${esc(item.tanggal)}</td><td>${esc(item.produk)}</td><td>${esc(item.botol)}</td><td>${esc(item.createdBy || "—")}</td><td>${item.createdAt ? esc(fmtDateTime(item.createdAt)) : "—"}</td><td>${Math.max(0, Number(item.updateCount) || 0)}</td></tr>`,
+          )
+          .join("")
+      : '<tr><td colspan="7" class="empty-row">Tidak ada data SPK pada periode ini.</td></tr>';
+    dashboardSetText(
+      "lap-spk-summary",
+      `${rows.length ? start + 1 : 0}–${Math.min(start + 20, rows.length)} dari ${rows.length} SPK ditampilkan`,
+    );
+    renderPagination(
+      el("lap-spk-pagination"),
+      state.spk.reportPage,
+      totalPages,
+      (page) => {
+        state.spk.reportPage = page;
+        renderSpkReport();
+      },
+    );
+  }
+
+  function initSpkReport() {
+    const mode = el("lap-spk-mode");
+    if (!mode) return;
+    const today = todayStr();
+    el("lap-spk-date").value = today;
+    el("lap-spk-end").value = today;
+    const start = new Date();
+    start.setDate(start.getDate() - 6);
+    const p = (n) => String(n).padStart(2, "0");
+    el("lap-spk-start").value =
+      `${start.getFullYear()}-${p(start.getMonth() + 1)}-${p(start.getDate())}`;
+    const syncFilters = () => {
+      el("lap-spk-date-wrap").hidden = mode.value !== "date";
+      el("lap-spk-start-wrap").hidden = mode.value !== "range";
+      el("lap-spk-end-wrap").hidden = mode.value !== "range";
+    };
+    mode.addEventListener("change", () => {
+      state.spk.reportPage = 1;
+      syncFilters();
+      renderSpkReport();
+    });
+    ["lap-spk-date", "lap-spk-start", "lap-spk-end"].forEach((id) => {
+      el(id)?.addEventListener("change", () => {
+        state.spk.reportPage = 1;
+        renderSpkReport();
+      });
+    });
+    el("lap-spk-reset")?.addEventListener("click", () => {
+      mode.value = "week";
+      state.spk.reportPage = 1;
+      syncFilters();
+      renderSpkReport();
+    });
+    el("lap-spk-pdf")?.addEventListener("click", () => {
+      const rows = spkReportRows();
+      if (!rows.length)
+        return toast("Tidak ada data SPK untuk disimpan sebagai PDF.", true);
+      const popup = window.open("", "_blank", "width=1100,height=800");
+      if (!popup) return toast("Popup PDF diblokir browser.", true);
+      popup.document.write(
+        `<!doctype html><html><head><title>Data SPK</title><style>@page{size:A4 landscape;margin:12mm}body{font-family:Arial,sans-serif;color:#17202a}h1{font-size:20px}p{color:#59636e}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bcc5ce;padding:6px;font-size:11px}th{background:#eaf0f5;text-align:left}</style></head><body><h1>Data SPK</h1><p>PT. ABSH FRAGRANCE CREATIONS · Dicetak ${esc(fmtDateTime(nowIso()))}</p><table><thead><tr><th>No Batch</th><th>Tanggal</th><th>Produk</th><th>Botol</th><th>Dibuat Oleh</th><th>Dibuat Pada</th><th>Update</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${esc(item.batchNo)}</td><td>${esc(item.tanggal)}</td><td>${esc(item.produk)}</td><td>${esc(item.botol)}</td><td>${esc(item.createdBy || "—")}</td><td>${item.createdAt ? esc(fmtDateTime(item.createdAt)) : "—"}</td><td>${Math.max(0, Number(item.updateCount) || 0)}</td></tr>`).join("")}</tbody></table></body></html>`,
+      );
+      popup.document.close();
+      window.setTimeout(() => {
+        popup.focus();
+        popup.print();
+      }, 250);
+    });
+    syncFilters();
+    renderSpkReport();
   }
 
   function initKpiLaporan() {
@@ -8145,20 +9024,23 @@
     });
     const permissionScopes = [
       ["dashboard", "Dashboard"],
+      ["spk", "SPK"],
       ["filling", "Filling"],
       ["press", "Press"],
       ["apd", "APD"],
       ["reports", "Laporan"],
       ["workReport", "Laporan Hasil Pengerjaan"],
+      ["spkReport", "Data SPK"],
       ["kpiFilling", "Laporan KPI Filling"],
       ["kpiPress", "Laporan KPI Press"],
       ["master", "Data Master (Sumber Search)"],
       ["kpiSettings", "Pengaturan KPI"],
     ];
     if (permissionGrid) {
-      permissionGrid.innerHTML = `<div class="permission-table-wrap"><table class="permission-table"><thead><tr><th>Bagian</th><th>Read</th><th>Write</th><th>Administrator</th><th>Kelola Sendiri</th><th>Kelola User Lain</th><th>Export CSV</th></tr></thead><tbody>${permissionScopes.map(([scope, title]) => `<tr data-scope="${scope}" ${["workReport", "kpiFilling", "kpiPress"].includes(scope) ? 'class="permission-child"' : ""}><th scope="row">${title}</th>${["read", "write", "admin"].map((level) => `<td><label><input type="checkbox" data-level="${level}" aria-label="${title}: ${level}" ${["dashboard", "reports", "workReport", "kpiFilling", "kpiPress"].includes(scope) && level === "write" ? 'disabled title="Bagian ini tidak memiliki aksi tulis"' : ""}></label></td>`).join("")}${["own", "others"].map((owner) => `<td><label><input type="checkbox" data-manage="${owner}" aria-label="${title}: kelola data ${owner === "own" ? "sendiri" : "user lain"}" ${["filling", "press", "apd"].includes(scope) ? "" : 'disabled title="Tidak berlaku pada bagian ini"'}></label></td>`).join("")}<td><label><input type="checkbox" data-export-csv aria-label="${title}: Export CSV" ${["filling", "press"].includes(scope) ? "" : 'disabled title="Export CSV khusus Filling dan Press"'}></label></td></tr>`).join("")}</tbody></table></div><p class="hint-text">Export CSV dapat diberikan secara terpisah untuk Filling dan Press. Kelola Sendiri dan Kelola User Lain berlaku pada Filling, Press, dan APD.</p>`;
+      permissionGrid.innerHTML = `<div class="permission-table-wrap"><table class="permission-table"><thead><tr><th>Bagian</th><th>Read</th><th>Write</th><th>Administrator</th><th>Kelola Sendiri</th><th>Kelola User Lain</th><th>Export CSV</th></tr></thead><tbody>${permissionScopes.map(([scope, title]) => `<tr data-scope="${scope}" ${["workReport", "spkReport", "kpiFilling", "kpiPress"].includes(scope) ? 'class="permission-child"' : ""}><th scope="row">${title}</th>${["read", "write", "admin"].map((level) => `<td><label><input type="checkbox" data-level="${level}" aria-label="${title}: ${level}" ${["dashboard", "reports", "workReport", "spkReport", "kpiFilling", "kpiPress"].includes(scope) && level === "write" ? 'disabled title="Bagian ini tidak memiliki aksi tulis"' : ""}></label></td>`).join("")}${["own", "others"].map((owner) => `<td><label><input type="checkbox" data-manage="${owner}" aria-label="${title}: kelola data ${owner === "own" ? "sendiri" : "user lain"}" ${["spk", "filling", "press", "apd"].includes(scope) ? "" : 'disabled title="Tidak berlaku pada bagian ini"'}></label></td>`).join("")}<td><label><input type="checkbox" data-export-csv aria-label="${title}: Export CSV" ${["filling", "press"].includes(scope) ? "" : 'disabled title="Export CSV khusus Filling dan Press"'}></label></td></tr>`).join("")}</tbody></table></div><p class="hint-text">Export CSV dapat diberikan secara terpisah untuk Filling dan Press. Kelola Sendiri dan Kelola User Lain berlaku pada SPK, Filling, Press, dan APD.</p>`;
       function syncManagement(row, reset) {
-        if (!["filling", "press", "apd"].includes(row.dataset.scope)) return;
+        if (!["spk", "filling", "press", "apd"].includes(row.dataset.scope))
+          return;
         const admin = qs('[data-level="admin"]', row).checked;
         const write = qs('[data-level="write"]', row).checked;
         qsa("input[data-manage]", row).forEach((input) => {
@@ -8291,7 +9173,7 @@
                 ? "read"
                 : "none";
         });
-        ["filling", "press", "apd"].forEach((scope) => {
+        ["spk", "filling", "press", "apd"].forEach((scope) => {
           const row = qs(`tr[data-scope="${scope}"]`, permissionGrid);
           permissions.management[scope] = {
             own: qs('[data-manage="own"]', row).checked,
@@ -8307,9 +9189,11 @@
           permissionGrid,
         ).checked;
         if (permissions.levels.reports !== "read") {
-          ["workReport", "kpiFilling", "kpiPress"].forEach((scope) => {
-            permissions.levels[scope] = "none";
-          });
+          ["workReport", "spkReport", "kpiFilling", "kpiPress"].forEach(
+            (scope) => {
+              permissions.levels[scope] = "none";
+            },
+          );
         }
         const data = await apiPost("user.permissions.set", {
           username: permissionUsername,
@@ -8407,12 +9291,16 @@
     }
 
     buildPressView();
+    buildFillingPopup();
     wireLineView("filling");
     wireLineView("press");
     initApd();
     initTabs();
     initDashboard();
+    initSpkModal();
+    initFillingSpkQueue();
     initLaporanSubmenu();
+    initSpkReport();
     initLaporan();
     initKpiLaporan();
     initKpiSettings();
@@ -8443,8 +9331,12 @@
         renderApdPreview();
         renderApdSavedToday();
         renderPressBalance();
+        renderSpkToday();
+        renderFillingSpkQueue();
         renderUserHeader();
         applyAccessControl();
+        if (el("spkOpenButton"))
+          el("spkOpenButton").hidden = !canLevel("spk", "write");
         renderDashboard();
         el("appScreen").hidden = false;
         setConnection("loading", "Menyegarkan data…");
