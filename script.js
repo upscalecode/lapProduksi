@@ -1051,12 +1051,16 @@
     if (!popup || typeof closePopup !== "function") return;
 
     // Pada perangkat sentuh, keyboard virtual dan suggestion yang menghilang
-    // dapat membuat click sintetis jatuh ke backdrop. Tutup modal hanya jika
-    // interaksi pointer memang dimulai dan berakhir langsung di backdrop.
+    // dapat membuat click sintetis jatuh ke backdrop. Karena itu tap dengan
+    // touch/pen tidak pernah menutup modal; pengguna tetap dapat memakai
+    // tombol Tutup. Backdrop hanya dapat menutup modal lewat mouse desktop.
     if (window.PointerEvent) {
       let backdropPointerId = null;
       popup.addEventListener("pointerdown", (event) => {
-        backdropPointerId = event.target === popup ? event.pointerId : null;
+        backdropPointerId =
+          event.pointerType === "mouse" && event.target === popup
+            ? event.pointerId
+            : null;
       });
       popup.addEventListener("pointerup", (event) => {
         const shouldClose =
@@ -1070,10 +1074,9 @@
       return;
     }
 
-    // Fallback untuk browser lama yang belum mendukung Pointer Events.
-    popup.addEventListener("click", (event) => {
-      if (event.target === popup) closePopup();
-    });
+    // Browser lama tanpa Pointer Events tetap dapat menutup lewat tombol
+    // Tutup atau Escape. Backdrop sengaja tidak dipakai agar ghost-click dari
+    // perangkat sentuh tidak bisa menutup form.
   }
 
   function openFillingFormPopup(trigger) {
