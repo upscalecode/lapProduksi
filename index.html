@@ -15,7 +15,7 @@
       crossorigin="anonymous"
       defer
     ></script>
-    <link rel="stylesheet" href="style.css?v=20260924-v38-popup-stable-size" />
+    <link rel="stylesheet" href="style.css?v=20260924-v42-spk-search" />
 
     <style>
       /* Aturan inti modal SPK ditempatkan bersama dokumen agar tidak dapat
@@ -48,7 +48,7 @@
         box-shadow: 0 24px 70px rgba(15, 23, 42, 0.35) !important;
       }
       #spkModal .spk-input-grid {
-        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
       }
       @media (max-width: 700px) {
         #spkModal.spk-modal {
@@ -676,6 +676,28 @@
                     <span>Filter Tanggal</span>
                     <input type="date" id="spkDateFilter" />
                   </label>
+                  <label class="field field-inline spk-search-filter">
+                    <span>Cari SPK</span>
+                    <input
+                      type="search"
+                      id="spkSearchFilter"
+                      placeholder="No Batch atau Nama Produk…"
+                      autocomplete="off"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    class="btn btn-secondary"
+                    id="spkImportButton"
+                  >
+                    <i class="fa-solid fa-file-import"></i> Import SPK
+                  </button>
+                  <input
+                    type="file"
+                    id="spkImportFile"
+                    accept=".xlsx,.xls,.csv"
+                    hidden
+                  />
                   <button
                     type="button"
                     class="btn btn-primary"
@@ -689,17 +711,25 @@
                 <table class="data-table">
                   <thead>
                     <tr>
+                      <th class="select-col">
+                        <input
+                          type="checkbox"
+                          id="spkSelectAll"
+                          aria-label="Pilih semua SPK pada halaman ini"
+                        />
+                      </th>
                       <th>No Batch</th>
                       <th>Tanggal</th>
                       <th>Nama Produk</th>
                       <th>Botol</th>
+                      <th>Qty</th>
                       <th>Status</th>
                       <th>Aksi</th>
                     </tr>
                   </thead>
                   <tbody id="spkTableBody">
                     <tr>
-                      <td colspan="6" class="empty-row">
+                      <td colspan="8" class="empty-row">
                         Belum ada SPK hari ini.
                       </td>
                     </tr>
@@ -713,14 +743,25 @@
                   class="pagination"
                   aria-label="Navigasi halaman SPK"
                 ></div>
-                <button
-                  type="button"
-                  class="btn btn-primary"
-                  id="spkSaveButton"
-                  disabled
-                >
-                  <i class="fa-solid fa-cloud-arrow-up"></i> Simpan SPK
-                </button>
+                <div class="spk-footer-actions">
+                  <button
+                    type="button"
+                    class="btn btn-danger"
+                    id="spkMassDeleteButton"
+                    hidden
+                    disabled
+                  >
+                    <i class="fa-solid fa-trash"></i> Hapus Massal
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn-primary"
+                    id="spkSaveButton"
+                    disabled
+                  >
+                    <i class="fa-solid fa-cloud-arrow-up"></i> Simpan SPK
+                  </button>
+                </div>
               </div>
             </section>
           </div>
@@ -732,7 +773,7 @@
               <div class="panel-head">
                 <div>
                   <p class="eyebrow">SPK → Filling</p>
-                  <h2>SPK Hari Ini untuk Dikerjakan</h2>
+                  <h2>SPK dengan Sisa Qty untuk Dikerjakan</h2>
                 </div>
               </div>
               <div class="table-wrap">
@@ -742,14 +783,16 @@
                       <th>No Batch</th>
                       <th>Nama Produk</th>
                       <th>Botol</th>
+                      <th>Qty SPK</th>
+                      <th>Sisa Qty</th>
                       <th>Status</th>
                       <th>Aksi</th>
                     </tr>
                   </thead>
                   <tbody id="fillingSpkBody">
                     <tr>
-                      <td colspan="5" class="empty-row">
-                        Belum ada SPK hari ini.
+                      <td colspan="7" class="empty-row">
+                        Tidak ada SPK dengan sisa Qty.
                       </td>
                     </tr>
                   </tbody>
@@ -992,7 +1035,6 @@
                     <h2>Penilaian APD Produksi</h2>
                   </div>
                 </div>
-
               </div>
 
               <span class="stamp apd-edit-stamp" id="apdStamp"
@@ -1071,13 +1113,11 @@
                         data-apd-key="maskerTidakSesuai"
                         required
                       >
-                        <option value="" disabled selected>0–5</option>
+                        <option value="" disabled selected>0–3</option>
                         <option value="0">0</option>
                         <option value="1">1</option>
                         <option value="2">2</option>
                         <option value="3">3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
                       </select>
                     </label>
                     <label class="apd-unified-cell apd-score-cell">
@@ -1087,13 +1127,11 @@
                         data-apd-key="sepatuDiinjak"
                         required
                       >
-                        <option value="" disabled selected>0–5</option>
+                        <option value="" disabled selected>0–3</option>
                         <option value="0">0</option>
                         <option value="1">1</option>
                         <option value="2">2</option>
                         <option value="3">3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
                       </select>
                     </label>
                     <label class="apd-unified-cell apd-score-cell">
@@ -1103,13 +1141,11 @@
                         data-apd-key="rambutKelihatan"
                         required
                       >
-                        <option value="" disabled selected>0–5</option>
+                        <option value="" disabled selected>0–3</option>
                         <option value="0">0</option>
                         <option value="1">1</option>
                         <option value="2">2</option>
                         <option value="3">3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
                       </select>
                     </label>
                     <label class="apd-unified-cell apd-score-cell">
@@ -1119,13 +1155,11 @@
                         data-apd-key="resletingTidakPenuh"
                         required
                       >
-                        <option value="" disabled selected>0–5</option>
+                        <option value="" disabled selected>0–3</option>
                         <option value="0">0</option>
                         <option value="1">1</option>
                         <option value="2">2</option>
                         <option value="3">3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
                       </select>
                     </label>
                     <label class="apd-unified-cell apd-score-cell">
@@ -1137,13 +1171,11 @@
                         data-apd-key="lenganDitarik"
                         required
                       >
-                        <option value="" disabled selected>0–5</option>
+                        <option value="" disabled selected>0–3</option>
                         <option value="0">0</option>
                         <option value="1">1</option>
                         <option value="2">2</option>
                         <option value="3">3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
                       </select>
                     </label>
                     <label class="apd-unified-cell apd-score-cell">
@@ -1153,13 +1185,11 @@
                         data-apd-key="memakaiAksesoris"
                         required
                       >
-                        <option value="" disabled selected>0–5</option>
+                        <option value="" disabled selected>0–3</option>
                         <option value="0">0</option>
-                        <option value="1">1</option>
-                        <option value="2">2</option>
+                        <option value="1" disabled>1</option>
+                        <option value="2" disabled>2</option>
                         <option value="3">3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
                       </select>
                     </label>
                     <label
@@ -1171,13 +1201,11 @@
                         data-apd-key="kebersihanSepatu"
                         required
                       >
-                        <option value="" disabled selected>0–5</option>
+                        <option value="" disabled selected>0–3</option>
                         <option value="0">0</option>
-                        <option value="1">1</option>
+                        <option value="1" disabled>1</option>
                         <option value="2">2</option>
                         <option value="3">3</option>
-                        <option value="4">4</option>
-                        <option value="5">5</option>
                       </select>
                     </label>
                     <label class="apd-unified-cell apd-reason-cell-input">
@@ -1191,7 +1219,9 @@
                       >
                     </label>
                     <div class="apd-photo-field" id="apdPhotoField" hidden>
-                      <span class="apd-photo-label">Unggah Foto (Opsional)</span>
+                      <span class="apd-photo-label"
+                        >Unggah Foto (Opsional)</span
+                      >
                       <div class="apd-photo-picker">
                         <button
                           type="button"
@@ -1200,7 +1230,10 @@
                           aria-expanded="false"
                           aria-controls="apdPhotoOptions"
                         >
-                          <i class="fa-solid fa-paperclip" aria-hidden="true"></i>
+                          <i
+                            class="fa-solid fa-paperclip"
+                            aria-hidden="true"
+                          ></i>
                           Ambil/Unggah Foto
                         </button>
                         <div
@@ -1237,30 +1270,17 @@
                         id="apdPhotoPreviewBox"
                         class="apd-photo-preview-box"
                         hidden
-                      >
-                        <img
-                          id="apdPhotoPreview"
-                          alt="Buka pratinjau foto bukti APD"
-                          role="button"
-                          tabindex="0"
-                        />
-                        <button
-                          type="button"
-                          id="apdPhotoRemoveBtn"
-                          class="apd-photo-remove"
-                          aria-label="Hapus foto yang dipilih"
-                          title="Hapus foto"
-                        >
-                          <i class="fa-solid fa-trash" aria-hidden="true"></i>
-                        </button>
-                      </div>
+                      ></div>
                       <span id="apdPhotoInfo" class="hint-text"></span>
                     </div>
                   </div>
                 </fieldset>
                 <div class="apd-inline-actions">
                   <button type="submit" class="btn btn-primary" id="apdAddBtn">
-                    <i class="fa-solid fa-file-circle-plus" aria-hidden="true"></i>
+                    <i
+                      class="fa-solid fa-file-circle-plus"
+                      aria-hidden="true"
+                    ></i>
                     Tambah
                   </button>
                   <button
@@ -1312,7 +1332,7 @@
                   </div>
                   <div class="apd-head-cell">
                     <strong>Total Poin</strong>
-                    <small>Maksimum 35 poin</small>
+                    <small>Maksimum 21 poin</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>Total Prosentase</strong>
@@ -1436,7 +1456,7 @@
                     ><small>Bobot 10 dari 110</small>
                   </div>
                   <div class="apd-head-cell">
-                    <strong>Total Poin</strong><small>Maksimum 35 poin</small>
+                    <strong>Total Poin</strong><small>Maksimum 21 poin</small>
                   </div>
                   <div class="apd-head-cell">
                     <strong>Total Prosentase</strong
@@ -1683,6 +1703,7 @@
                       <th>Tanggal</th>
                       <th>Produk</th>
                       <th>Botol</th>
+                      <th>Qty</th>
                       <th>Dibuat Oleh</th>
                       <th>Dibuat Pada</th>
                       <th>Update</th>
@@ -2374,6 +2395,17 @@
               required
             />
           </label>
+          <label class="field">
+            <span>Qty (PCS)</span>
+            <input
+              type="number"
+              id="spkQty"
+              min="1"
+              step="1"
+              placeholder="0"
+              required
+            />
+          </label>
         </div>
         <p class="form-error" id="spkError" hidden></p>
         <div class="form-actions">
@@ -2399,7 +2431,8 @@
             (event.lineno ? " (baris " + event.lineno + ")" : "");
       });
     </script>
-    <script src="script.js?v=20260924-v82-queue-page-10"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="script.js?v=20260924-v98-apd-three-photos"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>

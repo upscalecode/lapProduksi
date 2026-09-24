@@ -44,7 +44,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbx61CE7Ft05yP3HvbQ1ApH6PudzHThmqO91aUR5sXggzRD9LWF-WSh9RXYHFXQJ3x9fxg/exec",
+      "https://script.google.com/macros/s/AKfycbwto7kRRtE58KtLQxlpxZ72Q6w7fWTlZpKoxivRYx-5s6nD5ArgOdtvNUsV0_NE8HfibQ/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -80,7 +80,14 @@
       kpiLaporan: 1,
     },
     savedPages: { filling: 1, press: 1 },
-    spk: { page: 1, fillingPage: 1, reportPage: 1, date: "", fillingDate: "" },
+    spk: {
+      page: 1,
+      fillingPage: 1,
+      reportPage: 1,
+      date: "",
+      fillingDate: "",
+      query: "",
+    },
     pressBalance: { search: "", page: 1 },
     dashboard: {
       chartMode: "7days",
@@ -101,6 +108,7 @@
     lastLaporan: null,
     lastKpiLaporan: null,
   };
+  const selectedSpkRows = new Set();
 
   // Antrean tulis: UI tetap instan, request Spreadsheet dikirim satu per satu
   // agar input cepat berulang tidak saling berebut LockService di Apps Script.
@@ -316,6 +324,18 @@
       "spk-read-only",
       !canLevel("spk", "write"),
     );
+    [
+      "spkOpenButton",
+      "spkImportButton",
+      "spkMassDeleteButton",
+      "spkSaveButton",
+    ].forEach((id) => {
+      const button = el(id);
+      if (button)
+        button.hidden =
+          !canLevel("spk", "write") ||
+          (id === "spkMassDeleteButton" && selectedSpkRows.size === 0);
+    });
     qsa("#view-filling .f-export-btn").forEach((button) => {
       button.hidden = !can("accessExportFillingCsv");
     });
@@ -757,17 +777,42 @@
     if (!tanggal || !productKey || !bottleKey) return "";
     const matches = (state.spkEntries || []).filter(
       (item) =>
-        item.tanggal === tanggal &&
         String(item.produk || "")
           .trim()
           .toLowerCase() === productKey &&
         String(item.botol || "")
           .trim()
-          .toLowerCase() === bottleKey,
+          .toLowerCase() === bottleKey &&
+        spkRemainingQty(item) > 0,
     );
     return matches.length
       ? String(matches[matches.length - 1].batchNo || "")
       : "";
+  }
+
+  function spkFillingUsedQty(batchNo, excludeEntryId = "") {
+    const target = String(batchNo || "").trim();
+    if (!target) return 0;
+    return [
+      ...(state.entries || []).filter((item) => item.tab === "filling"),
+      ...(state.preview.filling || []),
+    ]
+      .filter(
+        (entry) =>
+          entryBatchNo(entry) === target &&
+          String(entry.id || "") !== String(excludeEntryId || ""),
+      )
+      .reduce(
+        (largest, entry) => Math.max(largest, Number(entry.totalQty) || 0),
+        0,
+      );
+  }
+
+  function spkRemainingQty(spk, excludeEntryId = "") {
+    const qty = Math.max(0, Number(spk?.qty) || 0);
+    const used = spkFillingUsedQty(spk?.batchNo, excludeEntryId);
+    // Data SPK lama tanpa Qty tetap tampil sampai pernah digunakan.
+    return qty > 0 ? Math.max(0, qty - used) : used > 0 ? 0 : 1;
   }
 
   function nextSpkBatchNo() {
@@ -1504,6 +1549,66 @@
     );
   }
 
+  function normalizedFuzzyText(value) {
+    return String(value || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "")
+      .trim();
+  }
+
+  function levenshteinDistance(left, right) {
+    if (left === right) return 0;
+    if (!left.length) return right.length;
+    if (!right.length) return left.length;
+    let previous = Array.from({ length: right.length + 1 }, (_, i) => i);
+    for (let i = 1; i <= left.length; i += 1) {
+      const current = [i];
+      for (let j = 1; j <= right.length; j += 1) {
+        current[j] = Math.min(
+          current[j - 1] + 1,
+          previous[j] + 1,
+          previous[j - 1] + (left[i - 1] === right[j - 1] ? 0 : 1),
+        );
+      }
+      previous = current;
+    }
+    return previous[right.length];
+  }
+
+  function approximateMasterValue(category, value) {
+    const target = normalizedFuzzyText(value);
+    if (target.length < 4) return "";
+    const targetNumbers = target.match(/\d+/g) || [];
+    const candidates = masterValues(category)
+      .map((masterValue) => {
+        const normalized = normalizedFuzzyText(masterValue);
+        const candidateNumbers = normalized.match(/\d+/g) || [];
+        // Angka merupakan identitas penting, khususnya ukuran botol.
+        if (targetNumbers.join("|") !== candidateNumbers.join("|")) return null;
+        const longest = Math.max(target.length, normalized.length);
+        const similarity = longest
+          ? 1 - levenshteinDistance(target, normalized) / longest
+          : 0;
+        return { value: masterValue, similarity };
+      })
+      .filter(Boolean)
+      .sort((a, b) => b.similarity - a.similarity);
+    const best = candidates[0];
+    if (!best) return "";
+    const minimumSimilarity = target.length < 7 ? 0.85 : 0.75;
+    if (best.similarity < minimumSimilarity) return "";
+    const second = candidates[1];
+    if (
+      second &&
+      best.similarity < 0.9 &&
+      best.similarity - second.similarity < 0.04
+    )
+      return "";
+    return best.value;
+  }
+
   function isMasterValue(category, value) {
     return Boolean(canonicalMasterValue(category, value));
   }
@@ -2068,10 +2173,10 @@
 
   function entryBatchNo(entry) {
     if (entry && entry.batchNo) return String(entry.batchNo);
-    const match = /^(?:FILL|PRESS)\s*-\s*(\d{2}-\d{8})$/i.exec(
+    const match = /^(?:FILL|PRESS)\s*-\s*(.+)$/i.exec(
       String((entry && entry.reportId) || ""),
     );
-    return match ? match[1] : "";
+    return match ? String(match[1] || "").trim() : "";
   }
 
   function getPressBalanceRows(options = {}) {
@@ -2914,6 +3019,18 @@
 
       const id = editing.value;
       const editingSource = editing.dataset.source || "";
+      if (line === "filling") {
+        const spk = (state.spkEntries || []).find(
+          (item) => String(item.batchNo) === String(payload.batchNo),
+        );
+        const requestedQty = payload.qtyKardus * payload.qtyBotolPerKardus;
+        const spkCapacity = Math.max(0, Number(spk?.qty) || 0);
+        if (spkCapacity > 0 && requestedQty > spkCapacity) {
+          errorEl.textContent = `Qty Filling ${requestedQty.toLocaleString("id-ID")} pcs melebihi kapasitas SPK pada baris ini, yaitu ${spkCapacity.toLocaleString("id-ID")} pcs.`;
+          errorEl.hidden = false;
+          return;
+        }
+      }
       const pressError = validatePressPayload(payload, id, editingSource);
       if (pressError) {
         errorEl.textContent = pressError;
@@ -3376,7 +3493,49 @@
     { key: "memakaiAksesoris", label: "Memakai aksesoris", weight: 20 },
     { key: "kebersihanSepatu", label: "Kebersihan sepatu", weight: 10 },
   ]);
-  const APD_MAX_POINTS = APD_VARIABLES.length * 5;
+  const APD_POINT_CRITERIA = Object.freeze({
+    maskerTidakSesuai: [
+      "DILEPAS",
+      "DI DAGU",
+      "DI BAWAH HIDUNG",
+      "SESUAI STANDARD",
+    ],
+    lenganDitarik: [
+      "DITARIK SAMPAI SIKU",
+      "DITARIK SEBAGIAN (DI ATAS PERGELANGAN)",
+      "DITARIK SEDIKIT",
+      "SESUAI STANDARD",
+    ],
+    sepatuDiinjak: [
+      "DI INJAK SEMUA",
+      "BAGIAN BELAKANG SEPATU TERINJAK",
+      "SEDIKIT TERINJAK/TIDAK RAPI",
+      "SESUAI STANDARD",
+    ],
+    rambutKelihatan: [
+      "PENUTUP KEPALA TIDAK DIPAKAI",
+      "RAMBUT TERLIHAT BANYAK",
+      "RAMBUT TERLIHAT SEDIKIT",
+      "SESUAI STANDARD",
+    ],
+    resletingTidakPenuh: [
+      "TIDAK DIRESLETING SAMA SEKALI",
+      "RESLETING NAIK TURUN BERULANG",
+      "RESLETING SAMPAI DADA",
+      "SESUAI STANDARD",
+    ],
+    memakaiAksesoris: [
+      "MEMAKAI AKSESORIS YANG DILARANG",
+      null,
+      null,
+      "TIDAK PAKAI SAMA SEKALI",
+    ],
+    kebersihanSepatu: ["KOTOR PARAH", null, "SETENGAH KOTOR", "BERSIH"],
+  });
+  const APD_REASON_DETAIL_MARKER = "[Detail Poin APD]";
+  const APD_REASON_DETAIL_END_MARKER = "[/Detail Poin APD]";
+  const APD_MAX_POINT = 3;
+  const APD_MAX_POINTS = APD_VARIABLES.length * APD_MAX_POINT;
   const APD_TOTAL_WEIGHT = APD_VARIABLES.reduce(
     (total, item) => total + item.weight,
     0,
@@ -3395,7 +3554,7 @@
     APD_VARIABLES.forEach((variable) => {
       const point = Number(scores[variable.key]) || 0;
       totalPoints += point;
-      percentage += point * (variable.weight / 5);
+      percentage += point * (variable.weight / APD_MAX_POINT);
     });
     return {
       totalPoints,
@@ -3449,12 +3608,12 @@
     }
   }
 
-  function showApdPhotoPopup(dataUrl) {
+  function showApdPhotoPopup(dataUrls) {
+    const photos = Array.isArray(dataUrls) ? dataUrls : [dataUrls];
     const overlay = document.createElement("div");
     overlay.className = "apd-photo-overlay";
     overlay.innerHTML =
-      '<div class="apd-photo-dialog" role="dialog" aria-modal="true" aria-label="Foto bukti APD"><button type="button" class="btn btn-ghost apd-photo-close">x</button><img alt="Foto bukti APD" /></div>';
-    qs("img", overlay).src = dataUrl;
+      `<div class="apd-photo-dialog" role="dialog" aria-modal="true" aria-label="Foto bukti APD"><button type="button" class="btn btn-ghost apd-photo-close">x</button><div class="apd-photo-gallery">${photos.map((url, index) => `<img src="${url}" alt="Foto bukti APD ${index + 1}" />`).join("")}</div></div>`;
     const close = () => overlay.remove();
     qs(".apd-photo-close", overlay).addEventListener("click", close);
     overlay.addEventListener("click", (event) => {
@@ -3468,11 +3627,19 @@
   }
 
   async function viewApdPhoto(item, source) {
+    if (source === "preview") {
+      const ids = item.photoFileIds || (item.photoFileId ? [item.photoFileId] : []);
+      const responses = await Promise.all(
+        ids.map((photoFileId) => apiGet("apd.photo.preview", { photoFileId })),
+      );
+      showApdPhotoPopup(responses.map((response) => response.dataUrl));
+      return;
+    }
     const response = await apiGet(
-      source === "saved" ? "apd.photo.get" : "apd.photo.preview",
-      source === "saved" ? { id: item.id } : { photoFileId: item.photoFileId },
+      "apd.photo.get",
+      { id: item.id },
     );
-    showApdPhotoPopup(response.dataUrl);
+    showApdPhotoPopup(response.dataUrls || response.dataUrl);
   }
 
   function apdRecordHtml(item, source, activeEditingId, activeEditingSource) {
@@ -3501,12 +3668,25 @@
         <div class="apd-record-cell apd-record-score">${Number(item.scores?.kebersihanSepatu) || 0}</div>
         <div class="apd-record-cell apd-record-result"><strong>${Number(item.totalPoints) || 0} / ${APD_MAX_POINTS}</strong></div>
         <div class="apd-record-cell"><span class="apd-percent-badge">${dashboardPercent(item.percentage)}</span></div>
-        <div class="apd-record-cell apd-record-reason"><span>${esc(item.alasan || "—")}</span>${item.photoFileId ? `<button type="button" class="btn btn-ghost apd-photo-view" data-id="${esc(item.id)}">Lihat Bukti</button>` : ""}</div>
+        <div class="apd-record-cell apd-record-reason">
+          <span class="apd-reason-text">${esc(item.alasan || "—")}</span>
+          ${item.alasan ? '<button type="button" class="apd-reason-toggle" aria-expanded="false">Tampilkan selengkapnya</button>' : ""}
+          ${(item.photoFileIds?.length || item.photoFileId) ? `<button type="button" class="btn btn-ghost apd-photo-view" data-id="${esc(item.id)}">Lihat Bukti (${item.photoFileIds?.length || 1})</button>` : ""}
+        </div>
         <div class="apd-record-cell apd-record-actions" ${canChange ? "" : "hidden"}>
           <button type="button" class="btn btn-ghost ${isSaved ? "apd-saved-edit" : "apd-edit"}" data-id="${esc(item.id)}">Edit</button>
           <button type="button" class="btn btn-danger ${isSaved ? "apd-saved-delete" : "apd-delete"}" data-id="${esc(item.id)}">Hapus</button>
         </div>
       </div>`;
+  }
+
+  function syncApdReasonToggles(container) {
+    qsa(".apd-record-reason", container).forEach((cell) => {
+      const text = qs(".apd-reason-text", cell);
+      const toggle = qs(".apd-reason-toggle", cell);
+      if (!text || !toggle) return;
+      toggle.hidden = text.scrollHeight <= text.clientHeight + 1;
+    });
   }
 
   function renderApdPreview() {
@@ -3538,6 +3718,7 @@
         apdRecordHtml(item, "preview", activeEditingId, activeEditingSource),
       )
       .join("");
+    syncApdReasonToggles(container);
 
     const from = allRows.length ? start + 1 : 0;
     const to = Math.min(start + CONFIG.APD_PREVIEW_PAGE_SIZE, allRows.length);
@@ -3620,6 +3801,7 @@
           )
           .join("")
       : '<div class="apd-saved-empty">Tidak ada riwayat APD yang sesuai dengan filter.</div>';
+    syncApdReasonToggles(container);
 
     const from = allRows.length ? start + 1 : 0;
     const to = Math.min(start + CONFIG.PAGE_SIZE, allRows.length);
@@ -3673,17 +3855,42 @@
       refreshHistory();
     });
     const scoreInputs = qsa(".apd-score", form);
+    scoreInputs.forEach((input) => {
+      const criteria = APD_POINT_CRITERIA[input.dataset.apdKey] || [];
+      input.innerHTML = [
+        '<option value="" disabled selected>0–3</option>',
+        ...criteria.map(
+          (description, point) =>
+            `<option value="${point}"${description ? "" : " disabled"}>${point}</option>`,
+        ),
+      ].join("");
+    });
     const photoField = el("apdPhotoField");
     const photoInput = el("apdPhotoInput");
     const photoCameraInput = el("apdPhotoCameraInput");
     const photoChooseBtn = el("apdPhotoChooseBtn");
     const photoOptions = el("apdPhotoOptions");
-    const photoPreview = el("apdPhotoPreview");
     const photoPreviewBox = el("apdPhotoPreviewBox");
     const photoInfo = el("apdPhotoInfo");
-    let pendingPhotoDataUrl = "";
-    let currentPhotoFileId = "";
+    let pendingPhotoDataUrls = [];
+    let currentPhotoFileIds = [];
     let photoChangeToken = 0;
+
+    function renderPhotoPreviews() {
+      const photos = [
+        ...currentPhotoFileIds.map((id) => ({ id, saved: true })),
+        ...pendingPhotoDataUrls.map((url) => ({ url, saved: false })),
+      ];
+      if (photoPreviewBox) {
+        photoPreviewBox.hidden = photos.length === 0;
+        photoPreviewBox.innerHTML = photos
+          .map((photo, index) => `<div class="apd-photo-thumb"><button type="button" class="apd-photo-thumb-view" data-index="${index}" aria-label="Buka foto ${index + 1}">${photo.url ? `<img src="${photo.url}" alt="Foto bukti ${index + 1}" />` : `<span>Foto ${index + 1}<small>Tersimpan</small></span>`}</button><button type="button" class="apd-photo-remove" data-index="${index}" aria-label="Hapus foto ${index + 1}" title="Hapus foto"><i class="fa-solid fa-trash" aria-hidden="true"></i></button></div>`)
+          .join("");
+      }
+      if (photoInfo)
+        photoInfo.textContent = `${photos.length} dari maksimal 3 foto.`;
+      if (photoChooseBtn) photoChooseBtn.disabled = photos.length >= 3;
+    }
 
     if (tanggal) tanggal.value = todayStr();
 
@@ -3693,6 +3900,34 @@
         scores[input.dataset.apdKey] = Number(input.value);
       });
       return scores;
+    }
+
+    function stripApdPointDetails(value) {
+      const text = String(value || "").trim();
+      const start = text.indexOf(APD_REASON_DETAIL_MARKER);
+      if (start < 0) return text;
+      const end = text.indexOf(APD_REASON_DETAIL_END_MARKER, start);
+      if (end < 0) return text.slice(0, start).trim();
+      return `${text.slice(0, start)}${text.slice(
+        end + APD_REASON_DETAIL_END_MARKER.length,
+      )}`.trim();
+    }
+
+    function reasonWithApdPointDetails(value, scores) {
+      const manualReason = stripApdPointDetails(value);
+      const details = APD_VARIABLES.map((variable) => {
+        const point = Number(scores[variable.key]);
+        const description = APD_POINT_CRITERIA[variable.key]?.[point];
+        return `${variable.label} (${point}): ${description}`;
+      });
+      return [
+        manualReason,
+        APD_REASON_DETAIL_MARKER,
+        ...details,
+        APD_REASON_DETAIL_END_MARKER,
+      ]
+        .filter(Boolean)
+        .join("\n");
     }
 
     function refreshCalculation() {
@@ -3723,14 +3958,9 @@
     function resetForm() {
       form.reset();
       photoChangeToken += 1;
-      pendingPhotoDataUrl = "";
-      currentPhotoFileId = "";
-      if (photoPreviewBox) photoPreviewBox.hidden = true;
-      if (photoPreview) {
-        photoPreview.src = "";
-        photoPreview.hidden = true;
-      }
-      if (photoInfo) photoInfo.textContent = "";
+      pendingPhotoDataUrls = [];
+      currentPhotoFileIds = [];
+      renderPhotoPreviews();
       if (tanggal) tanggal.value = todayStr();
       if (editingId) {
         editingId.value = "";
@@ -3767,20 +3997,16 @@
         input.value = item.scores?.[input.dataset.apdKey] ?? "";
       });
       if (reason) reason.value = item.alasan || "";
-      pendingPhotoDataUrl = "";
+      pendingPhotoDataUrls = [];
       photoChangeToken += 1;
-      currentPhotoFileId = item.photoFileId || "";
+      currentPhotoFileIds = item.photoFileIds?.length
+        ? [...item.photoFileIds]
+        : item.photoFileId
+          ? [item.photoFileId]
+          : [];
       if (photoInput) photoInput.value = "";
       if (photoCameraInput) photoCameraInput.value = "";
-      if (photoPreview) {
-        photoPreview.src = "";
-        photoPreview.hidden = true;
-      }
-      if (photoPreviewBox) photoPreviewBox.hidden = true;
-      if (photoInfo)
-        photoInfo.textContent = currentPhotoFileId
-          ? "Foto bukti tersimpan. Pilih gambar baru untuk mengganti."
-          : "";
+      renderPhotoPreviews();
       refreshCalculation();
       refreshReasonCounter();
       if (addBtn) addBtn.textContent = "Simpan Perubahan";
@@ -3800,55 +4026,42 @@
     async function handleApdPhotoChange(input) {
       const file = input.files?.[0];
       if (!file) return;
+      if (currentPhotoFileIds.length + pendingPhotoDataUrls.length >= 3) {
+        input.value = "";
+        return toast("Maksimal 3 foto bukti APD.", true);
+      }
       const changeToken = ++photoChangeToken;
       if (photoInfo) photoInfo.textContent = "Mengompres foto...";
       try {
         const compressed = await compressApdPhoto(file);
         if (changeToken !== photoChangeToken) return;
-        pendingPhotoDataUrl = compressed.dataUrl;
-        if (photoPreview) {
-          photoPreview.src = compressed.dataUrl;
-          photoPreview.hidden = false;
-        }
-        if (photoPreviewBox) photoPreviewBox.hidden = false;
-        if (photoInfo) photoInfo.textContent = "";
+        pendingPhotoDataUrls.push(compressed.dataUrl);
+        input.value = "";
+        renderPhotoPreviews();
         refreshCalculation();
       } catch (err) {
         if (changeToken !== photoChangeToken) return;
-        pendingPhotoDataUrl = "";
         input.value = "";
-        if (photoPreview) {
-          photoPreview.src = "";
-          photoPreview.hidden = true;
-        }
-        if (photoPreviewBox) photoPreviewBox.hidden = true;
         if (photoInfo) photoInfo.textContent = err.message;
       }
     }
-    el("apdPhotoRemoveBtn")?.addEventListener("click", () => {
-      photoChangeToken += 1;
-      pendingPhotoDataUrl = "";
-      if (photoInput) photoInput.value = "";
-      if (photoCameraInput) photoCameraInput.value = "";
-      if (photoPreview) {
-        photoPreview.src = "";
-        photoPreview.hidden = true;
+    photoPreviewBox?.addEventListener("click", async (event) => {
+      const remove = event.target.closest(".apd-photo-remove");
+      const view = event.target.closest(".apd-photo-thumb-view");
+      const index = Number((remove || view)?.dataset.index);
+      if (!Number.isInteger(index)) return;
+      if (remove) {
+        if (index < currentPhotoFileIds.length) currentPhotoFileIds.splice(index, 1);
+        else pendingPhotoDataUrls.splice(index - currentPhotoFileIds.length, 1);
+        renderPhotoPreviews();
+        return;
       }
-      if (photoPreviewBox) photoPreviewBox.hidden = true;
-      if (photoInfo)
-        photoInfo.textContent = currentPhotoFileId
-          ? "Foto bukti tersimpan. Pilih gambar baru untuk mengganti."
-          : "";
-      refreshCalculation();
-      photoChooseBtn?.focus();
-    });
-    photoPreview?.addEventListener("click", () => {
-      if (pendingPhotoDataUrl) showApdPhotoPopup(pendingPhotoDataUrl);
-    });
-    photoPreview?.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      if (pendingPhotoDataUrl) showApdPhotoPopup(pendingPhotoDataUrl);
+      if (index < currentPhotoFileIds.length) {
+        try {
+          const response = await apiGet("apd.photo.preview", { photoFileId: currentPhotoFileIds[index] });
+          showApdPhotoPopup(response.dataUrl);
+        } catch (err) { toast(err.message, true); }
+      } else showApdPhotoPopup(pendingPhotoDataUrls[index - currentPhotoFileIds.length]);
     });
     photoInput?.addEventListener("change", () =>
       handleApdPhotoChange(photoInput),
@@ -3870,11 +4083,15 @@
     });
     el("apdPhotoCameraBtn")?.addEventListener("click", () => {
       closePhotoOptions();
+      if (currentPhotoFileIds.length + pendingPhotoDataUrls.length >= 3)
+        return toast("Maksimal 3 foto bukti APD.", true);
       if (photoCameraInput) photoCameraInput.value = "";
       photoCameraInput?.click();
     });
     el("apdPhotoStorageBtn")?.addEventListener("click", () => {
       closePhotoOptions();
+      if (currentPhotoFileIds.length + pendingPhotoDataUrls.length >= 3)
+        return toast("Maksimal 3 foto bukti APD.", true);
       if (photoInput) photoInput.value = "";
       photoInput?.click();
     });
@@ -3912,20 +4129,28 @@
       const invalidScore = scoreInputs.find((input) => {
         const text = String(input.value || "").trim();
         const value = Number(text);
+        const criteria = APD_POINT_CRITERIA[input.dataset.apdKey] || [];
         return (
-          text === "" || !Number.isInteger(value) || value < 0 || value > 5
+          text === "" ||
+          !Number.isInteger(value) ||
+          value < 0 ||
+          value > APD_MAX_POINT ||
+          !criteria[value]
         );
       });
       if (invalidScore) {
         if (errorEl) {
           errorEl.textContent =
-            "Semua variable APD wajib diisi dengan poin bulat 0 sampai 5.";
+            "Semua variable APD wajib diisi dengan poin 0 sampai 3 yang tersedia.";
           errorEl.hidden = false;
         }
         invalidScore.focus();
         return;
       }
 
+      const scores = scoresFromForm();
+      const completedReason = reasonWithApdPointDetails(reason?.value, scores);
+      if (reason) reason.value = completedReason;
       const reasonWords = refreshReasonCounter();
       if (reasonWords > APD_REASON_MAX_WORDS) {
         if (errorEl) {
@@ -3940,15 +4165,14 @@
         "operator",
         operator.value,
       );
-      const scores = scoresFromForm();
       const result = calculateApd(scores);
       const id = editingId?.value || "";
       const source = editingId?.dataset.source || "";
-      const previousPreviewPhotoId =
+      const previousPreviewPhotoIds =
         source === "preview"
-          ? (state.preview.apd || []).find((row) => row.id === id)
-              ?.photoFileId || ""
-          : "";
+          ? ((state.preview.apd || []).find((row) => row.id === id)
+              ?.photoFileIds || [])
+          : [];
       const formDate = tanggal?.value || todayStr();
 
       const duplicatePreview = (state.preview.apd || []).find(
@@ -3985,19 +4209,21 @@
         tanggal: formDate,
         operator: canonicalOperator,
         scores: { ...scores },
-        alasan: String(reason?.value || "").trim(),
+        alasan: completedReason,
       };
 
-      if (pendingPhotoDataUrl) {
+      if (pendingPhotoDataUrls.length) {
         if (addBtn) addBtn.disabled = true;
         try {
-          const uploaded = await apiPost("apd.photo.upload", {
-            dataUrl: pendingPhotoDataUrl,
-          });
-          currentPhotoFileId = uploaded.photoFileId;
-          pendingPhotoDataUrl = "";
+          while (pendingPhotoDataUrls.length) {
+            const uploaded = await apiPost("apd.photo.upload", {
+              dataUrl: pendingPhotoDataUrls[0],
+            });
+            currentPhotoFileIds.push(uploaded.photoFileId);
+            pendingPhotoDataUrls.shift();
+          }
           if (photoInfo)
-            photoInfo.textContent = "Foto bukti berhasil diunggah.";
+            photoInfo.textContent = `${currentPhotoFileIds.length} foto bukti berhasil diunggah.`;
         } catch (err) {
           if (errorEl) {
             const missingDriveAccess =
@@ -4013,7 +4239,7 @@
           return;
         }
       }
-      payload.photoFileId = currentPhotoFileId;
+      payload.photoFileIds = [...currentPhotoFileIds];
 
       // Edit data yang SUDAH tersimpan selalu menggunakan endpoint update.
       // Baris lama dioverwrite berdasarkan ID yang sama sehingga tidak append/duplikat.
@@ -4055,7 +4281,8 @@
         totalPoints: result.totalPoints,
         percentage: result.percentage,
         alasan: payload.alasan,
-        photoFileId: payload.photoFileId,
+        photoFileIds: payload.photoFileIds,
+        photoFileId: payload.photoFileIds[0] || "",
         createdAt: id
           ? (state.preview.apd || []).find((row) => row.id === id)?.createdAt ||
             nowIso()
@@ -4065,14 +4292,11 @@
       if (id && source === "preview") {
         const index = state.preview.apd.findIndex((row) => row.id === id);
         if (index >= 0) state.preview.apd[index] = item;
-        if (
-          previousPreviewPhotoId &&
-          previousPreviewPhotoId !== item.photoFileId
-        ) {
-          apiPost("apd.photo.discard", {
-            photoFileId: previousPreviewPhotoId,
-          }).catch(() => {});
-        }
+        previousPreviewPhotoIds
+          .filter((photoId) => !item.photoFileIds.includes(photoId))
+          .forEach((photoFileId) =>
+            apiPost("apd.photo.discard", { photoFileId }).catch(() => {}),
+          );
         toast("Data APD di preview berhasil diperbarui.");
       } else {
         state.preview.apd.push(item);
@@ -4089,9 +4313,20 @@
     });
 
     previewBody?.addEventListener("click", (event) => {
+      const reasonToggle = event.target.closest(".apd-reason-toggle");
       const viewBtn = event.target.closest(".apd-photo-view");
       const editBtn = event.target.closest(".apd-edit");
       const deleteBtn = event.target.closest(".apd-delete");
+
+      if (reasonToggle) {
+        const reasonCell = reasonToggle.closest(".apd-record-reason");
+        const expanded = reasonCell?.classList.toggle("is-expanded") || false;
+        reasonToggle.setAttribute("aria-expanded", String(expanded));
+        reasonToggle.textContent = expanded
+          ? "Lebih sedikit"
+          : "Tampilkan selengkapnya";
+        return;
+      }
 
       if (viewBtn) {
         const item = (state.preview.apd || []).find(
@@ -4129,18 +4364,29 @@
           resetForm();
         renderApdPreview();
         renderApdSavedToday();
-        if (removed?.photoFileId)
-          apiPost("apd.photo.discard", {
-            photoFileId: removed.photoFileId,
-          }).catch(() => {});
+        (removed?.photoFileIds || (removed?.photoFileId ? [removed.photoFileId] : []))
+          .forEach((photoFileId) =>
+            apiPost("apd.photo.discard", { photoFileId }).catch(() => {}),
+          );
         toast("Data APD dihapus dari preview.");
       }
     });
 
     savedBody?.addEventListener("click", async (event) => {
+      const reasonToggle = event.target.closest(".apd-reason-toggle");
       const viewBtn = event.target.closest(".apd-photo-view");
       const editBtn = event.target.closest(".apd-saved-edit");
       const deleteBtn = event.target.closest(".apd-saved-delete");
+
+      if (reasonToggle) {
+        const reasonCell = reasonToggle.closest(".apd-record-reason");
+        const expanded = reasonCell?.classList.toggle("is-expanded") || false;
+        reasonToggle.setAttribute("aria-expanded", String(expanded));
+        reasonToggle.textContent = expanded
+          ? "Lebih sedikit"
+          : "Tampilkan selengkapnya";
+        return;
+      }
 
       if (viewBtn) {
         const item = (state.apdEntries || []).find(
@@ -4226,7 +4472,7 @@
           operator: item.operator,
           scores: { kebersihanSepatu: 0, ...item.scores },
           alasan: item.alasan || "",
-          photoFileId: item.photoFileId || "",
+          photoFileIds: item.photoFileIds || (item.photoFileId ? [item.photoFileId] : []),
           clientRequestId: item.id,
         }));
         const response = await enqueueWrite(() =>
@@ -5328,18 +5574,18 @@
   function renderFillingSpkQueue() {
     const tbody = el("fillingSpkBody");
     if (!tbody) return;
-    const now = new Date();
-    const today = todayStr();
-    const previousDate = new Date(now);
-    previousDate.setDate(previousDate.getDate() - 1);
-    const p = (value) => String(value).padStart(2, "0");
-    const yesterday = `${previousDate.getFullYear()}-${p(previousDate.getMonth() + 1)}-${p(previousDate.getDate())}`;
-    const includeYesterday = now.getHours() < 19;
-    const rows = (state.spkEntries || []).filter(
-      (item) =>
-        item.tanggal === today ||
-        (includeYesterday && item.tanggal === yesterday),
-    );
+    const rows = (state.spkEntries || [])
+      .map((item) => ({
+        ...item,
+        usedQty: spkFillingUsedQty(item.batchNo),
+        remainingQty: spkRemainingQty(item),
+      }))
+      .filter((item) => item.remainingQty > 0)
+      .sort(
+        (a, b) =>
+          String(a.tanggal).localeCompare(String(b.tanggal)) ||
+          String(a.batchNo).localeCompare(String(b.batchNo)),
+      );
     const pageSize = CONFIG.FILLING_SPK_PAGE_SIZE;
     const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
     state.spk.fillingPage = Math.min(
@@ -5358,9 +5604,15 @@
             const fillingCount = fillingRows.filter(
               (entry) => entryBatchNo(entry) === item.batchNo,
             ).length;
+            const qty = Math.max(0, Number(item.qty) || 0);
+            const remainingLabel = qty
+              ? Number(item.remainingQty).toLocaleString("id-ID")
+              : "Belum ada Qty";
             return `<tr>
             <td><span class="id-badge">${esc(item.batchNo)}</span></td>
             <td>${esc(item.produk)}</td><td>${esc(item.botol)}</td>
+            <td>${qty ? qty.toLocaleString("id-ID") : "—"}</td>
+            <td><strong>${remainingLabel}</strong></td>
             <td><span class="sync-badge ${fillingCount ? "saved" : "pending"}">${fillingCount ? `${fillingCount} Input Filling` : "Belum ada Filling"}</span></td>
             <td><button type="button" class="btn btn-primary filling-spk-use"
               data-batch-no="${esc(item.batchNo)}" data-produk="${esc(item.produk)}" data-botol="${esc(item.botol)}"
@@ -5368,10 +5620,10 @@
           </tr>`;
           })
           .join("")
-      : '<tr><td colspan="5" class="empty-row">Belum ada SPK tersimpan hari ini.</td></tr>';
+      : '<tr><td colspan="7" class="empty-row">Tidak ada SPK dengan sisa Qty.</td></tr>';
     dashboardSetText(
       "fillingSpkSummary",
-      `${rows.length ? start + 1 : 0}–${Math.min(start + pageSize, rows.length)} dari ${rows.length} SPK ${includeYesterday ? "hari ini + kemarin (hingga 19.00)" : "hari ini"} · ${fillingRows.length} total input Filling`,
+      `${rows.length ? start + 1 : 0}–${Math.min(start + pageSize, rows.length)} dari ${rows.length} SPK belum selesai · ${fillingRows.length} total input Filling`,
     );
     renderPagination(
       el("fillingSpkPagination"),
@@ -5404,16 +5656,6 @@
       saveFormDraft("filling", form);
       openFillingFormPopup(button);
     });
-    const fillingQueueWindowKey = () =>
-      `${todayStr()}-${new Date().getHours() < 19 ? "before-19" : "after-19"}`;
-    state.spk.fillingDate = fillingQueueWindowKey();
-    window.setInterval(() => {
-      const currentWindow = fillingQueueWindowKey();
-      if (state.spk.fillingDate === currentWindow) return;
-      state.spk.fillingDate = currentWindow;
-      state.spk.fillingPage = 1;
-      renderFillingSpkQueue();
-    }, 60000);
     renderFillingSpkQueue();
   }
 
@@ -5430,29 +5672,51 @@
     const preview = (state.preview.spk || [])
       .filter((item) => item.tanggal === selectedDate)
       .map((item) => ({ ...item, preview: true }));
-    const rows = [...saved, ...preview];
+    const query = String(state.spk.query || "")
+      .trim()
+      .toLowerCase();
+    const rows = [...saved, ...preview].filter(
+      (item) =>
+        !query ||
+        String(item.batchNo || "")
+          .toLowerCase()
+          .includes(query) ||
+        String(item.produk || "")
+          .toLowerCase()
+          .includes(query),
+    );
     const totalPages = Math.max(1, Math.ceil(rows.length / 20));
     state.spk.page = Math.min(Math.max(1, state.spk.page), totalPages);
     const start = (state.spk.page - 1) * 20;
     const visibleRows = rows.slice(start, start + 20);
+    const visibleQtyTotal = visibleRows.reduce(
+      (sum, item) => sum + Math.max(0, Number(item.qty) || 0),
+      0,
+    );
     tbody.innerHTML = visibleRows.length
       ? visibleRows
-          .map(
-            (item) => `<tr>
+          .map((item) => {
+            const source = item.preview ? "preview" : "saved";
+            const key = item.preview ? item.id : item.batchNo;
+            const selectionKey = `${source}:${key}`;
+            const selectable = item.preview || canManageSpk(item);
+            return `<tr>
+      <td class="select-col">${selectable ? `<input type="checkbox" class="spk-row-select" data-source="${source}" data-key="${esc(key)}" aria-label="Pilih SPK ${esc(item.batchNo)}" ${selectedSpkRows.has(selectionKey) ? "checked" : ""}>` : ""}</td>
       <td><span class="id-badge">${esc(item.batchNo)}</span></td><td>${esc(item.tanggal)}</td>
       <td>${esc(item.produk)}</td><td>${esc(item.botol)}</td>
+      <td>${Math.max(0, Number(item.qty) || 0).toLocaleString("id-ID")}</td>
       <td><span class="sync-badge ${item.preview ? "pending" : "saved"}">${item.preview ? "Preview" : "Tersimpan"}</span></td>
       <td class="row-actions">
         ${item.preview || canManageSpk(item) ? `<button type="button" class="btn btn-ghost spk-edit" data-source="${item.preview ? "preview" : "saved"}" data-key="${esc(item.preview ? item.id : item.batchNo)}">Update</button>` : ""}
         ${item.preview || canManageSpk(item) ? `<button type="button" class="btn btn-danger spk-delete" data-source="${item.preview ? "preview" : "saved"}" data-key="${esc(item.preview ? item.id : item.batchNo)}">Hapus</button>` : ""}
       </td>
-    </tr>`,
-          )
+    </tr>`;
+          })
           .join("")
-      : '<tr><td colspan="6" class="empty-row">Belum ada SPK hari ini.</td></tr>';
+      : `<tr><td colspan="8" class="empty-row">${query ? "No Batch atau Nama Produk tidak ditemukan." : "Belum ada SPK pada tanggal ini."}</td></tr>`;
     dashboardSetText(
       "spkSummary",
-      `${rows.length ? start + 1 : 0}–${Math.min(start + 20, rows.length)} dari ${rows.length} SPK tanggal ${selectedDate} · ${preview.length} preview belum disimpan`,
+      `${rows.length ? start + 1 : 0}–${Math.min(start + 20, rows.length)} dari ${rows.length} SPK tanggal ${selectedDate} · Total Qty tampil: ${visibleQtyTotal.toLocaleString("id-ID")} pcs${query ? ` · Pencarian: ${state.spk.query}` : ""} · ${preview.length} preview belum disimpan`,
     );
     renderPagination(
       el("spkPagination"),
@@ -5468,6 +5732,32 @@
       saveButton.hidden = !canLevel("spk", "write");
       saveButton.disabled = !preview.length;
     }
+    const selectableKeys = visibleRows
+      .filter((item) => item.preview || canManageSpk(item))
+      .map(
+        (item) =>
+          `${item.preview ? "preview" : "saved"}:${item.preview ? item.id : item.batchNo}`,
+      );
+    const selectAll = el("spkSelectAll");
+    if (selectAll) {
+      const selectedCount = selectableKeys.filter((key) =>
+        selectedSpkRows.has(key),
+      ).length;
+      selectAll.disabled = !selectableKeys.length;
+      selectAll.checked =
+        Boolean(selectableKeys.length) &&
+        selectedCount === selectableKeys.length;
+      selectAll.indeterminate =
+        selectedCount > 0 && selectedCount < selectableKeys.length;
+      selectAll.dataset.keys = JSON.stringify(selectableKeys);
+    }
+    const massDeleteButton = el("spkMassDeleteButton");
+    if (massDeleteButton) {
+      massDeleteButton.hidden =
+        selectedSpkRows.size === 0 || !canLevel("spk", "write");
+      massDeleteButton.disabled = selectedSpkRows.size === 0;
+      massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Terpilih${selectedSpkRows.size ? ` (${selectedSpkRows.size})` : ""}`;
+    }
   }
 
   function initSpkModal() {
@@ -5477,29 +5767,188 @@
     const batchInput = el("spkBatchNo");
     const produkInput = el("spkProduk");
     const botolInput = el("spkBotol");
+    const qtyInput = el("spkQty");
     const errorEl = el("spkError");
     const cancelButton = el("spkCancel");
     const submitButton = el("spkAdd");
+    const importButton = el("spkImportButton");
+    const importFile = el("spkImportFile");
     let editingSpk = null;
     let spkFormInitialized = false;
     if (!modal || !form || !openButton) return;
     state.spk.date = state.spk.date || todayStr();
     const dateFilter = el("spkDateFilter");
+    const searchFilter = el("spkSearchFilter");
     if (dateFilter) {
       dateFilter.value = state.spk.date;
       dateFilter.addEventListener("change", () => {
         state.spk.date = dateFilter.value || todayStr();
         state.spk.page = 1;
+        selectedSpkRows.clear();
         renderSpkToday();
       });
     }
+    if (searchFilter) {
+      searchFilter.value = state.spk.query || "";
+      searchFilter.addEventListener("input", () => {
+        state.spk.query = searchFilter.value.trim();
+        state.spk.page = 1;
+        selectedSpkRows.clear();
+        renderSpkToday();
+      });
+    }
+
+    importButton?.addEventListener("click", () => {
+      if (!canLevel("spk", "write"))
+        return toast("Anda tidak memiliki akses import SPK.", true);
+      importFile?.click();
+    });
+    importFile?.addEventListener("change", async () => {
+      const file = importFile.files?.[0];
+      importFile.value = "";
+      if (!file) return;
+      if (!window.XLSX) {
+        return toast("Library pembaca Excel belum berhasil dimuat.", true);
+      }
+      try {
+        const workbook = window.XLSX.read(await file.arrayBuffer(), {
+          type: "array",
+        });
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        const data = window.XLSX.utils.sheet_to_json(sheet, {
+          header: 1,
+          raw: false,
+          defval: "",
+        });
+        // Format sumber SPK menempatkan header pada baris ke-6.
+        // Baris 1–5 berisi judul/keterangan dan sengaja diabaikan.
+        const headerRowIndex = 5;
+        if (
+          data.length <= headerRowIndex ||
+          !(data[headerRowIndex] || []).some((value) =>
+            String(value || "").trim(),
+          )
+        ) {
+          throw new Error("Header pada baris ke-6 tidak ditemukan.");
+        }
+        const normalizeHeader = (value) =>
+          String(value || "")
+            .replace(/^\uFEFF/, "")
+            .trim()
+            .replace(/\s+/g, " ")
+            .toUpperCase();
+        const headers = data[headerRowIndex].map(normalizeHeader);
+        const required = [
+          "NO BATCH",
+          "MERK",
+          "VARIAN",
+          "BOTOL (MILL)",
+          "TOTAL (PCS)",
+        ];
+        const indexes = Object.fromEntries(
+          required.map((header) => [header, headers.indexOf(header)]),
+        );
+        const missing = required.filter((header) => indexes[header] < 0);
+        if (missing.length) {
+          throw new Error(`Header tidak ditemukan: ${missing.join(", ")}.`);
+        }
+
+        const existingBatchNos = new Set(
+          [...(state.spkEntries || []), ...(state.preview.spk || [])].map(
+            (item) =>
+              String(item.batchNo || "")
+                .trim()
+                .toLowerCase(),
+          ),
+        );
+        const imported = [];
+        const sourceRows = data.slice(headerRowIndex + 1);
+        const firstIncompleteRowIndex = sourceRows.findIndex((row) =>
+          required.some((header) => !String(row[indexes[header]] || "").trim()),
+        );
+        const importRows =
+          firstIncompleteRowIndex >= 0
+            ? sourceRows.slice(0, firstIncompleteRowIndex)
+            : sourceRows;
+        importRows.forEach((row, rowIndex) => {
+          const batchNo = String(row[indexes["NO BATCH"]] || "").trim();
+          const merkText = String(row[indexes.MERK] || "").trim();
+          const varianText = String(row[indexes.VARIAN] || "").trim();
+          const produkText = `${merkText} ${varianText}`
+            .trim()
+            .replace(/\s+/g, " ");
+          // Pada merged header, SheetJS menyimpan nilai di sel pertama.
+          // indexOf mengambil kolom pertama/paling kiri tersebut.
+          const botolText = String(row[indexes["BOTOL (MILL)"]] || "").trim();
+          const qtyText = String(row[indexes["TOTAL (PCS)"]] || "").trim();
+          const lineNo = headerRowIndex + rowIndex + 2;
+          const batchKey = batchNo.toLowerCase();
+          if (existingBatchNos.has(batchKey)) {
+            throw new Error(`Baris ${lineNo}: NO BATCH ${batchNo} sudah ada.`);
+          }
+          if (!merkText) throw new Error(`Baris ${lineNo}: MERK kosong.`);
+          if (!varianText) throw new Error(`Baris ${lineNo}: VARIAN kosong.`);
+          let produk =
+            canonicalMasterValue("produk", produkText) ||
+            approximateMasterValue("produk", produkText);
+          let botol =
+            canonicalMasterValue("botol", botolText) ||
+            approximateMasterValue("botol", botolText);
+          if (!produk) {
+            produk = produkText;
+            state.master.produk = [...(state.master.produk || []), produk];
+          }
+          if (!botolText)
+            throw new Error(`Baris ${lineNo}: BOTOL (MILL) kosong.`);
+          if (!botol) {
+            botol = botolText;
+            state.master.botol = [...(state.master.botol || []), botol];
+            state.master.botolpecah = [
+              ...(state.master.botolpecah || []),
+              botol,
+            ];
+          }
+          const qty = Math.floor(Number(qtyText.replace(/[.,\s]/g, "")) || 0);
+          if (qty <= 0)
+            throw new Error(`Baris ${lineNo}: TOTAL (PCS) harus lebih dari 0.`);
+          existingBatchNos.add(batchKey);
+          imported.push({
+            id: makeClientRequestId(),
+            batchNo,
+            tanggal: todayStr(),
+            produk,
+            botol,
+            qty,
+            imported: true,
+            createdAt: nowIso(),
+            updatedAt: "",
+            updateCount: 0,
+          });
+        });
+        if (!imported.length)
+          throw new Error("Tidak ada baris SPK untuk diimport.");
+        state.preview.spk.push(...imported);
+        try {
+          localStorage.setItem(CONFIG.MASTER_KEY, JSON.stringify(state.master));
+        } catch (_) {}
+        state.spk.date = todayStr();
+        state.spk.page = 1;
+        if (dateFilter) dateFilter.value = state.spk.date;
+        persistPreview();
+        renderSpkToday();
+        toast(`${imported.length} SPK berhasil masuk ke preview.`);
+      } catch (err) {
+        toast(`Import SPK gagal: ${err.message}`, true);
+      }
+    });
 
     const syncCancelState = () => {
       if (!cancelButton) return;
       cancelButton.disabled = !(
         String(batchInput.value || "").trim() &&
         String(produkInput.value || "").trim() &&
-        String(botolInput.value || "").trim()
+        String(botolInput.value || "").trim() &&
+        Number(qtyInput?.value) > 0
       );
     };
 
@@ -5523,6 +5972,7 @@
     };
 
     openButton.hidden = !canLevel("spk", "write");
+    if (importButton) importButton.hidden = !canLevel("spk", "write");
     openButton.addEventListener("click", () => {
       if (!canLevel("spk", "write"))
         return toast("Anda tidak memiliki akses input SPK.", true);
@@ -5548,6 +5998,7 @@
     produkInput.addEventListener("change", syncCancelState);
     botolInput.addEventListener("input", syncCancelState);
     botolInput.addEventListener("change", syncCancelState);
+    qtyInput?.addEventListener("input", syncCancelState);
     modal.addEventListener("keydown", (event) => {
       if (event.key === "Escape") close();
     });
@@ -5563,6 +6014,13 @@
         errorEl.hidden = false;
         return;
       }
+      const qty = Math.floor(Number(qtyInput?.value) || 0);
+      if (qty <= 0) {
+        errorEl.textContent = "Qty SPK harus lebih dari 0 pcs.";
+        errorEl.hidden = false;
+        qtyInput?.focus();
+        return;
+      }
       const edit = editingSpk;
       const values = {
         id: edit?.source === "preview" ? edit.key : makeClientRequestId(),
@@ -5570,6 +6028,11 @@
         tanggal: todayStr(),
         produk: canonicalMasterValue("produk", produkInput.value),
         botol: canonicalMasterValue("botol", botolInput.value),
+        qty,
+        imported:
+          edit?.source === "preview" &&
+          state.preview.spk.find((item) => item.id === edit.key)?.imported ===
+            true,
         createdAt:
           edit?.source === "preview"
             ? state.preview.spk.find((item) => item.id === edit.key)
@@ -5595,7 +6058,11 @@
           const response = await enqueueWrite(() =>
             apiPost("spk.update", {
               batchNo: edit.key,
-              data: { produk: values.produk, botol: values.botol },
+              data: {
+                produk: values.produk,
+                botol: values.botol,
+                qty: values.qty,
+              },
             }),
           );
           if (response.spk) {
@@ -5625,6 +6092,81 @@
       else el("spkModalClose")?.focus();
     });
 
+    el("spkTableBody")?.addEventListener("change", (event) => {
+      const checkbox = event.target.closest(".spk-row-select");
+      if (!checkbox) return;
+      const selectionKey = `${checkbox.dataset.source}:${checkbox.dataset.key}`;
+      if (checkbox.checked) selectedSpkRows.add(selectionKey);
+      else selectedSpkRows.delete(selectionKey);
+      renderSpkToday();
+    });
+    el("spkSelectAll")?.addEventListener("change", (event) => {
+      let keys = [];
+      try {
+        keys = JSON.parse(event.target.dataset.keys || "[]");
+      } catch (_) {}
+      keys.forEach((key) => {
+        if (event.target.checked) selectedSpkRows.add(key);
+        else selectedSpkRows.delete(key);
+      });
+      renderSpkToday();
+    });
+    el("spkMassDeleteButton")?.addEventListener("click", async () => {
+      const selections = Array.from(selectedSpkRows).map((value) => {
+        const separator = value.indexOf(":");
+        return {
+          source: value.slice(0, separator),
+          key: value.slice(separator + 1),
+        };
+      });
+      if (!selections.length) return;
+      if (
+        !(await confirmDelete({
+          title: `Hapus ${selections.length} SPK terpilih?`,
+          message:
+            "Preview akan dihapus dari perangkat dan SPK tersimpan akan dihapus dari Spreadsheet. SPK yang sudah digunakan tidak dapat dihapus.",
+          item: `${selections.length} baris SPK`,
+        }))
+      )
+        return;
+
+      const previewIds = selections
+        .filter((item) => item.source === "preview")
+        .map((item) => item.key);
+      const savedBatchNos = selections
+        .filter((item) => item.source === "saved")
+        .map((item) => item.key);
+      const button = el("spkMassDeleteButton");
+      button.disabled = true;
+      button.textContent = "Menghapus…";
+      try {
+        if (savedBatchNos.length) {
+          await enqueueWrite(() =>
+            apiPost("spk.batchDelete", { batchNos: savedBatchNos }),
+          );
+          const deleted = new Set(savedBatchNos);
+          state.spkEntries = state.spkEntries.filter(
+            (item) => !deleted.has(String(item.batchNo)),
+          );
+        }
+        if (previewIds.length) {
+          const deletedPreview = new Set(previewIds);
+          state.preview.spk = state.preview.spk.filter(
+            (item) => !deletedPreview.has(String(item.id)),
+          );
+          persistPreview();
+        }
+        selectedSpkRows.clear();
+        renderSpkToday();
+        renderFillingSpkQueue();
+        renderSpkReport();
+        toast(`${selections.length} SPK berhasil dihapus.`);
+      } catch (err) {
+        toast(`Gagal menghapus SPK terpilih: ${err.message}`, true);
+        renderSpkToday();
+      }
+    });
+
     el("spkTableBody")?.addEventListener("click", async (event) => {
       const editButton = event.target.closest(".spk-edit");
       const deleteButton = event.target.closest(".spk-delete");
@@ -5645,6 +6187,8 @@
         batchInput.value = item.batchNo;
         produkInput.value = item.produk;
         botolInput.value = item.botol;
+        if (qtyInput)
+          qtyInput.value = String(Math.max(0, Number(item.qty) || 0));
         submitButton.innerHTML =
           '<i class="fa-solid fa-cloud-arrow-up"></i> Simpan Update';
         syncCancelState();
@@ -5667,6 +6211,7 @@
         return;
       if (source === "preview") {
         state.preview.spk = state.preview.spk.filter((row) => row.id !== key);
+        selectedSpkRows.delete(`preview:${key}`);
         persistPreview();
         renderSpkToday();
         return;
@@ -5679,6 +6224,7 @@
         state.spkEntries =
           response.spkEntries ||
           state.spkEntries.filter((row) => row.batchNo !== key);
+        selectedSpkRows.delete(`saved:${key}`);
         renderSpkToday();
         renderFillingSpkQueue();
         renderSpkReport();
@@ -5700,8 +6246,11 @@
         const response = await enqueueWrite(() =>
           apiPost("spk.batchCreate", {
             data: rows.map((item) => ({
+              batchNo: item.batchNo,
               produk: item.produk,
               botol: item.botol,
+              qty: Math.max(0, Number(item.qty) || 0),
+              imported: item.imported === true,
               updatedAt: item.updatedAt || "",
               updateCount: Math.max(
                 0,
@@ -5719,6 +6268,7 @@
             .concat(response.saved);
         }
         state.preview.spk = [];
+        selectedSpkRows.clear();
         persistPreview();
         renderFillingSpkQueue();
         toast(`${rows.length} SPK berhasil disimpan ke Spreadsheet.`);
@@ -8130,10 +8680,10 @@
       ? visibleRows
           .map(
             (item) =>
-              `<tr><td><span class="id-badge">${esc(item.batchNo)}</span></td><td>${esc(item.tanggal)}</td><td>${esc(item.produk)}</td><td>${esc(item.botol)}</td><td>${esc(item.createdBy || "—")}</td><td>${item.createdAt ? esc(fmtDateTime(item.createdAt)) : "—"}</td><td>${Math.max(0, Number(item.updateCount) || 0)}</td></tr>`,
+              `<tr><td><span class="id-badge">${esc(item.batchNo)}</span></td><td>${esc(item.tanggal)}</td><td>${esc(item.produk)}</td><td>${esc(item.botol)}</td><td>${Math.max(0, Number(item.qty) || 0).toLocaleString("id-ID")}</td><td>${esc(item.createdBy || "—")}</td><td>${item.createdAt ? esc(fmtDateTime(item.createdAt)) : "—"}</td><td>${Math.max(0, Number(item.updateCount) || 0)}</td></tr>`,
           )
           .join("")
-      : '<tr><td colspan="7" class="empty-row">Tidak ada data SPK pada periode ini.</td></tr>';
+      : '<tr><td colspan="8" class="empty-row">Tidak ada data SPK pada periode ini.</td></tr>';
     dashboardSetText(
       "lap-spk-summary",
       `${rows.length ? start + 1 : 0}–${Math.min(start + 20, rows.length)} dari ${rows.length} SPK ditampilkan`,
@@ -8189,7 +8739,7 @@
       const popup = window.open("", "_blank", "width=1100,height=800");
       if (!popup) return toast("Popup PDF diblokir browser.", true);
       popup.document.write(
-        `<!doctype html><html><head><title>Data SPK</title><style>@page{size:A4 landscape;margin:12mm}body{font-family:Arial,sans-serif;color:#17202a}h1{font-size:20px}p{color:#59636e}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bcc5ce;padding:6px;font-size:11px}th{background:#eaf0f5;text-align:left}</style></head><body><h1>Data SPK</h1><p>PT. ABSH FRAGRANCE CREATIONS · Dicetak ${esc(fmtDateTime(nowIso()))}</p><table><thead><tr><th>No Batch</th><th>Tanggal</th><th>Produk</th><th>Botol</th><th>Dibuat Oleh</th><th>Dibuat Pada</th><th>Update</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${esc(item.batchNo)}</td><td>${esc(item.tanggal)}</td><td>${esc(item.produk)}</td><td>${esc(item.botol)}</td><td>${esc(item.createdBy || "—")}</td><td>${item.createdAt ? esc(fmtDateTime(item.createdAt)) : "—"}</td><td>${Math.max(0, Number(item.updateCount) || 0)}</td></tr>`).join("")}</tbody></table></body></html>`,
+        `<!doctype html><html><head><title>Data SPK</title><style>@page{size:A4 landscape;margin:12mm}body{font-family:Arial,sans-serif;color:#17202a}h1{font-size:20px}p{color:#59636e}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bcc5ce;padding:6px;font-size:11px}th{background:#eaf0f5;text-align:left}</style></head><body><h1>Data SPK</h1><p>PT. ABSH FRAGRANCE CREATIONS · Dicetak ${esc(fmtDateTime(nowIso()))}</p><table><thead><tr><th>No Batch</th><th>Tanggal</th><th>Produk</th><th>Botol</th><th>Qty</th><th>Dibuat Oleh</th><th>Dibuat Pada</th><th>Update</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${esc(item.batchNo)}</td><td>${esc(item.tanggal)}</td><td>${esc(item.produk)}</td><td>${esc(item.botol)}</td><td>${Math.max(0, Number(item.qty) || 0).toLocaleString("id-ID")}</td><td>${esc(item.createdBy || "—")}</td><td>${item.createdAt ? esc(fmtDateTime(item.createdAt)) : "—"}</td><td>${Math.max(0, Number(item.updateCount) || 0)}</td></tr>`).join("")}</tbody></table></body></html>`,
       );
       popup.document.close();
       window.setTimeout(() => {

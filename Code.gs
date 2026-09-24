@@ -42,7 +42,7 @@ const APP = {
   SETTINGS_HEADERS: ['key', 'value', 'updatedAt', 'updatedBy'],
   // Audit SPK disimpan terpisah dan tidak pernah digabungkan ke updateCount
   // Pengerjaan yang menjadi sumber perhitungan KPI Karyawan.
-  SPK_HEADERS: ['No Batch', 'Tanggal', 'Nama Produk', 'Botol', 'Dibuat Oleh', 'Dibuat Pada', 'Di-update Pada', 'Jumlah Update'],
+  SPK_HEADERS: ['No Batch', 'Tanggal', 'Nama Produk', 'Botol', 'Qty', 'Dibuat Oleh', 'Dibuat Pada', 'Di-update Pada', 'Jumlah Update'],
   APD_HEADERS: [
     'Tanggal', 'Nama Operator',
     'Masker tidak sesuai', 'Lengan ditarik ke atas', 'Sepatu diinjak',
@@ -65,7 +65,7 @@ function setupSpreadsheet() {
   ensureSheet_(ss, APP.SHEETS.PRESS_ADJUSTMENTS, APP.PRESS_ADJUSTMENT_HEADERS);
   ensureSheet_(ss, APP.SHEETS.PRESS_REMAINDERS, APP.PRESS_REMAINDER_HEADERS);
   ensureApdSheet_(ss, true);
-  ensureSheet_(ss, APP.SHEETS.SPK, APP.SPK_HEADERS);
+  ensureSpkSheet_(ss, true);
   ensureSettingsSheet_(ss);
 
   if (master.getLastRow() < 2) {
@@ -75,6 +75,7 @@ function setupSpreadsheet() {
       ['Operator 3', 'Produk 3', 'Botol 100 ml']
     ]);
   }
+  ensureApdCriteriaMaster_(ss);
 
   if (users.getLastRow() < 2) {
     users.getRange(2, 1, 2, APP.USER_HEADERS.length).setValues([
@@ -124,7 +125,7 @@ function doGet(e) {
     if (action === 'apd.photo.get') {
       const session = requireSession_(param_(e, 'token'));
       requireLevel_(session.user, 'apd', 'read');
-      return json_({ ok: true, dataUrl: getApdPhotoData_(param_(e, 'id')) });
+      return json_({ ok: true, dataUrls: getApdPhotoData_(param_(e, 'id')) });
     }
 
     if (action === 'apd.photo.preview') {
@@ -268,6 +269,13 @@ function doPost(e) {
         return withWriteLock_(function () {
           deleteSpk_(session.user, param_(e, 'batchNo'));
           return json_({ ok: true, deletedBatchNo: param_(e, 'batchNo') });
+        });
+
+      case 'spk.batchDelete':
+        return withWriteLock_(function () {
+          const batchNos = parseJsonParam_(e, 'batchNos');
+          const deletedBatchNos = deleteSpkBatch_(session.user, batchNos);
+          return json_({ ok: true, deletedBatchNos: deletedBatchNos });
         });
 
       // Dipertahankan untuk kompatibilitas data/versi lama.
@@ -580,6 +588,36 @@ const APD_VARIABLES_ = [
   { key: 'memakaiAksesoris', label: 'Memakai aksesoris', weight: 20 },
   { key: 'kebersihanSepatu', label: 'Kebersihan sepatu', weight: 10 }
 ];
+const APD_MAX_POINT_ = 3;
+const APD_POINT_CRITERIA_ = {
+  maskerTidakSesuai: ['DILEPAS', 'DI DAGU', 'DI BAWAH HIDUNG', 'SESUAI STANDARD'],
+  lenganDitarik: ['DITARIK SAMPAI SIKU', 'DITARIK SEBAGIAN (DI ATAS PERGELANGAN)', 'DITARIK SEDIKIT', 'SESUAI STANDARD'],
+  sepatuDiinjak: ['DI INJAK SEMUA', 'BAGIAN BELAKANG SEPATU TERINJAK', 'SEDIKIT TERINJAK/TIDAK RAPI', 'SESUAI STANDARD'],
+  rambutKelihatan: ['PENUTUP KEPALA TIDAK DIPAKAI', 'RAMBUT TERLIHAT BANYAK', 'RAMBUT TERLIHAT SEDIKIT', 'SESUAI STANDARD'],
+  resletingTidakPenuh: ['TIDAK DIRESLETING SAMA SEKALI', 'RESLETING NAIK TURUN BERULANG', 'RESLETING SAMPAI DADA', 'SESUAI STANDARD'],
+  memakaiAksesoris: ['MEMAKAI AKSESORIS YANG DILARANG', '', '', 'TIDAK PAKAI SAMA SEKALI'],
+  kebersihanSepatu: ['KOTOR PARAH', '', 'SETENGAH KOTOR', 'BERSIH']
+};
+
+function ensureApdCriteriaMaster_(ss) {
+  const sh = ss.getSheetByName(APP.SHEETS.MASTER) ||
+    ensureSheet_(ss, APP.SHEETS.MASTER, ['Nama Operator', 'Nama Produk', 'Nama Botol']);
+  const firstColumn = 4;
+  const columnCount = 6;
+  if (sh.getMaxColumns() < firstColumn + columnCount - 1) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), firstColumn + columnCount - 1 - sh.getMaxColumns());
+  }
+  const rows = [['APD Key', 'Kriteria APD', 'Poin 0', 'Poin 1', 'Poin 2', 'Poin 3']].concat(
+    APD_VARIABLES_.map(function (variable) {
+      const points = APD_POINT_CRITERIA_[variable.key];
+      return [variable.key, variable.label].concat(points);
+    })
+  );
+  const range = sh.getRange(1, firstColumn, rows.length, columnCount);
+  const current = range.getDisplayValues();
+  if (JSON.stringify(current) !== JSON.stringify(rows)) range.setValues(rows);
+  sh.hideColumns(firstColumn, columnCount);
+}
 
 function apdPhotoFolder_() {
   const properties = PropertiesService.getScriptProperties();
@@ -622,13 +660,32 @@ function uploadApdPhoto_(user, dataUrl) {
   return file.getId();
 }
 
+function parseApdPhotoIds_(value) {
+  const text = String(value || '').trim();
+  if (!text) return [];
+  if (text.charAt(0) === '[') {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return parsed.map(String).filter(Boolean).slice(0, 3);
+    } catch (_) {}
+  }
+  return [text];
+}
+
+function encodeApdPhotoIds_(ids) {
+  const clean = (ids || []).map(String).filter(Boolean);
+  return clean.length ? JSON.stringify(clean.slice(0, 3)) : '';
+}
+
 function getApdPhotoData_(apdId) {
   const sh = ensureApdSheet_(spreadsheet_());
   const row = findApdRowById_(sh, apdId);
-  const id = String(sh.getRange(row, 17).getValue() || '');
-  if (!id) throw new Error('Data APD ini tidak memiliki foto bukti.');
-  const file = apdPhotoFile_(id);
-  return 'data:image/jpeg;base64,' + Utilities.base64Encode(file.getBlob().getBytes());
+  const ids = parseApdPhotoIds_(sh.getRange(row, 17).getValue());
+  if (!ids.length) throw new Error('Data APD ini tidak memiliki foto bukti.');
+  return ids.map(function (id) {
+    const file = apdPhotoFile_(id);
+    return 'data:image/jpeg;base64,' + Utilities.base64Encode(file.getBlob().getBytes());
+  });
 }
 
 function discardApdPhoto_(user, photoFileId) {
@@ -640,17 +697,18 @@ function discardApdPhoto_(user, photoFileId) {
   const last = sh.getLastRow();
   if (last >= 2) {
     const ids = sh.getRange(2, 17, last - 1, 1).getDisplayValues();
-    if (ids.some(function (row) { return String(row[0] || '') === file.getId(); })) {
+    if (ids.some(function (row) { return parseApdPhotoIds_(row[0]).indexOf(file.getId()) >= 0; })) {
       throw new Error('Foto bukti sudah terhubung dengan data APD.');
     }
   }
   file.setTrashed(true);
 }
 
-function normalizeApdPoint_(value, label, index) {
+function normalizeApdPoint_(value, variable, index) {
   const point = Number(value);
-  if (!isFinite(point) || Math.floor(point) !== point || point < 0 || point > 5) {
-    throw new Error('Data APD ke-' + (index + 1) + ': poin "' + label + '" harus bilangan bulat 0 sampai 5.');
+  const criteria = APD_POINT_CRITERIA_[variable.key] || [];
+  if (!isFinite(point) || Math.floor(point) !== point || point < 0 || point > APD_MAX_POINT_ || !criteria[point]) {
+    throw new Error('Data APD ke-' + (index + 1) + ': poin "' + variable.label + '" harus menggunakan nilai 0 sampai 3 yang tersedia.');
   }
   return point;
 }
@@ -677,23 +735,27 @@ function buildApdRecord_(raw, index, user, existingPhotoId) {
   let percentage = 0;
   let totalWeight = 0;
   APD_VARIABLES_.forEach(function (variable) {
-    const point = normalizeApdPoint_(scores[variable.key], variable.label, index);
+    const point = normalizeApdPoint_(scores[variable.key], variable, index);
     totalPoints += point;
-    percentage += point * (variable.weight / 5);
+    percentage += point * (variable.weight / APD_MAX_POINT_);
     totalWeight += variable.weight;
   });
   percentage = percentage / totalWeight * 100;
 
   const requestId = String(data.clientRequestId || '').trim();
   const validRequestId = /^[A-Za-z0-9-]{16,100}$/.test(requestId) ? requestId : '';
-  const photoFileId = String(data.photoFileId || '').trim();
-  if (photoFileId) {
+  const photoFileIds = Array.isArray(data.photoFileIds)
+    ? data.photoFileIds.map(String).filter(Boolean)
+    : parseApdPhotoIds_(data.photoFileId);
+  if (photoFileIds.length > 3) throw new Error('Maksimal 3 foto bukti APD.');
+  const existingPhotoIds = parseApdPhotoIds_(existingPhotoId);
+  photoFileIds.forEach(function (photoFileId) {
     const file = apdPhotoFile_(photoFileId);
-    if (photoFileId !== String(existingPhotoId || '') &&
+    if (existingPhotoIds.indexOf(photoFileId) < 0 &&
         file.getDescription() !== 'APD bukti; uploadedBy=' + user.username) {
       throw new Error('Data APD ke-' + (index + 1) + ': foto bukti bukan milik user ini.');
     }
-  }
+  });
 
   return {
     tanggal: tanggal,
@@ -710,7 +772,8 @@ function buildApdRecord_(raw, index, user, existingPhotoId) {
     percentage: Math.round(percentage * 100) / 100,
     totalPoints: totalPoints,
     alasan: alasan,
-    photoFileId: photoFileId,
+    photoFileIds: photoFileIds,
+    photoFileId: encodeApdPhotoIds_(photoFileIds),
     clientRequestId: validRequestId
   };
 }
@@ -746,6 +809,7 @@ function apdRowToObject_(row, rowNumber) {
     totalPoints: number_(values[9]),
     percentage: isFinite(percentage) ? percentage : 0,
     alasan: String(values[11] || ''),
+    photoFileIds: parseApdPhotoIds_(values[16]),
     photoFileId: String(values[16] || ''),
     createdBy: String(values[13] || ''),
     createdAt: isoCell_(values[14]),
@@ -951,12 +1015,14 @@ function updateApdEntry_(user, id, rawData) {
     String(oldMeta[1] || user.username),
     oldMeta[2] || now,
     now,
-    record.photoFileId || String(sh.getRange(rowNumber, 17).getValue() || '')
+    record.photoFileId
   ]]);
 
-  if (existingPhotoId && record.photoFileId && existingPhotoId !== record.photoFileId) {
-    try { apdPhotoFile_(existingPhotoId).setTrashed(true); } catch (_) {}
-  }
+  parseApdPhotoIds_(existingPhotoId).forEach(function (oldId) {
+    if (record.photoFileIds.indexOf(oldId) < 0) {
+      try { apdPhotoFile_(oldId).setTrashed(true); } catch (_) {}
+    }
+  });
 
   const updatedRow = sh.getRange(rowNumber, 1, 1, APP.APD_HEADERS.length).getValues()[0];
   return {
@@ -969,12 +1035,12 @@ function deleteApdEntry_(user, id) {
   const rowNumber = findApdRowById_(sh, id);
   const createdBy = String(sh.getRange(rowNumber, 14).getValue() || '');
   requireManage_(user, 'apd', createdBy === user.username ? 'own' : 'others');
-  const photoFileId = String(sh.getRange(rowNumber, 17).getValue() || '');
+  const photoFileIds = parseApdPhotoIds_(sh.getRange(rowNumber, 17).getValue());
   const tanggal = formatDateCell_(sh.getRange(rowNumber, 1).getValue());
   sh.deleteRow(rowNumber);
-  if (photoFileId) {
+  photoFileIds.forEach(function (photoFileId) {
     try { apdPhotoFile_(photoFileId).setTrashed(true); } catch (_) {}
-  }
+  });
   return {
     deletedId: String(id)
   };
@@ -1021,6 +1087,17 @@ function createEntriesBatch_(user, dataList) {
   const savedIds = [];
   const duplicateIds = [];
   const seenIds = {};
+  const spkByBatchNo = {};
+  const fillingQtyByBatchNo = {};
+  spkEntries.forEach(function (item) { spkByBatchNo[item.batchNo] = item; });
+  currentEntries.forEach(function (entry) {
+    if (entry.tab !== 'filling') return;
+    const batchNo = String(entry.reportId || '').replace(/^(?:FILL|PRESS)\s*-\s*/i, '').trim();
+    fillingQtyByBatchNo[batchNo] = Math.max(
+      number_(fillingQtyByBatchNo[batchNo]),
+      number_(entry.totalQty)
+    );
+  });
 
   dataList.forEach(function (raw, index) {
     const data = raw && typeof raw === 'object'
@@ -1078,6 +1155,20 @@ function createEntriesBatch_(user, dataList) {
       savedIds.push(id);
       duplicateIds.push(id);
       return;
+    }
+
+    if (data.line === 'filling') {
+      const spk = spkByBatchNo[data.batchNo];
+      const requestedQty = qtyKardus * qtyBotol;
+      const usedQty = number_(fillingQtyByBatchNo[data.batchNo]);
+      if (spk && number_(spk.qty) > 0 && requestedQty > number_(spk.qty)) {
+        throw new Error(
+          'Data ke-' + (index + 1) + ': Qty Filling ' + requestedQty +
+          ' pcs melebihi kapasitas SPK ' + data.batchNo +
+          ' pada baris ini, yaitu ' + number_(spk.qty) + ' pcs.'
+        );
+      }
+      fillingQtyByBatchNo[data.batchNo] = Math.max(usedQty, requestedQty);
     }
 
     const createdAt = new Date(now.getTime() + index);
@@ -1223,7 +1314,7 @@ function createEntry_(user, data) {
 
 function updateEntry_(user, id, data) {
   if (!id) throw new Error('ID data tidak ditemukan.');
-  validateEntry_(data);
+  validateEntry_(data, id);
 
   const found = findEntryRow_(id);
   if (!found) throw new Error('Data yang akan di-update tidak ditemukan.');
@@ -1398,7 +1489,7 @@ function rowToEntry_(row) {
   };
 }
 
-function validateEntry_(data) {
+function validateEntry_(data, excludeEntryId) {
   if (!data) throw new Error('Data pengerjaan kosong.');
   if (data.line !== 'filling' && data.line !== 'press') throw new Error('Line pengerjaan tidak valid.');
   if (!data.operator || !data.produk || !data.botol) throw new Error('Operator, Produk, dan Botol wajib diisi.');
@@ -1425,11 +1516,27 @@ function validateEntry_(data) {
   if (data.line === 'press' && qtyKardusRaw * qtyBotolRaw <= 0) {
     throw new Error('Total Qty Press harus lebih dari 0 botol.');
   }
+  if (data.line === 'filling') {
+    assertSpkFillingQty_(data, excludeEntryId);
+  }
 
   // Jenis botol pecah selalu mengikuti botol yang sedang dikerjakan.
   data.botolPecahJenis = data.botol;
   // Qty Kardus Basah hanya digunakan pada Filling.
   data.qtyKardusBasah = data.line === 'filling' ? qtyKardusBasahRaw : 0;
+}
+
+function assertSpkFillingQty_(data, excludeEntryId) {
+  const batchNo = String(data.batchNo || '').trim();
+  const spk = getSpkEntries_().find(function (item) { return item.batchNo === batchNo; });
+  if (!spk || number_(spk.qty) <= 0) return; // kompatibilitas SPK lama tanpa Qty
+  const requested = Number(data.qtyKardus) * Number(data.qtyBotolPerKardus);
+  if (requested > number_(spk.qty)) {
+    throw new Error(
+      'Qty Filling ' + requested + ' pcs melebihi kapasitas SPK ' +
+      batchNo + ' pada baris ini, yaitu ' + number_(spk.qty) + ' pcs.'
+    );
+  }
 }
 
 function canonicalMasterValue_(list, value, label) {
@@ -2066,8 +2173,39 @@ function closePressRemainder_(user, data) {
   return adjustment;
 }
 
+let SPK_READY_SHEET_ = null;
+
+function ensureSpkSheet_(ss, forceSetup) {
+  if (SPK_READY_SHEET_ && !forceSetup) return SPK_READY_SHEET_;
+  let sh = ss.getSheetByName(APP.SHEETS.SPK);
+  if (!sh) sh = ss.insertSheet(APP.SHEETS.SPK);
+
+  const oldHeaders = ['No Batch', 'Tanggal', 'Nama Produk', 'Botol', 'Dibuat Oleh', 'Dibuat Pada', 'Di-update Pada', 'Jumlah Update'];
+  const readWidth = Math.max(APP.SPK_HEADERS.length, sh.getLastColumn() || 1);
+  if (sh.getMaxColumns() < readWidth) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), readWidth - sh.getMaxColumns());
+  }
+  const headers = sh.getRange(1, 1, 1, readWidth).getDisplayValues()[0]
+    .map(function (value) { return String(value || '').trim(); });
+  const isOldSchema = oldHeaders.every(function (header, index) {
+    return headers[index] === header;
+  });
+
+  // Migrasi aman: sisipkan Qty setelah Botol agar data audit lama bergeser,
+  // bukan tertimpa oleh header baru.
+  if (isOldSchema) sh.insertColumnAfter(4);
+  if (sh.getMaxColumns() < APP.SPK_HEADERS.length) {
+    sh.insertColumnsAfter(sh.getMaxColumns(), APP.SPK_HEADERS.length - sh.getMaxColumns());
+  }
+  sh.getRange(1, 1, 1, APP.SPK_HEADERS.length).setValues([APP.SPK_HEADERS]);
+  styleHeader_(sh, APP.SPK_HEADERS.length);
+  sh.setFrozenRows(1);
+  SPK_READY_SHEET_ = sh;
+  return sh;
+}
+
 function getSpkEntries_() {
-  const sh = ensureSheet_(spreadsheet_(), APP.SHEETS.SPK, APP.SPK_HEADERS);
+  const sh = ensureSpkSheet_(spreadsheet_());
   const lastRow = sh.getLastRow();
   if (lastRow < 2) return [];
   return sh.getRange(2, 1, lastRow - 1, APP.SPK_HEADERS.length).getValues()
@@ -2078,10 +2216,11 @@ function getSpkEntries_() {
         tanggal: formatDateCell_(row[1]),
         produk: String(row[2] || '').trim(),
         botol: String(row[3] || '').trim(),
-        createdBy: String(row[4] || '').trim(),
-        createdAt: isoCell_(row[5]),
-        updatedAt: isoCell_(row[6]),
-        updateCount: Math.max(0, Math.floor(number_(row[7])))
+        qty: Math.max(0, number_(row[4])),
+        createdBy: String(row[5] || '').trim(),
+        createdAt: isoCell_(row[6]),
+        updatedAt: isoCell_(row[7]),
+        updateCount: Math.max(0, Math.floor(number_(row[8])))
       };
     });
 }
@@ -2091,6 +2230,8 @@ function createSpk_(user, data) {
   const master = getMaster_();
   const produk = canonicalMasterValue_(master.produk, data.produk, 'Produk');
   const botol = canonicalMasterValue_(master.botol, data.botol, 'Botol');
+  const qty = Math.max(0, number_(data.qty));
+  if (qty <= 0) throw new Error('Qty SPK harus lebih dari 0 pcs.');
   const now = new Date();
   const tz = Session.getScriptTimeZone() || 'Asia/Jakarta';
   const tanggal = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
@@ -2107,15 +2248,16 @@ function createSpk_(user, data) {
   const previewUpdatedAt = normalizeIsoTimestamp_(data.updatedAt) ||
     (previewUpdateCount > 0 ? now.toISOString() : '');
   const row = [
-    batchNo, tanggal, produk, botol, user.username, now.toISOString(),
+    batchNo, tanggal, produk, botol, qty, user.username, now.toISOString(),
     previewUpdatedAt, previewUpdateCount
   ];
-  ensureSheet_(spreadsheet_(), APP.SHEETS.SPK, APP.SPK_HEADERS).appendRow(row);
+  ensureSpkSheet_(spreadsheet_()).appendRow(row);
   return {
     batchNo: batchNo,
     tanggal: tanggal,
     produk: produk,
     botol: botol,
+    qty: qty,
     createdBy: user.username,
     createdAt: now.toISOString(),
     updatedAt: previewUpdatedAt,
@@ -2128,8 +2270,38 @@ function createSpkEntriesBatch_(user, dataList) {
   if (!Array.isArray(dataList) || !dataList.length) throw new Error('Preview SPK kosong.');
   if (dataList.length > 99) throw new Error('Maksimal 99 SPK per sekali simpan.');
 
+  // Produk hasil import SPK boleh langsung menjadi Master Produk. Hanya baris
+  // yang ditandai imported oleh alur import yang memperoleh perilaku ini;
+  // input manual tetap wajib memilih produk yang sudah terdaftar.
+  const importedProducts = unique_(dataList
+    .filter(function (data) { return data && data.imported === true; })
+    .map(function (data) { return String(data.produk || '').trim(); })
+    .filter(String));
+  let currentMaster = getMaster_();
+  importedProducts.forEach(function (produk) {
+    const exists = currentMaster.produk.some(function (value) {
+      return String(value).toLowerCase() === produk.toLowerCase();
+    });
+    if (!exists) {
+      addMaster_('produk', produk);
+      currentMaster.produk.push(produk);
+    }
+  });
+  const importedBottles = unique_(dataList
+    .filter(function (data) { return data && data.imported === true; })
+    .map(function (data) { return String(data.botol || '').trim(); })
+    .filter(String));
+  importedBottles.forEach(function (botol) {
+    const exists = currentMaster.botol.some(function (value) {
+      return String(value).toLowerCase() === botol.toLowerCase();
+    });
+    if (!exists) {
+      addMaster_('botol', botol);
+      currentMaster.botol.push(botol);
+    }
+  });
   const master = getMaster_();
-  const sh = ensureSheet_(spreadsheet_(), APP.SHEETS.SPK, APP.SPK_HEADERS);
+  const sh = ensureSpkSheet_(spreadsheet_());
   const entries = getSpkEntries_();
   const now = new Date();
   const nowIso = now.toISOString();
@@ -2145,21 +2317,28 @@ function createSpkEntriesBatch_(user, dataList) {
     const match = /^(\d{2})-\d{8}$/.exec(item.batchNo);
     return Math.max(max, match ? Number(match[1]) : 0);
   }, 0) + 1;
+  const usedBatchNos = {};
+  entries.forEach(function (item) { usedBatchNos[String(item.batchNo)] = true; });
   const saved = [];
   const rows = dataList.map(function (data) {
     data = data && typeof data === 'object' ? data : {};
     const produk = canonicalMasterValue_(master.produk, data.produk, 'Produk');
     const botol = canonicalMasterValue_(master.botol, data.botol, 'Botol');
-    const batchNo = String(nextNumber++).padStart(2, '0') + '-' + dateStamp;
+    const qty = Math.max(0, number_(data.qty));
+    if (qty <= 0) throw new Error('Qty SPK harus lebih dari 0 pcs.');
+    const suppliedBatchNo = String(data.batchNo || '').trim();
+    const batchNo = suppliedBatchNo || (String(nextNumber++).padStart(2, '0') + '-' + dateStamp);
+    if (usedBatchNos[batchNo]) throw new Error('No Batch SPK "' + batchNo + '" sudah tersedia.');
+    usedBatchNos[batchNo] = true;
     const updateCount = Math.max(0, Math.floor(number_(data.updateCount)));
     const updatedAt = normalizeIsoTimestamp_(data.updatedAt) || (updateCount > 0 ? nowIso : '');
     const item = {
-      batchNo: batchNo, tanggal: tanggal, produk: produk, botol: botol,
+      batchNo: batchNo, tanggal: tanggal, produk: produk, botol: botol, qty: qty,
       createdBy: user.username, createdAt: nowIso,
       updatedAt: updatedAt, updateCount: updateCount
     };
     saved.push(item);
-    return [item.batchNo, item.tanggal, item.produk, item.botol, item.createdBy,
+    return [item.batchNo, item.tanggal, item.produk, item.botol, item.qty, item.createdBy,
       item.createdAt, item.updatedAt, item.updateCount];
   });
   sh.getRange(Math.max(2, sh.getLastRow() + 1), 1, rows.length, APP.SPK_HEADERS.length).setValues(rows);
@@ -2169,7 +2348,7 @@ function createSpkEntriesBatch_(user, dataList) {
 function findSpkRow_(batchNo) {
   const target = String(batchNo || '').trim();
   if (!target) return null;
-  const sh = ensureSheet_(spreadsheet_(), APP.SHEETS.SPK, APP.SPK_HEADERS);
+  const sh = ensureSpkSheet_(spreadsheet_());
   const lastRow = sh.getLastRow();
   if (lastRow < 2) return null;
   const values = sh.getRange(2, 1, lastRow - 1, APP.SPK_HEADERS.length).getValues();
@@ -2190,25 +2369,28 @@ function assertSpkUnused_(batchNo) {
 function updateSpk_(user, batchNo, data) {
   const found = findSpkRow_(batchNo);
   if (!found) throw new Error('SPK yang akan di-update tidak ditemukan.');
-  const createdBy = String(found.values[4] || '').trim();
+  const createdBy = String(found.values[5] || '').trim();
   requireManage_(user, 'spk', createdBy === user.username ? 'own' : 'others');
   assertSpkUnused_(batchNo);
   data = data && typeof data === 'object' ? data : {};
   const master = getMaster_();
   const produk = canonicalMasterValue_(master.produk, data.produk, 'Produk');
   const botol = canonicalMasterValue_(master.botol, data.botol, 'Botol');
+  const qty = Math.max(0, number_(data.qty));
+  if (qty <= 0) throw new Error('Qty SPK harus lebih dari 0 pcs.');
   const updatedAt = new Date().toISOString();
-  const updateCount = Math.max(0, Math.floor(number_(found.values[7]))) + 1;
-  found.sheet.getRange(found.row, 3, 1, 6).setValues([[
-    produk, botol, found.values[4], found.values[5], updatedAt, updateCount
+  const updateCount = Math.max(0, Math.floor(number_(found.values[8]))) + 1;
+  found.sheet.getRange(found.row, 3, 1, 7).setValues([[
+    produk, botol, qty, found.values[5], found.values[6], updatedAt, updateCount
   ]]);
   return {
     batchNo: String(found.values[0] || '').trim(),
     tanggal: formatDateCell_(found.values[1]),
     produk: produk,
     botol: botol,
+    qty: qty,
     createdBy: createdBy,
-    createdAt: isoCell_(found.values[5]),
+    createdAt: isoCell_(found.values[6]),
     updatedAt: updatedAt,
     updateCount: updateCount
   };
@@ -2217,10 +2399,32 @@ function updateSpk_(user, batchNo, data) {
 function deleteSpk_(user, batchNo) {
   const found = findSpkRow_(batchNo);
   if (!found) throw new Error('SPK yang akan dihapus tidak ditemukan.');
-  const createdBy = String(found.values[4] || '').trim();
+  const createdBy = String(found.values[5] || '').trim();
   requireManage_(user, 'spk', createdBy === user.username ? 'own' : 'others');
   assertSpkUnused_(batchNo);
   found.sheet.deleteRow(found.row);
+}
+
+function deleteSpkBatch_(user, batchNos) {
+  if (!Array.isArray(batchNos) || !batchNos.length) {
+    throw new Error('Tidak ada SPK yang dipilih.');
+  }
+  if (batchNos.length > 100) throw new Error('Maksimal 100 SPK per penghapusan.');
+  const uniqueBatchNos = unique_(batchNos.map(function (value) {
+    return String(value || '').trim();
+  }).filter(String));
+  const foundRows = uniqueBatchNos.map(function (batchNo) {
+    const found = findSpkRow_(batchNo);
+    if (!found) throw new Error('SPK ' + batchNo + ' tidak ditemukan.');
+    const createdBy = String(found.values[5] || '').trim();
+    requireManage_(user, 'spk', createdBy === user.username ? 'own' : 'others');
+    assertSpkUnused_(batchNo);
+    return { batchNo: batchNo, sheet: found.sheet, row: found.row };
+  });
+  foundRows
+    .sort(function (a, b) { return b.row - a.row; })
+    .forEach(function (item) { item.sheet.deleteRow(item.row); });
+  return uniqueBatchNos;
 }
 
 function validateSpkBatchForEntry_(data, spkEntries) {
@@ -2232,22 +2436,6 @@ function validateSpkBatchForEntry_(data, spkEntries) {
   if (String(spk.produk).toLowerCase() !== String(data.produk || '').trim().toLowerCase() ||
       String(spk.botol).toLowerCase() !== String(data.botol || '').trim().toLowerCase()) {
     throw new Error('Produk atau Botol tidak sesuai dengan No Batch SPK ' + batchNo + '.');
-  }
-  if (data.line === 'filling' && spk.tanggal !== String(data.tanggal || '')) {
-    const tz = Session.getScriptTimeZone() || 'Asia/Jakarta';
-    const now = new Date();
-    const today = Utilities.formatDate(now, tz, 'yyyy-MM-dd');
-    const yesterdayDate = new Date(now.getTime());
-    yesterdayDate.setDate(yesterdayDate.getDate() - 1);
-    const yesterday = Utilities.formatDate(yesterdayDate, tz, 'yyyy-MM-dd');
-    const currentHour = Number(Utilities.formatDate(now, tz, 'H'));
-    const allowedFromPreviousNight =
-      String(data.tanggal || '') === today &&
-      spk.tanggal === yesterday &&
-      currentHour < 19;
-    if (!allowedFromPreviousNight) {
-      throw new Error('No Batch SPK harus berasal dari tanggal Filling yang sama, kecuali SPK kemarin yang masih berlaku sampai pukul 19.00 hari ini.');
-    }
   }
   return spk.batchNo;
 }
@@ -2457,6 +2645,7 @@ function setKpiOutputTargets_(user, fillingValue, pressValue) {
 const MASTER_CACHE_KEY_ = 'ppr_master_cache_v1';
 
 function getMaster_() {
+  ensureApdCriteriaMaster_(spreadsheet_());
   const cache = CacheService.getScriptCache();
   const cached = cache.get(MASTER_CACHE_KEY_);
   if (cached) {
