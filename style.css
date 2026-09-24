@@ -5805,3 +5805,166 @@ button {
 #lap-kpi-type {
   cursor: pointer;
 }
+
+/* ===========================================================
+   APD RESPONSIVE — TABLET & PHONE (PORTRAIT / LANDSCAPE)
+   =========================================================== */
+@media (max-width: 1024px) {
+  #view-apd,
+  #view-apd .panel,
+  #view-apd .apd-input-layout,
+  #view-apd .apd-indicators,
+  #view-apd .apd-indicator-grid,
+  #view-apd .apd-photo-field {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  #view-apd .apd-input-layout.apd-unified-form {
+    margin-inline: 18px;
+  }
+
+  #view-apd .apd-entry-scroll,
+  #view-apd .apd-saved-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  #view-apd .apd-photo-preview-box {
+    grid-template-columns: repeat(3, minmax(56px, 1fr));
+  }
+
+  .apd-photo-dialog {
+    width: min(92vw, 760px);
+    max-height: 92dvh;
+    overflow: auto;
+  }
+
+  .apd-photo-gallery img {
+    width: auto;
+    max-width: 100%;
+    max-height: 78dvh;
+    margin-inline: auto;
+  }
+}
+
+@media (max-width: 900px) {
+  #view-apd .apd-indicator-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #view-apd .apd-indicator-grid .apd-reason-cell-input,
+  #view-apd .apd-indicator-grid .apd-photo-field {
+    grid-column: 1 / -1;
+  }
+
+  #view-apd .apd-input-layout .apd-photo-field {
+    grid-template-columns: minmax(130px, 0.7fr) minmax(210px, 1.3fr);
+    grid-template-rows: auto auto auto;
+    min-height: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  #view-apd .apd-form-heading,
+  #view-apd .apd-entry-scroll,
+  #view-apd .apd-unified-footer,
+  #view-apd .apd-saved-scroll {
+    padding-inline: 12px;
+  }
+
+  #view-apd .apd-input-layout.apd-unified-form {
+    margin: 0 10px 16px;
+    padding: 12px;
+    gap: 14px;
+  }
+
+  #view-apd .apd-input-top,
+  #view-apd .apd-indicator-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  #view-apd .apd-result-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #view-apd .apd-input-layout .apd-score-cell {
+    grid-template-columns: minmax(0, 1fr) 82px;
+    padding: 8px 9px 8px 11px;
+  }
+
+  #view-apd .apd-input-layout .apd-photo-field {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto auto;
+    min-height: 0;
+  }
+
+  #view-apd .apd-photo-label,
+  #view-apd .apd-photo-picker,
+  #view-apd .apd-photo-preview-box,
+  #view-apd .apd-photo-field #apdPhotoInfo {
+    grid-column: 1;
+  }
+
+  #view-apd .apd-photo-label { grid-row: 1; }
+  #view-apd .apd-photo-picker { grid-row: 2; }
+  #view-apd .apd-photo-preview-box { grid-row: 3; }
+  #view-apd .apd-photo-field #apdPhotoInfo { grid-row: 4; }
+
+  #view-apd .apd-photo-picker > .btn {
+    height: auto;
+    min-height: 44px;
+  }
+
+  #view-apd .apd-inline-actions,
+  #view-apd .apd-preview-footer-actions {
+    width: 100%;
+  }
+
+  #view-apd .apd-inline-actions .btn {
+    flex: 1 1 130px;
+  }
+}
+
+@media (max-width: 380px) {
+  #view-apd .apd-result-cards {
+    grid-template-columns: 1fr;
+  }
+
+  #view-apd .apd-photo-preview-box {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (orientation: landscape) and (max-height: 600px) and (max-width: 1024px) {
+  .app-shell {
+    padding-top: 8px;
+  }
+
+  #view-apd .apd-form-heading {
+    padding-block: 12px;
+  }
+
+  #view-apd .apd-input-layout.apd-unified-form {
+    margin-bottom: 14px;
+    padding-block: 12px;
+  }
+
+  #view-apd .apd-indicator-grid {
+    gap: 9px 12px;
+  }
+
+  #view-apd .apd-input-layout .apd-score-cell {
+    min-height: 52px;
+  }
+
+  .permission-modal,
+  .spk-modal,
+  .apd-photo-overlay {
+    align-items: flex-start;
+    overflow-y: auto;
+  }
+}
