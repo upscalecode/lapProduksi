@@ -44,7 +44,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbz44O8dq5iUoPZ95LnkHwxy3LystpcVC9l85o5xCkAei8R4x6tb2PZvxEJw0JJiSrsVCA/exec",
+      "https://script.google.com/macros/s/AKfycbyKhFPPpLQFNc-ZvjVQgqWQVhYpjTRZlu_NKk-4Ekw9mc8FWv1F3Teh0iWzctNXs2fk1Q/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -6578,7 +6578,7 @@
     if (line === "all" || line === "press") {
       columns.push({
         key: "_kpiBroken",
-        label: "KPI Botol Rusak",
+        label: "KPI Botol Pecah",
         tone: "reject",
       });
     }
@@ -6850,11 +6850,20 @@
     }
   }
 
-  // KPI Hasil pada Laporan Hasil Pengerjaan:
-  // - Press mempertahankan logic lama berbasis target harian (target bulanan / 20 hari kerja).
-  // - Filling HARUS sama dengan indikator OUTPUT pada Laporan KPI Filling:
-  //   (Aktual Filling / Target Output Filling Bulanan) x Bobot Output 40.
-  //   Contoh 5.616 / 150.000 x 40 = 1,4976 -> 1,50%.
+  // Target harian KPI Hasil untuk setiap varian/baris pengerjaan produksi.
+  const KPI_VARIANT_DAILY_TARGETS = Object.freeze({
+    filling: 7500,
+    press: 3500,
+  });
+
+  function kpiVariantDefectPercent(defectQty, productionQty) {
+    const defect = Math.max(0, Number(defectQty) || 0);
+    const production = Math.max(0, Number(productionQty) || 0);
+    return production > 0 ? (defect / production) * 100 : null;
+  }
+
+  // Perhitungan laporan KPI operator bulanan tetap menggunakan target yang
+  // dapat diatur dari menu Setting.
   const KPI_WORKING_DAYS_PER_MONTH = 20;
 
   function kpiDailyOutputTarget(line) {
@@ -7679,8 +7688,7 @@
     const apdScore =
       apdActual === null
         ? 0
-        : (apdActual / KPI_PRESS_DEFAULTS.apdTargetPercent) *
-          KPI_PRESS_DEFAULTS.weights.apd;
+        : (apdActual / 100) * KPI_PRESS_DEFAULTS.weights.apd;
 
     const attendanceScore =
       (attendanceActual / KPI_PRESS_DEFAULTS.attendanceTargetPercent) *
@@ -7762,23 +7770,21 @@
     };
   }
 
-  function kpiFillingSpillPercent(qtyWetCartons, qtyWorkedCartons) {
+  function kpiFillingSpillPercent(
+    qtyWetCartons,
+    qtyWorkedCartons,
+    wetCartonLimit = KPI_FILLING_DEFAULTS.wetCartonDailyLimit,
+  ) {
     const wet = Math.max(0, Number(qtyWetCartons) || 0);
     const worked = Math.max(0, Number(qtyWorkedCartons) || 0);
+    const limit = Math.max(0, Number(wetCartonLimit) || 0);
 
     if (wet <= 0) return 0;
-    if (wet <= KPI_FILLING_DEFAULTS.wetCartonDailyLimit) return 1;
+    if (wet <= limit) return 1;
 
-    // Logic KPI Filling:
-    // 0 kardus basah = 0%
-    // 1–5 kardus basah = 1%
-    // >5 = 1% + ((Qty Kardus Basah - 5) / Qty Pengerjaan Dus × 30%)
+    // Batas 5 kardus basah diterapkan pada total pengerjaan satu hari.
     // Denominator minimum 1 hanya sebagai pengaman bila ada data lama yang Qty Pengerjaan-nya 0.
-    return (
-      1 +
-      ((wet - KPI_FILLING_DEFAULTS.wetCartonDailyLimit) / Math.max(1, worked)) *
-        30
-    );
+    return 1 + ((wet - limit) / Math.max(1, worked)) * 30;
   }
 
   function buildFillingKpiReport(
@@ -7808,22 +7814,6 @@
     );
     if (!fillingEntries.length) return null;
 
-    const fillingByDate = new Map();
-    fillingEntries.forEach((entry) => {
-      const dateKey = String(entry.tanggal || "");
-      if (!fillingByDate.has(dateKey)) {
-        fillingByDate.set(dateKey, {
-          total: 0,
-          workedCartons: 0,
-          wetCartons: 0,
-        });
-      }
-      const day = fillingByDate.get(dateKey);
-      day.total += Number(entry.totalQty) || 0;
-      day.workedCartons += Number(entry.qtyKardus) || 0;
-      day.wetCartons += Number(entry.qtyKardusBasah) || 0;
-    });
-
     const outputActual = fillingEntries.reduce(
       (sum, entry) => sum + (Number(entry.totalQty) || 0),
       0,
@@ -7837,11 +7827,26 @@
       0,
     );
 
-    // Persentase tumpahan dihitung per hari agar target "maksimal 5 dus basah per hari"
-    // tetap bermakna, lalu dirata-ratakan untuk KPI bulanan.
-    const spillDailyValues = Array.from(fillingByDate.values()).map((day) =>
-      kpiFillingSpillPercent(day.wetCartons, day.workedCartons),
-    );
+    const fillingByDate = new Map();
+    fillingEntries.forEach((entry) => {
+      const dateKey = kpiDateKey(entry.tanggal);
+      if (!fillingByDate.has(dateKey)) {
+        fillingByDate.set(dateKey, { workedCartons: 0, wetCartons: 0 });
+      }
+      const day = fillingByDate.get(dateKey);
+      day.workedCartons += Number(entry.qtyKardus) || 0;
+      day.wetCartons += Number(entry.qtyKardusBasah) || 0;
+    });
+
+    // Seluruh pengerjaan pada tanggal yang sama digabung lebih dahulu. Hari aktif
+    // ditentukan dari Qty Pengerjaan Kardus, bukan dari nilai KPI. Karena itu,
+    // hari dengan pengerjaan dan 0 kardus basah tetap masuk sebagai nilai 0%,
+    // sedangkan tanggal tanpa Qty Pengerjaan tidak ikut dihitung.
+    const spillDailyValues = Array.from(fillingByDate.values())
+      .filter((day) => day.workedCartons > 0)
+      .map((day) =>
+        kpiFillingSpillPercent(day.wetCartons, day.workedCartons),
+      );
     const spillActual = averageKpiValues(spillDailyValues);
 
     const apdActual = buildKpiApdActual(operatorKey, period);
@@ -7867,8 +7872,7 @@
     const apdScore =
       apdActual === null
         ? 0
-        : (apdActual / KPI_FILLING_DEFAULTS.apdTargetPercent) *
-          KPI_FILLING_DEFAULTS.weights.apd;
+        : (apdActual / 100) * KPI_FILLING_DEFAULTS.weights.apd;
 
     const attendanceScore =
       (attendanceActual / KPI_FILLING_DEFAULTS.attendanceTargetPercent) *
@@ -7944,8 +7948,12 @@
       attendanceActual,
       productionDays: productionDates.size,
       presentDays: presentDates.size,
-      lineDays: fillingByDate.size,
-      fillingDays: fillingByDate.size,
+      lineDays: new Set(
+        fillingEntries.map((entry) => kpiDateKey(entry.tanggal)),
+      ).size,
+      fillingDays: new Set(
+        fillingEntries.map((entry) => kpiDateKey(entry.tanggal)),
+      ).size,
       rows,
       totalAchievement,
     };
@@ -8235,11 +8243,10 @@
               <tbody>${report.rows.map(kpiPressRowHtml).join("")}</tbody>
               <tfoot>
                 <tr class="kpi-press-total-row">
-                  <td colspan="3"><strong>TOTAL</strong></td>
-                  <td><strong>100</strong></td>
-                  <td colspan="2"><strong>CAPAIAN</strong></td>
-                  <td></td>
-                  <td><strong>${kpiPressScoreText(report.totalAchievement)}</strong></td>
+                  <td colspan="3" class="kpi-total-label"><strong>TOTAL BOBOT</strong></td>
+                  <td class="kpi-center"><strong>100</strong></td>
+                  <td colspan="3" class="kpi-total-label"><strong>TOTAL CAPAIAN</strong></td>
+                  <td class="kpi-center"><strong>${kpiPressScoreText(report.totalAchievement)}</strong></td>
                 </tr>
               </tfoot>
             </table>
@@ -8474,7 +8481,7 @@
           <table>
             <thead><tr><th>No.</th><th>Bidang</th><th>Indikator</th><th>Bobot</th><th>Target</th><th>Target (%)</th><th>Aktual</th><th>Capaian (%)</th></tr></thead>
             <tbody>${bodyRows}</tbody>
-            <tfoot><tr><td colspan="3">TOTAL</td><td class="center">100</td><td colspan="2">CAPAIAN</td><td></td><td class="center">${esc(kpiPressScoreText(report.totalAchievement))}</td></tr></tfoot>
+            <tfoot><tr><td colspan="3" class="total-label">TOTAL BOBOT</td><td class="center">100</td><td colspan="3" class="total-label">TOTAL CAPAIAN</td><td class="center">${esc(kpiPressScoreText(report.totalAchievement))}</td></tr></tfoot>
           </table>
           <div class="compact">
             Output ${esc(kpiPressQtyText(report.outputActual))} · ${qualitySummary} ·
@@ -8498,7 +8505,7 @@
         <p>Kerusakan botol dihitung dari rata-rata persentase kerusakan harian pada data Press. Target &lt; 1%.</p>`
         : `
         <p><strong>Keterangan:</strong> Target output KPI Filling diatur melalui menu Setting (${esc(kpiPressQtyText(reportSet.outputTarget))} botol/bulan).</p>
-        <p>Tumpahan per hari: 0 kardus basah = 0%; 1–5 = 1%; di atas 5 = 1% + ((Qty Kardus Basah − 5) ÷ Qty Pengerjaan Dus × 30%). Nilai KPI bulanan memakai rata-rata persentase harian.</p>`;
+        <p>Seluruh pengerjaan Filling karyawan pada tanggal yang sama digabung: 0 kardus basah = 0%; total 1–5 = 1%; di atas 5 = 1% + ((Total Kardus Basah Harian − 5) ÷ Total Qty Pengerjaan Dus Harian × 30%). Nilai aktual periode adalah rata-rata persentase harian.</p>`;
 
     return `<!DOCTYPE html>
 <html lang="id">
@@ -8527,6 +8534,7 @@
     th { background:#dbe5f1; text-transform:uppercase; font-size:7.5px; text-align:left; }
     .center { text-align:center; white-space:nowrap; }
     tfoot td { background:#fff200; font-weight:700; }
+    tfoot .total-label { text-align:right; padding-right:10px; }
     .compact { margin-top:5px; color:#4b5563; font-size:8px; line-height:1.4; }
     .notes { margin-top:12px; border-top:1px solid #d1d5db; padding-top:7px; font-size:8px; line-height:1.45; color:#374151; }
     .notes p { margin:2px 0; }
@@ -9018,12 +9026,13 @@
       // mengulang KPI agregat operator/periode ke setiap baris. Dengan demikian
       // setiap pengerjaan menunjukkan kontribusinya sendiri terhadap indikator KPI.
       //
-      // KPI Hasil = Qty baris / target bulanan line × bobot OUTPUT (40).
-      // Jika seluruh baris operator pada satu bulan dijumlahkan, hasilnya sama
-      // dengan CAPAIAN (%) indikator OUTPUT pada Laporan KPI bulanan.
+      // KPI Hasil per varian = Total Hasil baris / target harian line × 100%.
+      // Filling memakai target 7.500 dan Press memakai target 3.500.
       //
-      // KPI Kardus Basah = persentase tumpahan dari baris Filling tersebut.
-      // KPI Botol Rusak = Qty Pecah baris Press / Total Qty baris × 100%.
+      // KPI Kardus Basah pada tabel ini dihitung untuk setiap baris agar perbedaan
+      // Qty Pengerjaan Dus tetap terlihat. KPI Filling periode tetap dihitung dari
+      // total harian sehingga batas 5 tidak berulang untuk setiap pengerjaan.
+      // KPI Botol Pecah = Qty Botol Pecah / Total Qty Botol × 100%.
       // KPI APD = rata-rata penilaian APD operator pada tanggal pengerjaan baris.
       const apdByOperatorDate = new Map();
       (state.apdEntries || []).forEach((item) => {
@@ -9042,28 +9051,22 @@
         const totalQty = Math.max(0, Number(entry.totalQty) || 0);
         const qtyBroken = Math.max(0, Number(entry.qtyBotolPecah) || 0);
 
-        const outputTarget = Math.max(
-          1,
-          Number(
-            isFilling ? getKpiFillingOutputTarget() : getKpiPressOutputTarget(),
-          ) || 0,
-        );
-        const outputWeight = isFilling
-          ? KPI_FILLING_DEFAULTS.weights.output
-          : KPI_PRESS_DEFAULTS.weights.output;
+        const outputTarget = isFilling
+          ? KPI_VARIANT_DAILY_TARGETS.filling
+          : KPI_VARIANT_DAILY_TARGETS.press;
 
         const apdKey = `${kpiOperatorKey(entry.operator)}||${String(entry.tanggal || "").trim()}`;
         const apdValues = apdByOperatorDate.get(apdKey) || [];
 
         return {
           ...entry,
-          _kpiResult:
-            totalQty > 0 ? (totalQty / outputTarget) * outputWeight : null,
+          _kpiResult: totalQty > 0 ? (totalQty / outputTarget) * 100 : null,
           _kpiWetCarton: isFilling
             ? kpiFillingSpillPercent(entry.qtyKardusBasah, entry.qtyKardus)
             : null,
-          _kpiBroken:
-            !isFilling && totalQty > 0 ? (qtyBroken / totalQty) * 100 : null,
+          _kpiBroken: !isFilling
+            ? kpiVariantDefectPercent(qtyBroken, totalQty)
+            : null,
           _kpiApd: averageKpiValues(apdValues),
         };
       });

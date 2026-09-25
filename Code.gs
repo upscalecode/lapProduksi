@@ -2227,6 +2227,26 @@ function repairLegacySpkRows_(sh) {
   });
 }
 
+/** Hapus kolom sisa migrasi hanya jika header duplikat dan tidak berisi data. */
+function removeEmptyDuplicateSpkColumns_(sh) {
+  const firstExtraColumn = APP.SPK_HEADERS.length + 1;
+  const lastUsedColumn = sh.getLastColumn();
+  if (lastUsedColumn < firstExtraColumn) return;
+
+  const extraWidth = lastUsedColumn - APP.SPK_HEADERS.length;
+  const lastRow = Math.max(1, sh.getLastRow());
+  const extraValues = sh.getRange(1, firstExtraColumn, lastRow, extraWidth).getDisplayValues();
+  const duplicateHeader = APP.SPK_HEADERS[APP.SPK_HEADERS.length - 1];
+  const removable = extraValues.every(function (row, rowIndex) {
+    return row.every(function (value) {
+      const text = String(value || '').trim();
+      return rowIndex === 0 ? (!text || text === duplicateHeader) : !text;
+    });
+  });
+
+  if (removable) sh.deleteColumns(firstExtraColumn, extraWidth);
+}
+
 function ensureSpkSheet_(ss, forceSetup) {
   if (SPK_READY_SHEET_ && !forceSetup) return SPK_READY_SHEET_;
   let sh = ss.getSheetByName(APP.SHEETS.SPK);
@@ -2251,6 +2271,7 @@ function ensureSpkSheet_(ss, forceSetup) {
   }
   sh.getRange(1, 1, 1, APP.SPK_HEADERS.length).setValues([APP.SPK_HEADERS]);
   if (!isOldSchema) repairLegacySpkRows_(sh);
+  removeEmptyDuplicateSpkColumns_(sh);
   styleHeader_(sh, APP.SPK_HEADERS.length);
   sh.setFrozenRows(1);
   SPK_READY_SHEET_ = sh;

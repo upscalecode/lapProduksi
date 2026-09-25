@@ -4991,6 +4991,11 @@ button {
   text-align: center;
 }
 
+.kpi-press-total-row td.kpi-total-label {
+  padding-right: 14px;
+  text-align: right !important;
+}
+
 .kpi-press-legend {
   margin-top: 14px;
   padding: 13px 15px;
