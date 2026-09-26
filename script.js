@@ -44,7 +44,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbyrz9zddOvbdxG0ZVYqg8tAUYEr1gTonRmcu32tTUxY13MpzM0e4Z9pBsK5CTP62j8Gvg/exec",
+      "https://script.google.com/macros/s/AKfycbxoiVUDEQ5f817b9xUQvohS5SI8WuhQ4kBBBscIwt_NdTjGr8j6GX4rn3nCFsHEa-aveg/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -366,6 +366,9 @@
     });
     if (el("kpiSettingPanel"))
       el("kpiSettingPanel").hidden = !can("accessKpiSettings");
+    if (el("inputDataCleanupPanel"))
+      el("inputDataCleanupPanel").hidden =
+        state.currentUser?.role !== "superuser";
     qsa(".laporan-subnav-btn").forEach((btn) => {
       btn.hidden =
         btn.dataset.laporanView === "hasil"
@@ -1247,7 +1250,7 @@
           <p class="table-summary press-balance-summary"></p>
           <div class="pagination press-balance-pagination" aria-label="Navigasi halaman sisa Press"></div>
           <button type="button" class="btn btn-danger press-balance-mass-delete" hidden disabled>
-            <i class="fa-solid fa-trash"></i> Hapus Terpilih
+            <i class="fa-solid fa-trash"></i> Hapus Massal
           </button>
         </div>`;
       stack.insertBefore(balancePanel, form);
@@ -2656,7 +2659,7 @@
       massDeleteButton.hidden = !selectedPressBalanceRows.size;
       massDeleteButton.disabled =
         !selectedPressBalanceRows.size || !canDeletePressRemainder();
-      massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Terpilih${selectedPressBalanceRows.size ? ` (${selectedPressBalanceRows.size})` : ""}`;
+      massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Massal${selectedPressBalanceRows.size ? ` (${selectedPressBalanceRows.size})` : ""}`;
     }
 
     const form = qs(".form-panel", section);
@@ -3195,10 +3198,7 @@
         const requestedQty = payload.qtyKardus * payload.qtyBotolPerKardus;
         const spkCapacity = Math.max(0, Number(spk?.qty) || 0);
         const alreadyUsedQty = spkFillingUsedQty(payload.batchNo, id);
-        if (
-          spkCapacity > 0 &&
-          alreadyUsedQty + requestedQty > spkCapacity
-        ) {
+        if (spkCapacity > 0 && alreadyUsedQty + requestedQty > spkCapacity) {
           const availableQty = Math.max(0, spkCapacity - alreadyUsedQty);
           errorEl.textContent = `Qty Filling ${requestedQty.toLocaleString("id-ID")} pcs melebihi sisa SPK pada baris ini, yaitu ${availableQty.toLocaleString("id-ID")} pcs.`;
           errorEl.hidden = false;
@@ -5862,7 +5862,7 @@
       massDeleteButton.hidden = !selectedFillingSpkRows.size;
       massDeleteButton.disabled =
         !selectedFillingSpkRows.size || !canLevel("spk", "write");
-      massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Terpilih${selectedFillingSpkRows.size ? ` (${selectedFillingSpkRows.size})` : ""}`;
+      massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Massal${selectedFillingSpkRows.size ? ` (${selectedFillingSpkRows.size})` : ""}`;
     }
   }
 
@@ -6039,7 +6039,7 @@
       massDeleteButton.hidden =
         selectedSpkRows.size === 0 || !canLevel("spk", "write");
       massDeleteButton.disabled = selectedSpkRows.size === 0;
-      massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Terpilih${selectedSpkRows.size ? ` (${selectedSpkRows.size})` : ""}`;
+      massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Massal${selectedSpkRows.size ? ` (${selectedSpkRows.size})` : ""}`;
     }
   }
 
@@ -7752,6 +7752,105 @@
         saveBtn.innerHTML = oldText;
       }
     });
+  }
+
+  function initInputDataCleanup() {
+    const button = el("clearAllInputDataButton");
+    if (!button) return;
+    button.addEventListener("click", async () => {
+      if (state.currentUser?.role !== "superuser") {
+        return toast("Aksi ini hanya dapat dilakukan Super User.", true);
+      }
+      const confirmed = await confirmDelete({
+        title: "Hapus seluruh data input?",
+        message:
+          "Semua data operasional di Spreadsheet akan dihapus permanen. Master, Users, dan Settings tetap dipertahankan.",
+        item: "Pengerjaan, SPK, APD, Press, arsip, sisa, dan data operasional lainnya",
+      });
+      if (!confirmed) return;
+
+      const phrase = window.prompt(
+        'Ketik "HAPUS SEMUA DATA" untuk melanjutkan:',
+        "",
+      );
+      if (phrase !== "HAPUS SEMUA DATA") {
+        return toast(
+          "Penghapusan dibatalkan karena teks konfirmasi tidak sesuai.",
+          true,
+        );
+      }
+
+      const oldHtml = button.innerHTML;
+      button.disabled = true;
+      button.innerHTML =
+        '<i class="fa-solid fa-spinner fa-spin"></i> Menghapus Data...';
+      try {
+        await enqueueWrite(() =>
+          apiPost("maintenance.inputData.clear", { confirmation: phrase }),
+        );
+        state.preview = { spk: [], filling: [], press: [], apd: [] };
+        localStorage.removeItem(userStorageKey(CONFIG.PREVIEW_KEY));
+        localStorage.removeItem(userStorageKey(CONFIG.FORM_DRAFT_KEY));
+        toast("Semua data input berhasil dihapus.");
+        setTimeout(() => window.location.reload(), 900);
+      } catch (err) {
+        toast(`Gagal menghapus data input: ${err.message}`, true);
+        button.disabled = false;
+        button.innerHTML = oldHtml;
+      }
+    });
+  }
+
+  function initSettingCards() {
+    qsa("#view-master .master-layout > section.panel").forEach(
+      (card, index) => {
+        const header = qs(":scope > .panel-head", card);
+        if (!header || header.dataset.collapseReady === "1") return;
+
+        const title = qs("h2", header)?.textContent?.trim() ||
+          `Pengaturan ${index + 1}`;
+        const contentId = card.id
+          ? `${card.id}-content`
+          : `setting-card-content-${index + 1}`;
+        card.classList.add("settings-card", "is-collapsed");
+        header.dataset.collapseReady = "1";
+        header.setAttribute("role", "button");
+        header.setAttribute("tabindex", "0");
+        header.setAttribute("aria-expanded", "false");
+        header.setAttribute("aria-controls", contentId);
+        header.setAttribute("aria-label", `Buka ${title}`);
+
+        Array.from(card.children).forEach((child) => {
+          if (child !== header) child.classList.add("settings-card-content");
+        });
+        const firstContent = qs(":scope > .settings-card-content", card);
+        if (firstContent) firstContent.id = contentId;
+
+        const indicator = document.createElement("span");
+        indicator.className = "settings-card-toggle";
+        indicator.setAttribute("aria-hidden", "true");
+        indicator.innerHTML = '<i class="fa-solid fa-chevron-down"></i>';
+        header.appendChild(indicator);
+
+        const toggle = () => {
+          const collapsed = card.classList.toggle("is-collapsed");
+          header.setAttribute("aria-expanded", String(!collapsed));
+          header.setAttribute(
+            "aria-label",
+            `${collapsed ? "Buka" : "Tutup"} ${title}`,
+          );
+        };
+        header.addEventListener("click", (event) => {
+          if (event.target.closest("button, input, select, textarea, a")) return;
+          toggle();
+        });
+        header.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          toggle();
+        });
+      },
+    );
   }
 
   function kpiPressMonthPeriod(monthValue) {
@@ -9541,11 +9640,12 @@
 
   /* =========================================================
    SEE MORE MASTER DATA
-   Hanya untuk Operator dan Produk
+   Untuk seluruh kategori data master
    ========================================================= */
   function updateMasterSeeMore(category, wrap) {
-    // Hanya Operator dan Produk yang dibatasi
-    const isLimited = category === "operator" || category === "produk";
+    const isLimited = ["operator", "produk", "botol", "botolpecah"].includes(
+      category,
+    );
 
     if (!isLimited) {
       wrap.classList.remove("limit-6", "show-all");
@@ -10143,6 +10243,8 @@
     initLaporan();
     initKpiLaporan();
     initKpiSettings();
+    initInputDataCleanup();
+    initSettingCards();
     initMasterData();
     initUserManagement();
     initLogout();

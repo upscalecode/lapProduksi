@@ -15,7 +15,10 @@
       crossorigin="anonymous"
       defer
     ></script>
-    <link rel="stylesheet" href="style.css?v=20260926-v45-filling-pagination" />
+    <link
+      rel="stylesheet"
+      href="style.css?v=20260926-v49-setting-accordion"
+    />
 
     <style>
       /* Aturan inti modal SPK ditempatkan bersama dokumen agar tidak dapat
@@ -764,6 +767,7 @@
                 </div>
               </div>
             </section>
+
           </div>
         </section>
 
@@ -821,7 +825,7 @@
                   hidden
                   disabled
                 >
-                  <i class="fa-solid fa-trash"></i> Hapus Terpilih
+                  <i class="fa-solid fa-trash"></i> Hapus Massal
                 </button>
               </div>
             </section>
@@ -2088,6 +2092,32 @@
                 </button>
               </div>
             </section>
+
+            <section
+              class="panel danger-setting-panel"
+              id="inputDataCleanupPanel"
+              hidden
+            >
+              <div class="panel-head">
+                <div>
+                  <p class="eyebrow">Zona Berbahaya</p>
+                  <h2>Hapus Semua Data Input</h2>
+                </div>
+              </div>
+              <p class="hint-text">
+                Menghapus seluruh data operasional pada semua sheet, termasuk
+                Pengerjaan, SPK, APD, Penutupan/Arsip Press, dan Sisa Press.
+                Header sheet tetap dipertahankan. Sheet Master, Users, dan
+                Settings tidak akan diubah.
+              </p>
+              <button
+                type="button"
+                class="btn btn-danger"
+                id="clearAllInputDataButton"
+              >
+                <i class="fa-solid fa-trash-can"></i> Hapus Semua Data Input
+              </button>
+            </section>
           </div>
         </section>
 
@@ -2446,7 +2476,7 @@
       });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="script.js?v=20260926-v110-editable-press-bottle-qty"></script>
+    <script src="script.js?v=20260926-v113-setting-accordion"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>

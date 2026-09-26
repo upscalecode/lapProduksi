@@ -1140,6 +1140,62 @@ button {
   width: 100%;
 }
 
+.danger-setting-panel {
+  /* master-layout memakai column-reverse; order terendah tampil paling bawah. */
+  order: -999;
+  grid-column: 1 / -1;
+  border-color: rgba(190, 24, 93, 0.35);
+  background: rgba(255, 241, 242, 0.55);
+}
+.danger-setting-panel[hidden] {
+  display: none !important;
+}
+
+.settings-card {
+  overflow: hidden;
+  transition:
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+.settings-card > .panel-head {
+  margin: -2px -2px 0;
+  padding: 16px 18px;
+  border-radius: inherit;
+  cursor: pointer;
+  user-select: none;
+}
+.settings-card > .panel-head:hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.settings-card > .panel-head:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  outline-offset: -3px;
+}
+.settings-card-toggle {
+  width: 34px;
+  height: 34px;
+  margin-left: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-soft);
+  flex: 0 0 auto;
+}
+.settings-card-toggle i {
+  transition: transform 0.2s ease;
+}
+.settings-card:not(.is-collapsed) .settings-card-toggle i {
+  transform: rotate(180deg);
+}
+.settings-card.is-collapsed > .settings-card-content {
+  display: none !important;
+}
+.settings-card.is-collapsed > .panel-head {
+  margin-bottom: -2px;
+}
+
 .table-footer {
   display: flex;
   align-items: center;
@@ -1361,19 +1417,19 @@ body[data-page="login"] .login-screen {
   margin-left: auto;
 }
 
-/* Footer antrean Filling: aksi tampil di tengah hanya saat dipilih,
-   sedangkan pagination selalu berada di sisi kanan. */
+/* Footer antrean Filling: pagination berada di kanan dan tombol hapus
+   muncul tepat setelahnya hanya saat ada baris yang dipilih. */
 .filling-spk-panel .table-summary,
 .press-balance-panel .table-summary {
   order: 1;
 }
 #fillingSpkMassDeleteButton,
 .press-balance-mass-delete {
-  order: 2;
+  order: 3;
 }
 #fillingSpkPagination,
 .press-balance-panel .press-balance-pagination {
-  order: 3;
+  order: 2;
   margin-left: auto;
   justify-content: flex-end;
 }

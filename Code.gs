@@ -24,6 +24,7 @@ const APP = {
     SESSIONS: "Sessions",
     ENTRIES: "Pengerjaan",
     PRESS_ADJUSTMENTS: "Penutupan Press",
+    PRESS_ADJUSTMENTS_ARCHIVE: "Arsip Penutupan Press",
     PRESS_REMAINDERS: "Sisa Press",
     APD: "APD",
     SPK: "SPK",
@@ -142,6 +143,11 @@ function setupSpreadsheet() {
   ensureSheet_(ss, APP.SHEETS.SESSIONS, APP.SESSION_HEADERS);
   ensureEntrySheetSchema_(ss, true);
   ensureSheet_(ss, APP.SHEETS.PRESS_ADJUSTMENTS, APP.PRESS_ADJUSTMENT_HEADERS);
+  ensureSheet_(
+    ss,
+    APP.SHEETS.PRESS_ADJUSTMENTS_ARCHIVE,
+    APP.PRESS_ADJUSTMENT_HEADERS,
+  );
   ensureSheet_(ss, APP.SHEETS.PRESS_REMAINDERS, APP.PRESS_REMAINDER_HEADERS);
   ensureApdSheet_(ss, true);
   ensureSpkSheet_(ss, true);
@@ -200,9 +206,11 @@ function setupSpreadsheet() {
   }
 
   // Bangun saldo sisa dari data Pengerjaan lama agar langsung kompatibel.
+  // Penutupan lama disalin ke ledger arsip sebelum saldo dihitung ulang.
+  syncPressAdjustmentArchive_();
   rebuildPressRemainders_();
 
-  return "Setup selesai. Pengerjaan: kolom 13 = qtyKardusBasah, kolom 16 = updatedAt, kolom 17 = updateCount; createdByName dihapus; Sheet Sisa Press, APD, dan Settings aktif; target KPI Filling & Press siap digunakan; saldo Filling → Press sudah dibangun ulang.";
+  return "Setup selesai. Pengerjaan: kolom 13 = qtyKardusBasah, kolom 16 = updatedAt, kolom 17 = updateCount; createdByName dihapus; Sheet Sisa Press, Arsip Penutupan Press, APD, dan Settings aktif; target KPI Filling & Press siap digunakan; saldo Filling → Press sudah dibangun ulang.";
 }
 
 function doGet(e) {
@@ -545,6 +553,15 @@ function doPost(e) {
           return json_({ ok: true, settings: settings });
         });
 
+      case "maintenance.inputData.clear":
+        requireSuperuser_(session.user);
+        return withWriteLock_(function () {
+          if (param_(e, "confirmation") !== "HAPUS SEMUA DATA") {
+            throw new Error("Konfirmasi penghapusan data tidak valid.");
+          }
+          return json_({ ok: true, result: clearAllInputData_() });
+        });
+
       case "user.add":
         requireSuperuser_(session.user);
         return withWriteLock_(function () {
@@ -601,6 +618,45 @@ function withWriteLock_(fn) {
   } finally {
     lock.releaseLock();
   }
+}
+
+function clearAllInputData_() {
+  const ss = spreadsheet_();
+  const excluded = {};
+  excluded[APP.SHEETS.MASTER] = true;
+  excluded[APP.SHEETS.USERS] = true;
+  excluded[APP.SHEETS.SETTINGS] = true;
+
+  // Hapus bukti foto APD yang masih terhubung sebelum baris APD dibersihkan.
+  const apdSheet = ss.getSheetByName(APP.SHEETS.APD);
+  if (
+    apdSheet &&
+    apdSheet.getLastRow() >= 2 &&
+    apdSheet.getMaxColumns() >= 17
+  ) {
+    apdSheet
+      .getRange(2, 17, apdSheet.getLastRow() - 1, 1)
+      .getDisplayValues()
+      .forEach(function (row) {
+        parseApdPhotoIds_(row[0]).forEach(function (photoFileId) {
+          try {
+            apdPhotoFile_(photoFileId).setTrashed(true);
+          } catch (_) {}
+        });
+      });
+  }
+
+  const cleared = [];
+  ss.getSheets().forEach(function (sh) {
+    const name = sh.getName();
+    if (excluded[name] || sh.getLastRow() < 2) return;
+    const rowCount = sh.getLastRow() - 1;
+    const columnCount = Math.max(1, sh.getLastColumn());
+    sh.getRange(2, 1, rowCount, columnCount).clearContent();
+    cleared.push({ sheet: name, rows: rowCount });
+  });
+
+  return { clearedSheets: cleared, clearedAt: new Date().toISOString() };
 }
 
 function handleLogin_(e) {
@@ -2766,9 +2822,86 @@ function pressAdjustmentSheet_(createIfMissing) {
   return sh || null;
 }
 
+function pressAdjustmentArchiveSheet_() {
+  return ensureSheet_(
+    spreadsheet_(),
+    APP.SHEETS.PRESS_ADJUSTMENTS_ARCHIVE,
+    APP.PRESS_ADJUSTMENT_HEADERS,
+  );
+}
+
+/**
+ * Salin penutupan yang belum ada ke ledger permanen. Sheet Penutupan Press
+ * menjadi log kerja yang boleh dibersihkan, sedangkan saldo selalu memakai
+ * Arsip Penutupan Press sebagai sumber kebenaran.
+ */
+function syncPressAdjustmentArchive_() {
+  const source = pressAdjustmentSheet_(false);
+  const archive = pressAdjustmentArchiveSheet_();
+  if (!source || source.getLastRow() < 2) return archive;
+
+  const width = APP.PRESS_ADJUSTMENT_HEADERS.length;
+  const sourceRows = source
+    .getRange(2, 1, source.getLastRow() - 1, width)
+    .getValues()
+    .filter(function (row) {
+      return String(row[0] || "").trim();
+    });
+  if (!sourceRows.length) return archive;
+
+  const archivedIds = {};
+  if (archive.getLastRow() >= 2) {
+    archive
+      .getRange(2, 1, archive.getLastRow() - 1, 1)
+      .getDisplayValues()
+      .forEach(function (row) {
+        const id = String(row[0] || "").trim();
+        if (id) archivedIds[id] = true;
+      });
+  }
+  const missingRows = sourceRows.filter(function (row) {
+    return !archivedIds[String(row[0] || "").trim()];
+  });
+  if (missingRows.length) {
+    archive
+      .getRange(
+        Math.max(2, archive.getLastRow() + 1),
+        1,
+        missingRows.length,
+        width,
+      )
+      .setValues(missingRows);
+  }
+  return archive;
+}
+
+// Jalankan dari editor Apps Script bila ingin membersihkan log kerja tanpa
+// mengembalikan Qty yang sudah ditutup ke Sisa Pengerjaan Press.
+function archiveAndClearPressAdjustments() {
+  return withWriteLock_(function () {
+    const source = pressAdjustmentSheet_(false);
+    syncPressAdjustmentArchive_();
+    if (!source || source.getLastRow() < 2) {
+      return "Penutupan Press sudah kosong; arsip tetap dipertahankan.";
+    }
+    const archivedCount = source.getLastRow() - 1;
+    source
+      .getRange(
+        2,
+        1,
+        archivedCount,
+        APP.PRESS_ADJUSTMENT_HEADERS.length,
+      )
+      .clearContent();
+    return (
+      archivedCount +
+      " baris Penutupan Press telah diarsipkan dan log aktif dibersihkan."
+    );
+  });
+}
+
 function getPressAdjustments_() {
-  const sh = pressAdjustmentSheet_(false);
-  if (!sh) return [];
+  const sh = syncPressAdjustmentArchive_();
   const values = sh.getDataRange().getValues();
   const result = [];
   for (let i = 1; i < values.length; i++) {
@@ -2966,14 +3099,16 @@ function pressAdjustmentToRow_(adjustment) {
 
 function appendPressAdjustments_(adjustments) {
   if (!adjustments.length) return;
-  const sh = pressAdjustmentSheet_(true);
-  const startRow = Math.max(sh.getLastRow() + 1, 2);
-  sh.getRange(
-    startRow,
-    1,
-    adjustments.length,
-    APP.PRESS_ADJUSTMENT_HEADERS.length,
-  ).setValues(adjustments.map(pressAdjustmentToRow_));
+  const rows = adjustments.map(pressAdjustmentToRow_);
+  const sheets = [pressAdjustmentArchiveSheet_(), pressAdjustmentSheet_(true)];
+  sheets.forEach(function (sh) {
+    sh.getRange(
+      Math.max(sh.getLastRow() + 1, 2),
+      1,
+      rows.length,
+      APP.PRESS_ADJUSTMENT_HEADERS.length,
+    ).setValues(rows);
+  });
 }
 
 function closePressRemainder_(user, data) {
