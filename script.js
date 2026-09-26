@@ -7844,9 +7844,7 @@
     // sedangkan tanggal tanpa Qty Pengerjaan tidak ikut dihitung.
     const spillDailyValues = Array.from(fillingByDate.values())
       .filter((day) => day.workedCartons > 0)
-      .map((day) =>
-        kpiFillingSpillPercent(day.wetCartons, day.workedCartons),
-      );
+      .map((day) => kpiFillingSpillPercent(day.wetCartons, day.workedCartons));
     const spillActual = averageKpiValues(spillDailyValues);
 
     const apdActual = buildKpiApdActual(operatorKey, period);
