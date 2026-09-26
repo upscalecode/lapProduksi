@@ -7585,7 +7585,10 @@
     const target = SHIFT_LEADER_MASTER_NAME.toLowerCase();
     return (
       (state.master.operator || []).find(
-        (name) => String(name || "").trim().toLowerCase() === target,
+        (name) =>
+          String(name || "")
+            .trim()
+            .toLowerCase() === target,
       ) || SHIFT_LEADER_MASTER_NAME
     );
   }
@@ -7817,8 +7820,8 @@
         const header = qs(":scope > .panel-head", card);
         if (!header || header.dataset.collapseReady === "1") return;
 
-        const title = qs("h2", header)?.textContent?.trim() ||
-          `Pengaturan ${index + 1}`;
+        const title =
+          qs("h2", header)?.textContent?.trim() || `Pengaturan ${index + 1}`;
         const contentId = card.id
           ? `${card.id}-content`
           : `setting-card-content-${index + 1}`;
@@ -7851,7 +7854,8 @@
           );
         };
         header.addEventListener("click", (event) => {
-          if (event.target.closest("button, input, select, textarea, a")) return;
+          if (event.target.closest("button, input, select, textarea, a"))
+            return;
           toggle();
         });
         header.addEventListener("keydown", (event) => {
@@ -8398,29 +8402,24 @@
       outputTarget > 0 ? (totalQty / outputTarget) * 100 : 0;
     const rejectPercent =
       totalQty > 0 ? ((broken + wet) / totalQty) * 100 : null;
-    const updateAverage = updateTotal / entries.length;
     const workerKeys = new Set([
       ...workersByLine.filling,
       ...workersByLine.press,
     ]);
-    const apdByWorker = new Map();
-    (state.apdEntries || []).forEach((item) => {
-      const worker = String(item?.operator || "")
-        .trim()
-        .toLowerCase();
-      const value = Number(item?.percentage);
-      if (
-        !workerKeys.has(worker) ||
-        !dashboardDateInPeriod(item.tanggal, period) ||
-        !Number.isFinite(value)
+    // Rata-rata seluruh kolom updateCount pada data Pengerjaan periode ini.
+    // Setiap baris Filling dan Press mempunyai bobot yang sama, termasuk 0.
+    const updateAverage = entries.length ? updateTotal / entries.length : 0;
+    // Nilai Ka. Shift harus sama dengan AVERAGE kolom persentase APD pada
+    // periode laporan. Seluruh baris APD bulan terpilih ikut dihitung sekali,
+    // termasuk operator yang tidak mempunyai entri Pengerjaan pada bulan itu.
+    const combinedApdValues = (state.apdEntries || [])
+      .filter(
+        (item) =>
+          item && dashboardDateInPeriod(kpiDateKey(item.tanggal), period),
       )
-        return;
-      if (!apdByWorker.has(worker)) apdByWorker.set(worker, []);
-      apdByWorker.get(worker).push(value);
-    });
-    const apdActual = averageKpiValues(
-      Array.from(apdByWorker.values()).map(averageKpiValues),
-    );
+      .map((item) => kpiPercentageNumber(item.percentage))
+      .filter((value) => value !== null);
+    const apdActual = averageKpiValues(combinedApdValues);
     const rows = [
       {
         no: 1,
@@ -8436,7 +8435,7 @@
       {
         no: 2,
         field: "QC",
-        indicator: "KERUSAKAN HASIL (REJECT YANG SUDAH DI PRESS)",
+        indicator: "KERUSAKAN HASIL FILLING & PRESS",
         weight: 30,
         targetText: "RATA-RATA 0,5%",
         targetPercent: 100,
@@ -8484,7 +8483,10 @@
       outputActual: totalQty,
       rejectActual: rejectPercent,
       apdActual,
+      apdEntryCount: combinedApdValues.length,
       updateAverage,
+      updateTotal,
+      updateEntryCount: entries.length,
       broken,
       wet,
       productionDays: new Set(entries.map((entry) => entry.tanggal)).size,
@@ -8877,7 +8879,8 @@
 
     const notes = isShift
       ? `<p><strong>Keterangan:</strong> Target gabungan memakai target bulanan Filling dan Press di Setting, dikalikan jumlah karyawan aktif pada masing-masing bagian. Capaian target penuh saat hasil mencapai 90% target gabungan.</p>
-         <p>Reject = (botol rusak Press + kardus basah Filling) ÷ total pengerjaan pcs. Rata-rata update dihitung per entri Filling dan Press; update APD tidak dihitung.</p>`
+         <p>Reject = (botol rusak Press + kardus basah Filling) ÷ total pengerjaan pcs. Rata-rata update = total updateCount ÷ jumlah seluruh baris Pengerjaan Filling dan Press dalam periode; nilai 0 tetap dihitung.</p>
+         <p>Aktual APD Ka. Shift = total persentase seluruh baris APD pada periode laporan ÷ jumlah baris APD, sama dengan AVERAGE kolom Nilai Prosentase APD di Spreadsheet.</p>`
       : isPress
         ? `
         <p><strong>Keterangan:</strong> Target output KPI Press diatur melalui menu Setting.</p>
