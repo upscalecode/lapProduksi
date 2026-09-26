@@ -2434,14 +2434,11 @@ function buildPressAllocationModel_(entries, adjustments) {
         continue;
       if (
         event.type === "closed" &&
-        event.targetBatchNo &&
-        lot.batchNo !== event.targetBatchNo
-      )
-        continue;
-      if (
-        event.type === "closed" &&
         event.targetTanggalAsal &&
-        lot.tanggalAsal !== event.targetTanggalAsal
+        (lot.tanggalAsal !== event.targetTanggalAsal ||
+          (event.targetBatchNo
+            ? lot.batchNo !== event.targetBatchNo
+            : Boolean(lot.batchNo)))
       )
         continue;
 
@@ -2873,10 +2870,8 @@ function buildPressRemainderClosure_(user, data, entries, adjustments) {
     throw new Error("Qty Botol per Kardus untuk penutupan wajib diisi.");
   const targetBatchNo = String(data.targetBatchNo || "").trim();
   const targetTanggalAsal = String(data.targetTanggalAsal || "").trim();
-  if (Boolean(targetBatchNo) !== Boolean(targetTanggalAsal)) {
-    throw new Error(
-      "No Batch dan Tanggal Asal target penutupan harus diisi bersama.",
-    );
+  if (targetBatchNo && !targetTanggalAsal) {
+    throw new Error("Tanggal Asal wajib diisi untuk target No Batch.");
   }
 
   const model = buildPressAllocationModel_(entries, adjustments);
@@ -2885,17 +2880,20 @@ function buildPressRemainderClosure_(user, data, entries, adjustments) {
       return (
         balanceKey_(item.produk, item.botol) === balanceKey_(produk, botol) &&
         item.qtyBotolPerKardus === perKardus &&
-        (!targetBatchNo ||
-          (item.batchNo === targetBatchNo &&
-            item.tanggalAsal === targetTanggalAsal))
+        (!targetTanggalAsal ||
+          (item.tanggalAsal === targetTanggalAsal &&
+            (targetBatchNo ? item.batchNo === targetBatchNo : !item.batchNo)))
       );
     })
     .reduce(function (sum, item) {
       return sum + number_(item.sisaQty);
     }, 0);
   if (remaining <= 0) {
-    const targetLabel = targetBatchNo
-      ? " pada No Batch " + targetBatchNo + " tanggal " + targetTanggalAsal
+    const targetLabel = targetTanggalAsal
+      ? " pada " +
+        (targetBatchNo ? "No Batch " + targetBatchNo : "data tanpa No Batch") +
+        " tanggal " +
+        targetTanggalAsal
       : "";
     throw new Error(
       "Sisa Press untuk " +
@@ -2985,10 +2983,8 @@ function closePressRemaindersBatch_(user, data) {
     const targetTanggalAsal = String(
       (target && target.targetTanggalAsal) || "",
     ).trim();
-    if (!targetBatchNo || !targetTanggalAsal) {
-      throw new Error(
-        "Setiap sisa Press harus memiliki No Batch dan Tanggal Asal.",
-      );
+    if (!targetTanggalAsal) {
+      throw new Error("Setiap sisa Press harus memiliki Tanggal Asal.");
     }
     const duplicate = staged.some(function (item) {
       return (

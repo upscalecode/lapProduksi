@@ -701,7 +701,7 @@
     });
     if (withToken && state.token) query.set("token", state.token);
 
-    setConnection("loading", "Menghubungkan…");
+    setConnection("loading", "Loading…");
     try {
       const response = await fetchWithTimeout(`${base}?${query.toString()}`, {
         method: "GET",
@@ -1433,7 +1433,6 @@
             selectedPressBalanceRows.has(String(row.id)) &&
             row.hasSpreadsheet &&
             !row.hasPreview &&
-            row.batchNo &&
             row.tanggalAsal,
         );
         if (!selectedRows.length)
@@ -2511,7 +2510,6 @@
             canDeletePressRemainder() &&
             row.hasSpreadsheet &&
             !row.hasPreview &&
-            row.batchNo &&
             row.tanggalAsal &&
             Number(row.qtyBotolPerKardus[0]) > 0,
         )
@@ -2545,8 +2543,8 @@
                 ? "Simpan Preview Filling terlebih dahulu"
                 : !row.hasSpreadsheet
                   ? "Data ini belum tersimpan"
-                  : !row.batchNo || !row.tanggalAsal
-                    ? "Data belum memiliki No Batch atau Tanggal Asal"
+                  : !row.tanggalAsal
+                    ? "Data belum memiliki Tanggal Asal"
                     : "Pilih sisa Press untuk penghapusan massal";
             // !deleteAllowed || row.hasPreview || !row.hasSpreadsheet;
             const deleteTitle = row.hasPreview
@@ -2560,7 +2558,7 @@
 
             return `
       <tr>
-        <td class="select-col"><input type="checkbox" class="press-balance-row-select" data-row-id="${esc(row.id)}" aria-label="Pilih sisa Press No Batch ${esc(row.batchNo)}" title="${selectionTitle}" ${selectable ? "" : "disabled"} ${selectedPressBalanceRows.has(String(row.id)) ? "checked" : ""}></td>
+        <td class="select-col"><input type="checkbox" class="press-balance-row-select" data-row-id="${esc(row.id)}" aria-label="Pilih sisa Press ${row.batchNo ? `No Batch ${esc(row.batchNo)}` : `tanpa No Batch, tanggal ${esc(row.tanggalAsal)}`}" title="${selectionTitle}" ${selectable ? "" : "disabled"} ${selectedPressBalanceRows.has(String(row.id)) ? "checked" : ""}></td>
         <td><strong>${esc(row.batchNo || "—")}</strong></td>
         <td>
           <div class="press-product-name" title="${esc(row.produk)}">${esc(row.produk)}</div>
