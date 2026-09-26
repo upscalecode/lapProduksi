@@ -2398,6 +2398,7 @@ function buildPressAllocationModel_(entries, adjustments) {
       produk: String(entry.produk || "").trim(),
       botol: String(entry.botol || "").trim(),
       qtyBotolPerKardus: number_(entry.qtyBotolPerKardus),
+      targetBatchNo: reportBatchNo_(entry.reportId),
       qty: number_(entry.totalQty),
       createdAt: String(entry.createdAt || ""),
     });
@@ -2441,8 +2442,15 @@ function buildPressAllocationModel_(entries, adjustments) {
       )
         continue;
       if (
+        !event.targetBatchNo &&
         event.qtyBotolPerKardus > 0 &&
         lot.qtyBotolPerKardus !== event.qtyBotolPerKardus
+      )
+        continue;
+      if (
+        event.type === "press" &&
+        event.targetBatchNo &&
+        lot.batchNo !== event.targetBatchNo
       )
         continue;
       if (

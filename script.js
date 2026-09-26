@@ -1201,7 +1201,7 @@
     const form = qs(".form-panel", clone);
     if (stack && form) {
       // Identitas Filling dan isi kardus mengikuti baris yang dipilih.
-      qsa(".f-produk, .f-botol, .f-qty-botol", form).forEach((input) => {
+      qsa(".f-produk, .f-botol", form).forEach((input) => {
         input.readOnly = true;
       });
       const balancePanel = document.createElement("section");
@@ -2366,8 +2366,9 @@
               .trim()
               .toLowerCase() === key &&
             balanceKey(lot.produk, lot.botol) === botolKey &&
-            Number(lot.qtyBotolPerKardus) === perKardus &&
-            (!pressBatchNo || lot.batchNo === pressBatchNo) &&
+            (pressBatchNo
+              ? lot.batchNo === pressBatchNo
+              : Number(lot.qtyBotolPerKardus) === perKardus) &&
             (!lot.tanggalAsal || lot.tanggalAsal <= pressDate),
         )
         .sort(
@@ -2462,6 +2463,7 @@
     pressDate = todayStr(),
     botol = "",
     perKardus = 0,
+    batchNo = "",
   ) {
     const key = String(produk || "")
       .trim()
@@ -2474,7 +2476,9 @@
             .trim()
             .toLowerCase() === key &&
           balanceKey(row.produk, row.botol) === balanceKey(produk, botol) &&
-          Number(row.qtyBotolPerKardus[0]) === Number(perKardus) &&
+          (batchNo
+            ? String(row.batchNo || "") === String(batchNo)
+            : Number(row.qtyBotolPerKardus[0]) === Number(perKardus)) &&
           (!row.tanggalAsal || row.tanggalAsal <= pressDate),
       )
       .reduce((sum, row) => sum + (Number(row.remaining) || 0), 0);
@@ -2649,7 +2653,7 @@
     }
     const massDeleteButton = qs(".press-balance-mass-delete", section);
     if (massDeleteButton) {
-      massDeleteButton.hidden = false;
+      massDeleteButton.hidden = !selectedPressBalanceRows.size;
       massDeleteButton.disabled =
         !selectedPressBalanceRows.size || !canDeletePressRemainder();
       massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Terpilih${selectedPressBalanceRows.size ? ` (${selectedPressBalanceRows.size})` : ""}`;
@@ -2665,6 +2669,7 @@
     const produk = qs(".f-produk", form)?.value || "";
     const botol = qs(".f-botol", form)?.value || "";
     const perKardus = Number(qs(".f-qty-botol", form)?.value) || 0;
+    const batchNo = qs(".f-batch-no", form)?.value || "";
     const editingNode = qs(".f-editing-id", form);
     const editingId = editingNode?.value || "";
     const editingSource = editingNode?.dataset.source || "";
@@ -2678,6 +2683,7 @@
       pressDate,
       botol,
       perKardus,
+      batchNo,
     );
     const blocked =
       !savedEdit &&
@@ -2730,7 +2736,9 @@
           .trim()
           .toLowerCase() === String(produk).trim().toLowerCase() &&
         balanceKey(row.produk, row.botol) === balanceKey(produk, botol) &&
-        Number(row.qtyBotolPerKardus[0]) === perKardus &&
+        (batchNo
+          ? String(row.batchNo || "") === String(batchNo)
+          : Number(row.qtyBotolPerKardus[0]) === perKardus) &&
         (!row.tanggalAsal || row.tanggalAsal <= pressDate),
     );
     const oldest = lots.length ? lots[0].tanggalAsal : "";
@@ -2765,6 +2773,7 @@
       payload.tanggal || todayStr(),
       payload.botol,
       payload.qtyBotolPerKardus,
+      payload.batchNo,
     );
     if (available <= 0) {
       return `Press tidak dapat ditambahkan karena tidak ada sisa Filling untuk ${payload.produk} / ${payload.botol} (${payload.qtyBotolPerKardus} botol/kardus) pada tanggal pengerjaan.`;
@@ -5850,7 +5859,7 @@
     }
     const massDeleteButton = el("fillingSpkMassDeleteButton");
     if (massDeleteButton) {
-      massDeleteButton.hidden = false;
+      massDeleteButton.hidden = !selectedFillingSpkRows.size;
       massDeleteButton.disabled =
         !selectedFillingSpkRows.size || !canLevel("spk", "write");
       massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Terpilih${selectedFillingSpkRows.size ? ` (${selectedFillingSpkRows.size})` : ""}`;

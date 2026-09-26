@@ -1360,6 +1360,27 @@ body[data-page="login"] .login-screen {
 .press-balance-pagination {
   margin-left: auto;
 }
+
+/* Footer antrean Filling: aksi tampil di tengah hanya saat dipilih,
+   sedangkan pagination selalu berada di sisi kanan. */
+.filling-spk-panel .table-summary,
+.press-balance-panel .table-summary {
+  order: 1;
+}
+#fillingSpkMassDeleteButton,
+.press-balance-mass-delete {
+  order: 2;
+}
+#fillingSpkPagination,
+.press-balance-panel .press-balance-pagination {
+  order: 3;
+  margin-left: auto;
+  justify-content: flex-end;
+}
+#fillingSpkMassDeleteButton[hidden],
+.press-balance-mass-delete[hidden] {
+  display: none !important;
+}
 @media (max-width: 700px) {
   .press-balance-toolbar {
     align-items: stretch;
