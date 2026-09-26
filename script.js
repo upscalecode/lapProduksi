@@ -7579,6 +7579,16 @@
       attendance: 15,
     }),
   });
+  const SHIFT_LEADER_MASTER_NAME = "ARUNG GILANG SAMPURNA";
+
+  function getShiftLeaderName() {
+    const target = SHIFT_LEADER_MASTER_NAME.toLowerCase();
+    return (
+      (state.master.operator || []).find(
+        (name) => String(name || "").trim().toLowerCase() === target,
+      ) || SHIFT_LEADER_MASTER_NAME
+    );
+  }
 
   const KPI_FILLING_DEFAULTS = Object.freeze({
     outputTargetMonthly: 150000,
@@ -8468,7 +8478,7 @@
     return {
       kpiType: "shift",
       lineLabel: "Ka. Shift",
-      operator: "Ka. Shift",
+      operator: getShiftLeaderName(),
       period,
       outputTarget,
       outputActual: totalQty,
@@ -8758,7 +8768,7 @@
       return {
         reports: report ? [report] : [],
         period,
-        selectedOperator: "Ka. Shift",
+        selectedOperator: getShiftLeaderName(),
         type,
         error: "",
       };
