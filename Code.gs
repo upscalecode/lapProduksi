@@ -425,7 +425,7 @@ function doPost(e) {
 
       // Dipertahankan untuk kompatibilitas data/versi lama.
       case "press.adjustment.close":
-        requireLevel_(session.user, "press", "admin");
+        requirePressRemainderDelete_(session.user);
         return withWriteLock_(function () {
           const adjustment = closePressRemainder_(
             session.user,
@@ -440,7 +440,7 @@ function doPost(e) {
         });
 
       case "press.adjustment.closeBatch":
-        requireLevel_(session.user, "press", "admin");
+        requirePressRemainderDelete_(session.user);
         return withWriteLock_(function () {
           const result = closePressRemaindersBatch_(
             session.user,
@@ -4241,6 +4241,16 @@ function can_(user, permission) {
 function requirePermission_(user, permission, message) {
   if (!can_(user, permission))
     throw new Error(message || "Anda tidak memiliki hak akses untuk aksi ini.");
+}
+
+function requirePressRemainderDelete_(user) {
+  if (canLevel_(user, "press", "admin")) return;
+  requireLevel_(user, "press", "read");
+  requirePermission_(
+    user,
+    "deleteUnpressed",
+    'Anda tidak memiliki izin "Hapus Sisa Press".',
+  );
 }
 
 function requireLineAccess_(user, line) {

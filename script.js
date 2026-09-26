@@ -44,7 +44,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbz22170B15U7oag2P6u4MH-4AreBglEUk_VBt6leS9Yjza5h9LpJuwzMILbsXNRUore0Q/exec",
+      "https://script.google.com/macros/s/AKfycbyrz9zddOvbdxG0ZVYqg8tAUYEr1gTonRmcu32tTUxY13MpzM0e4Z9pBsK5CTP62j8Gvg/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -288,6 +288,13 @@
     return canManage(
       "spk",
       spk.createdBy === state.currentUser.username ? "own" : "others",
+    );
+  }
+
+  function canDeletePressRemainder() {
+    return (
+      canLevel("press", "admin") ||
+      (canLevel("press", "read") && can("deleteUnpressed"))
     );
   }
 
@@ -1299,7 +1306,7 @@
     clone.addEventListener("click", async (event) => {
       const deleteBtn = event.target.closest(".press-balance-delete");
       if (deleteBtn) {
-        if (!canLevel("press", "admin")) {
+        if (!canDeletePressRemainder()) {
           return toast("Tidak ada akses", true);
         }
         const produkValue = deleteBtn.dataset.produk || "";
@@ -1420,7 +1427,7 @@
     qs(".press-balance-mass-delete", clone)?.addEventListener(
       "click",
       async (event) => {
-        if (!canLevel("press", "admin")) return toast("Tidak ada akses", true);
+        if (!canDeletePressRemainder()) return toast("Tidak ada akses", true);
         const selectedRows = getPressBalanceRows().filter(
           (row) =>
             selectedPressBalanceRows.has(String(row.id)) &&
@@ -2501,7 +2508,7 @@
       allRows
         .filter(
           (row) =>
-            canLevel("press", "admin") &&
+            canDeletePressRemainder() &&
             row.hasSpreadsheet &&
             !row.hasPreview &&
             row.batchNo &&
@@ -2529,9 +2536,18 @@
                 : row.source === "mixed"
                   ? '<span class="sync-badge pending">Spreadsheet + Preview</span>'
                   : '<span class="sync-badge saved">Spreadsheet</span>';
-            const deleteAllowed = canLevel("press", "admin");
+            const deleteAllowed = canDeletePressRemainder();
             const deleteDisabled = row.hasPreview || !row.hasSpreadsheet;
             const selectable = selectableRowIds.has(String(row.id));
+            const selectionTitle = !deleteAllowed
+              ? 'Perlu izin "Hapus Sisa Press"'
+              : row.hasPreview
+                ? "Simpan Preview Filling terlebih dahulu"
+                : !row.hasSpreadsheet
+                  ? "Data ini belum tersimpan"
+                  : !row.batchNo || !row.tanggalAsal
+                    ? "Data belum memiliki No Batch atau Tanggal Asal"
+                    : "Pilih sisa Press untuk penghapusan massal";
             // !deleteAllowed || row.hasPreview || !row.hasSpreadsheet;
             const deleteTitle = row.hasPreview
               ? // !deleteAllowed
@@ -2544,7 +2560,7 @@
 
             return `
       <tr>
-        <td class="select-col">${selectable ? `<input type="checkbox" class="press-balance-row-select" data-row-id="${esc(row.id)}" aria-label="Pilih sisa Press No Batch ${esc(row.batchNo)}" ${selectedPressBalanceRows.has(String(row.id)) ? "checked" : ""}>` : ""}</td>
+        <td class="select-col"><input type="checkbox" class="press-balance-row-select" data-row-id="${esc(row.id)}" aria-label="Pilih sisa Press No Batch ${esc(row.batchNo)}" title="${selectionTitle}" ${selectable ? "" : "disabled"} ${selectedPressBalanceRows.has(String(row.id)) ? "checked" : ""}></td>
         <td><strong>${esc(row.batchNo || "—")}</strong></td>
         <td>
           <div class="press-product-name" title="${esc(row.produk)}">${esc(row.produk)}</div>
@@ -2624,9 +2640,9 @@
     }
     const massDeleteButton = qs(".press-balance-mass-delete", section);
     if (massDeleteButton) {
-      massDeleteButton.hidden =
-        !selectedPressBalanceRows.size || !canLevel("press", "admin");
-      massDeleteButton.disabled = !selectedPressBalanceRows.size;
+      massDeleteButton.hidden = false;
+      massDeleteButton.disabled =
+        !selectedPressBalanceRows.size || !canDeletePressRemainder();
       massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Terpilih${selectedPressBalanceRows.size ? ` (${selectedPressBalanceRows.size})` : ""}`;
     }
 
@@ -5762,6 +5778,11 @@
           .map((item) => {
             const batchNo = String(item.batchNo || "");
             const selectable = selectableBatchNos.has(batchNo);
+            const selectionTitle = selectable
+              ? "Pilih SPK untuk penghapusan massal"
+              : Number(item.usedQty) > 0
+                ? "SPK sudah digunakan dan tidak dapat dihapus"
+                : "Anda tidak memiliki izin mengelola SPK ini";
             const fillingCount = fillingRows.filter(
               (entry) => entryBatchNo(entry) === batchNo,
             ).length;
@@ -5770,7 +5791,7 @@
               ? Number(item.remainingQty).toLocaleString("id-ID")
               : "Belum ada Qty";
             return `<tr>
-            <td class="select-col">${selectable ? `<input type="checkbox" class="filling-spk-row-select" data-batch-no="${esc(batchNo)}" aria-label="Pilih SPK ${esc(batchNo)}" ${selectedFillingSpkRows.has(batchNo) ? "checked" : ""}>` : ""}</td>
+            <td class="select-col"><input type="checkbox" class="filling-spk-row-select" data-batch-no="${esc(batchNo)}" aria-label="Pilih SPK ${esc(batchNo)}" title="${selectionTitle}" ${selectable ? "" : "disabled"} ${selectedFillingSpkRows.has(batchNo) ? "checked" : ""}></td>
             <td><span class="id-badge">${esc(item.batchNo)}</span></td>
             <td>${esc(item.produk)}</td><td>${esc(item.botol)}</td>
             <td>${qty ? qty.toLocaleString("id-ID") : "—"}</td>
@@ -5814,9 +5835,9 @@
     }
     const massDeleteButton = el("fillingSpkMassDeleteButton");
     if (massDeleteButton) {
-      massDeleteButton.hidden =
+      massDeleteButton.hidden = false;
+      massDeleteButton.disabled =
         !selectedFillingSpkRows.size || !canLevel("spk", "write");
-      massDeleteButton.disabled = !selectedFillingSpkRows.size;
       massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Terpilih${selectedFillingSpkRows.size ? ` (${selectedFillingSpkRows.size})` : ""}`;
     }
   }
