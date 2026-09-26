@@ -1212,7 +1212,7 @@
           <table class="data-table">
             <thead>
               <tr>
-                <th>Tanggal Asal</th>
+                <th>No Batch</th>
                 <th>Produk</th>
                 <th>Botol</th>
                 <th>Qty (Kardus)</th>
@@ -2434,7 +2434,7 @@
 
             return `
       <tr>
-        <td><strong>${esc(row.tanggalAsal || "—")}</strong></td>
+        <td><strong>${esc(row.batchNo || "—")}</strong></td>
         <td>
           <div class="press-product-name" title="${esc(row.produk)}">${esc(row.produk)}</div>
           ${!produkAktif ? '<div class="press-master-history">Produk historis</div>' : ""}
