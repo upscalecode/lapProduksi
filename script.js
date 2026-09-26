@@ -776,7 +776,7 @@
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
   }
 
-  function findSpkBatch(tanggal, produk, botol) {
+  function findSpkBatch(tanggal, produk, botol, preferredBatchNo = "") {
     const productKey = String(produk || "")
       .trim()
       .toLowerCase();
@@ -794,9 +794,15 @@
           .toLowerCase() === bottleKey &&
         spkRemainingQty(item) > 0,
     );
-    return matches.length
-      ? String(matches[matches.length - 1].batchNo || "")
-      : "";
+    const preferred = String(preferredBatchNo || "").trim();
+    const preferredMatch = matches.find(
+      (item) => String(item.batchNo || "").trim() === preferred,
+    );
+    return preferredMatch
+      ? String(preferredMatch.batchNo || "")
+      : matches.length
+        ? String(matches[matches.length - 1].batchNo || "")
+        : "";
   }
 
   function spkFillingUsedQty(batchNo, excludeEntryId = "") {
@@ -1329,6 +1335,12 @@
             true,
           );
         }
+        if (!row.hasSpreadsheet) {
+          return toast(
+            "Data sisa Press ini belum tersimpan di Spreadsheet.",
+            true,
+          );
+        }
 
         const alasan = await askClosePressReason(row);
         if (!alasan) return;
@@ -1427,6 +1439,9 @@
     qs(".press-balance-mass-delete", clone)?.addEventListener(
       "click",
       async (event) => {
+        // Simpan referensi sebelum await. Event.currentTarget hanya valid selama
+        // dispatch event dan menjadi null setelah dialog alasan ditutup.
+        const button = event.currentTarget;
         if (!canDeletePressRemainder()) return toast("Tidak ada akses", true);
         const selectedRows = getPressBalanceRows().filter(
           (row) =>
@@ -1442,7 +1457,6 @@
         const alasan = await askClosePressReason(selectedRows);
         if (!alasan) return;
 
-        const button = event.currentTarget;
         button.disabled = true;
         button.textContent = "Menghapus…";
         try {
@@ -1470,6 +1484,7 @@
             `${selectedRows.length} sisa Press berhasil dihapus dengan alasan tercatat.`,
           );
         } catch (err) {
+          button.disabled = false;
           toast(`Gagal menghapus sisa Press terpilih: ${err.message}`, true);
           renderPressBalance();
         }
@@ -2535,7 +2550,6 @@
                   ? '<span class="sync-badge pending">Spreadsheet + Preview</span>'
                   : '<span class="sync-badge saved">Spreadsheet</span>';
             const deleteAllowed = canDeletePressRemainder();
-            const deleteDisabled = row.hasPreview || !row.hasSpreadsheet;
             const selectable = selectableRowIds.has(String(row.id));
             const selectionTitle = !deleteAllowed
               ? 'Perlu izin "Hapus Sisa Press"'
@@ -2584,7 +2598,7 @@
             data-produk="${esc(row.produk)}"
             data-batch-no="${esc(row.batchNo || "")}" data-tanggal-asal="${esc(row.tanggalAsal)}"
             data-per-kardus="${Number(row.qtyBotolPerKardus[0]) || 0}"
-            data-botol="${esc(row.botol)}" ${deleteDisabled ? "disabled" : ""}
+            data-botol="${esc(row.botol)}"
             title="${esc(deleteTitle)}"> Hapus </button>
               `
                 : ""
@@ -2957,6 +2971,7 @@
         tanggal.value || todayStr(),
         produk?.value,
         botol?.value,
+        batchNo.value,
       );
       if (batchDisplay) batchDisplay.value = batchNo.value;
       stamp.textContent = batchNo.value
