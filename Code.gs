@@ -1466,10 +1466,8 @@ function createEntriesBatch_(user, dataList) {
     const batchNo = String(entry.reportId || "")
       .replace(/^(?:FILL|PRESS)\s*-\s*/i, "")
       .trim();
-    fillingQtyByBatchNo[batchNo] = Math.max(
-      number_(fillingQtyByBatchNo[batchNo]),
-      number_(entry.totalQty),
-    );
+    fillingQtyByBatchNo[batchNo] =
+      number_(fillingQtyByBatchNo[batchNo]) + number_(entry.totalQty);
   });
 
   dataList.forEach(function (raw, index) {
@@ -1564,20 +1562,24 @@ function createEntriesBatch_(user, dataList) {
       const spk = spkByBatchNo[data.batchNo];
       const requestedQty = qtyKardus * qtyBotol;
       const usedQty = number_(fillingQtyByBatchNo[data.batchNo]);
-      if (spk && number_(spk.qty) > 0 && requestedQty > number_(spk.qty)) {
+      if (
+        spk &&
+        number_(spk.qty) > 0 &&
+        usedQty + requestedQty > number_(spk.qty)
+      ) {
         throw new Error(
           "Data ke-" +
             (index + 1) +
             ": Qty Filling " +
             requestedQty +
-            " pcs melebihi kapasitas SPK " +
+            " pcs melebihi sisa kapasitas SPK " +
             data.batchNo +
             " pada baris ini, yaitu " +
-            number_(spk.qty) +
+            Math.max(0, number_(spk.qty) - usedQty) +
             " pcs.",
         );
       }
-      fillingQtyByBatchNo[data.batchNo] = Math.max(usedQty, requestedQty);
+      fillingQtyByBatchNo[data.batchNo] = usedQty + requestedQty;
     }
 
     const createdAt = new Date(now.getTime() + index);
@@ -2039,14 +2041,25 @@ function assertSpkFillingQty_(data, excludeEntryId) {
   });
   if (!spk || number_(spk.qty) <= 0) return; // kompatibilitas SPK lama tanpa Qty
   const requested = Number(data.qtyKardus) * Number(data.qtyBotolPerKardus);
-  if (requested > number_(spk.qty)) {
+  const used = getEntries_()
+    .filter(function (entry) {
+      return (
+        entry.tab === "filling" &&
+        reportBatchNo_(entry.reportId) === batchNo &&
+        String(entry.id || "") !== String(excludeEntryId || "")
+      );
+    })
+    .reduce(function (total, entry) {
+      return total + number_(entry.totalQty);
+    }, 0);
+  if (used + requested > number_(spk.qty)) {
     throw new Error(
       "Qty Filling " +
         requested +
-        " pcs melebihi kapasitas SPK " +
+        " pcs melebihi sisa kapasitas SPK " +
         batchNo +
         " pada baris ini, yaitu " +
-        number_(spk.qty) +
+        Math.max(0, number_(spk.qty) - used) +
         " pcs.",
     );
   }

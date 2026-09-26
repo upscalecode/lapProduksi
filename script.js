@@ -817,10 +817,7 @@
           entryBatchNo(entry) === target &&
           String(entry.id || "") !== String(excludeEntryId || ""),
       )
-      .reduce(
-        (largest, entry) => Math.max(largest, Number(entry.totalQty) || 0),
-        0,
-      );
+      .reduce((total, entry) => total + (Number(entry.totalQty) || 0), 0);
   }
 
   function spkRemainingQty(spk, excludeEntryId = "") {
@@ -3188,8 +3185,13 @@
         );
         const requestedQty = payload.qtyKardus * payload.qtyBotolPerKardus;
         const spkCapacity = Math.max(0, Number(spk?.qty) || 0);
-        if (spkCapacity > 0 && requestedQty > spkCapacity) {
-          errorEl.textContent = `Qty Filling ${requestedQty.toLocaleString("id-ID")} pcs melebihi kapasitas SPK pada baris ini, yaitu ${spkCapacity.toLocaleString("id-ID")} pcs.`;
+        const alreadyUsedQty = spkFillingUsedQty(payload.batchNo, id);
+        if (
+          spkCapacity > 0 &&
+          alreadyUsedQty + requestedQty > spkCapacity
+        ) {
+          const availableQty = Math.max(0, spkCapacity - alreadyUsedQty);
+          errorEl.textContent = `Qty Filling ${requestedQty.toLocaleString("id-ID")} pcs melebihi sisa SPK pada baris ini, yaitu ${availableQty.toLocaleString("id-ID")} pcs.`;
           errorEl.hidden = false;
           return;
         }
