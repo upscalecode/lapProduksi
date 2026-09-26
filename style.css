@@ -5046,6 +5046,30 @@ button {
   color: var(--accent-2);
   font-weight: 800;
 }
+
+.kpi-press-score.kpi-score-equal {
+  background: #dcf0e3 !important;
+  color: #2c7a4b !important;
+}
+
+.kpi-press-score.kpi-score-below {
+  background: #f8deda !important;
+  color: #c1402c !important;
+}
+
+.kpi-press-score.kpi-score-above {
+  background: #fba834 !important;
+  color: #ffffff !important;
+}
+
+.kpi-achievement-card.kpi-score-equal span,
+.kpi-achievement-card.kpi-score-equal strong,
+.kpi-achievement-card.kpi-score-below span,
+.kpi-achievement-card.kpi-score-below strong,
+.kpi-achievement-card.kpi-score-above span,
+.kpi-achievement-card.kpi-score-above strong {
+  color: inherit;
+}
 .kpi-press-row-quality .kpi-press-score {
   background: var(--success-soft);
   color: var(--success);
@@ -5623,6 +5647,56 @@ button {
   .kpi-employee-cards {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+/* Status warna capaian harus mengungguli warna bawaan jenis indikator. */
+.kpi-press-table thead th,
+.kpi-press-total-row td {
+  background: var(--accent-2-soft) !important;
+  color: var(--accent-2) !important;
+  border-color: #bfd2de !important;
+}
+
+.kpi-press-row .kpi-press-score.kpi-score-equal,
+.kpi-press-result
+  .kpi-employee-card
+  .kpi-achievement-card.kpi-score-equal {
+  background: #dcf0e3 !important;
+  color: #2c7a4b !important;
+}
+
+.kpi-press-row .kpi-press-score.kpi-score-below,
+.kpi-press-result
+  .kpi-employee-card
+  .kpi-achievement-card.kpi-score-below {
+  background: #f8deda !important;
+  color: #c1402c !important;
+}
+
+.kpi-press-row .kpi-press-score.kpi-score-above,
+.kpi-press-result
+  .kpi-employee-card
+  .kpi-achievement-card.kpi-score-above {
+  background: #fba834 !important;
+  color: #ffffff !important;
+}
+
+.kpi-press-result
+  .kpi-achievement-card.kpi-score-equal
+  :is(span, strong) {
+  color: #2c7a4b !important;
+}
+
+.kpi-press-result
+  .kpi-achievement-card.kpi-score-below
+  :is(span, strong) {
+  color: #c1402c !important;
+}
+
+.kpi-press-result
+  .kpi-achievement-card.kpi-score-above
+  :is(span, strong) {
+  color: #ffffff !important;
 }
 @media (max-width: 560px) {
   .kpi-employee-cards {

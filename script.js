@@ -7913,6 +7913,14 @@
     });
   }
 
+  function kpiAchievementColorClass(achievement, weight) {
+    const actual = Number(achievement) || 0;
+    const target = Number(weight) || 0;
+    // Toleransi mengikuti tampilan capaian yang menggunakan dua desimal.
+    if (Math.abs(actual - target) < 0.005) return "kpi-score-equal";
+    return actual < target ? "kpi-score-below" : "kpi-score-above";
+  }
+
   function kpiPressQtyText(value) {
     return (Number(value) || 0).toLocaleString("id-ID");
   }
@@ -8466,7 +8474,7 @@
         field: "KEPATUHAN",
         indicator: "KEDISIPLINAN PEMAKAIAN APD",
         weight: 10,
-        targetText: "> 95%",
+        targetText: "RATA-RATA ≥ 95%",
         targetPercent: 100,
         actualText: kpiPressPercentText(apdActual),
         achievement:
@@ -8548,6 +8556,7 @@
   }
 
   function kpiPressRowHtml(row) {
+    const scoreClass = kpiAchievementColorClass(row.achievement, row.weight);
     return `
       <tr class="kpi-press-row kpi-press-row-${esc(row.tone)}">
         <td class="kpi-center">${row.no}</td>
@@ -8557,7 +8566,7 @@
         <td>${esc(row.targetText)}</td>
         <td class="kpi-center">${row.targetPercent}</td>
         <td class="kpi-center"><strong>${esc(row.actualText)}</strong></td>
-        <td class="kpi-center"><span class="kpi-press-score">${kpiPressScoreText(row.achievement)}</span></td>
+        <td class="kpi-center"><span class="kpi-press-score ${scoreClass}">${kpiPressScoreText(row.achievement)}</span></td>
       </tr>`;
   }
 
@@ -8584,6 +8593,11 @@
 
   function kpiPressEmployeeCardHtml(report, index, expanded = false) {
     const detailId = `kpi-employee-detail-${index}`;
+    const totalAchievementTarget = 100;
+    const totalScoreClass = kpiAchievementColorClass(
+      report.totalAchievement,
+      totalAchievementTarget,
+    );
     return `
       <article class="kpi-employee-card ${expanded ? "is-expanded" : ""}" data-kpi-card="${index}">
         <div class="kpi-employee-card-head">
@@ -8591,7 +8605,7 @@
             <div class="kpi-employee-name-tile">
               <h3>${esc(report.operator)}</h3>
             </div>
-            <div class="kpi-achievement-card">
+            <div class="kpi-achievement-card ${totalScoreClass}" title="Target total capaian ${totalAchievementTarget}%">
               <span>Capaian</span>
               <strong>${kpiPressScoreText(report.totalAchievement)}%</strong>
             </div>
@@ -8839,7 +8853,7 @@
           <td>${esc(row.targetText)}</td>
           <td class="center">${row.targetPercent}</td>
           <td class="center"><strong>${esc(row.actualText)}</strong></td>
-          <td class="center"><strong>${esc(kpiPressScoreText(row.achievement))}</strong></td>
+          <td class="center ${kpiAchievementColorClass(row.achievement, row.weight)}"><strong>${esc(kpiPressScoreText(row.achievement))}</strong></td>
         </tr>`,
           )
           .join("");
@@ -8911,11 +8925,14 @@
     .achievement { min-width:120px; border:1px solid #cbd5e1; border-radius:6px; padding:6px 10px; text-align:center; }
     .achievement span { display:block; color:#6b7280; font-size:7px; text-transform:uppercase; }
     .achievement strong { display:block; margin-top:2px; font-size:15px; }
+    .kpi-score-equal { background:#dcf0e3 !important; color:#2c7a4b !important; }
+    .kpi-score-below { background:#f8deda !important; color:#c1402c !important; }
+    .kpi-score-above { background:#fba834 !important; color:#fff !important; }
     table { width:100%; border-collapse:collapse; }
     th,td { border:1px solid #cfd6dd; padding:5px 6px; }
-    th { background:#dbe5f1; text-transform:uppercase; font-size:7.5px; text-align:left; }
+    th { background:#ddeaf2; color:#2a5f82; text-transform:uppercase; font-size:7.5px; text-align:left; }
     .center { text-align:center; white-space:nowrap; }
-    tfoot td { background:#fff200; font-weight:700; }
+    tfoot td { background:#ddeaf2; color:#2a5f82; font-weight:700; }
     tfoot .total-label { text-align:right; padding-right:10px; }
     .compact { margin-top:5px; color:#4b5563; font-size:8px; line-height:1.4; }
     .notes { margin-top:12px; border-top:1px solid #d1d5db; padding-top:7px; font-size:8px; line-height:1.45; color:#374151; }
