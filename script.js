@@ -44,7 +44,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbyKhFPPpLQFNc-ZvjVQgqWQVhYpjTRZlu_NKk-4Ekw9mc8FWv1F3Teh0iWzctNXs2fk1Q/exec",
+      "https://script.google.com/macros/s/AKfycbz22170B15U7oag2P6u4MH-4AreBglEUk_VBt6leS9Yjza5h9LpJuwzMILbsXNRUore0Q/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -109,6 +109,8 @@
     lastKpiLaporan: null,
   };
   const selectedSpkRows = new Set();
+  const selectedFillingSpkRows = new Set();
+  const selectedPressBalanceRows = new Set();
 
   // Antrean tulis: UI tetap instan, request Spreadsheet dikirim satu per satu
   // agar input cepat berulang tidak saling berebut LockService di Apps Script.
@@ -1212,6 +1214,9 @@
           <table class="data-table">
             <thead>
               <tr>
+                <th class="select-col">
+                  <input type="checkbox" class="press-balance-select-all" aria-label="Pilih semua sisa Press yang dapat dihapus pada halaman ini">
+                </th>
                 <th>No Batch</th>
                 <th>Produk</th>
                 <th>Botol</th>
@@ -1224,13 +1229,16 @@
               </tr>
             </thead>
             <tbody class="press-balance-tbody">
-              <tr><td colspan="9" class="empty-row">Memuat sisa pengerjaan Press…</td></tr>
+              <tr><td colspan="10" class="empty-row">Memuat sisa pengerjaan Press…</td></tr>
             </tbody>
           </table>
         </div>
         <div class="table-footer">
           <p class="table-summary press-balance-summary"></p>
           <div class="pagination press-balance-pagination" aria-label="Navigasi halaman sisa Press"></div>
+          <button type="button" class="btn btn-danger press-balance-mass-delete" hidden disabled>
+            <i class="fa-solid fa-trash"></i> Hapus Terpilih
+          </button>
         </div>`;
       stack.insertBefore(balancePanel, form);
 
@@ -1300,6 +1308,8 @@
           (item) =>
             balanceKey(item.produk, item.botol) ===
               balanceKey(produkValue, botolValue) &&
+            String(item.batchNo || "") ===
+              String(deleteBtn.dataset.batchNo || "") &&
             String(item.tanggalAsal || "") ===
               String(deleteBtn.dataset.tanggalAsal || "") &&
             Number(item.qtyBotolPerKardus[0]) ===
@@ -1326,6 +1336,8 @@
                 produk: row.produk,
                 botol: row.botol,
                 qtyBotolPerKardus: row.qtyBotolPerKardus[0],
+                targetBatchNo: row.batchNo || "",
+                targetTanggalAsal: row.tanggalAsal || "",
                 alasan,
               },
             }),
@@ -1383,6 +1395,80 @@
       saveFormDraft("press", pressForm);
       openPressFormPopup(useBtn);
     });
+
+    const balanceBody = qs(".press-balance-tbody", clone);
+    balanceBody?.addEventListener("change", (event) => {
+      const checkbox = event.target.closest(".press-balance-row-select");
+      if (!checkbox) return;
+      const rowId = checkbox.dataset.rowId || "";
+      if (checkbox.checked) selectedPressBalanceRows.add(rowId);
+      else selectedPressBalanceRows.delete(rowId);
+      renderPressBalance();
+    });
+    const selectAllBalance = qs(".press-balance-select-all", clone);
+    selectAllBalance?.addEventListener("change", () => {
+      let rowIds = [];
+      try {
+        rowIds = JSON.parse(selectAllBalance.dataset.rowIds || "[]");
+      } catch (_) {}
+      rowIds.forEach((rowId) => {
+        if (selectAllBalance.checked) selectedPressBalanceRows.add(rowId);
+        else selectedPressBalanceRows.delete(rowId);
+      });
+      renderPressBalance();
+    });
+    qs(".press-balance-mass-delete", clone)?.addEventListener(
+      "click",
+      async (event) => {
+        if (!canLevel("press", "admin")) return toast("Tidak ada akses", true);
+        const selectedRows = getPressBalanceRows().filter(
+          (row) =>
+            selectedPressBalanceRows.has(String(row.id)) &&
+            row.hasSpreadsheet &&
+            !row.hasPreview &&
+            row.batchNo &&
+            row.tanggalAsal,
+        );
+        if (!selectedRows.length)
+          return toast("Tidak ada sisa Press tersimpan yang dipilih.", true);
+        if (selectedRows.length > 100)
+          return toast("Maksimal 100 sisa Press per sekali penghapusan.", true);
+        const alasan = await askClosePressReason(selectedRows);
+        if (!alasan) return;
+
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.textContent = "Menghapus…";
+        try {
+          const response = await enqueueWrite(() =>
+            apiPost("press.adjustment.closeBatch", {
+              data: {
+                rows: selectedRows.map((row) => ({
+                  produk: row.produk,
+                  botol: row.botol,
+                  qtyBotolPerKardus: row.qtyBotolPerKardus[0],
+                  targetBatchNo: row.batchNo,
+                  targetTanggalAsal: row.tanggalAsal,
+                })),
+                alasan,
+              },
+            }),
+          );
+          (response.adjustments || []).forEach(upsertAdjustment);
+          if (Array.isArray(response.remainders))
+            state.remainders = response.remainders;
+          selectedPressBalanceRows.clear();
+          state.pressBalance.page = 1;
+          renderPressBalance();
+          toast(
+            `${selectedRows.length} sisa Press berhasil dihapus dengan alasan tercatat.`,
+          );
+        } catch (err) {
+          toast(`Gagal menghapus sisa Press terpilih: ${err.message}`, true);
+          renderPressBalance();
+        }
+      },
+    );
 
     const balanceSearch = qs(".press-balance-search", clone);
     const balanceSearchReset = qs(".press-balance-search-reset", clone);
@@ -2104,8 +2190,14 @@
     document.head.appendChild(style);
   }
 
-  function askClosePressReason(row) {
+  function askClosePressReason(rowOrRows) {
     ensureClosePressModalStyle();
+    const rows = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows];
+    const row = rows[0] || {};
+    const totalRemaining = rows.reduce(
+      (sum, item) => sum + (Number(item.remaining) || 0),
+      0,
+    );
     return new Promise((resolve) => {
       const overlay = document.createElement("div");
       overlay.className = "press-close-overlay";
@@ -2114,9 +2206,10 @@
           <h3 id="pressCloseTitle">Hapus Sisa Pengerjaan Press</h3>
           <p>Qty sisa akan dikeluarkan dari saldo Press aktif, tetapi riwayat Filling/Press tidak dihapus. Alasan wajib dicatat untuk audit.</p>
           <div class="press-close-meta">
-            <div><strong>Produk</strong><br>${esc(row.produk)}</div>
-            <div><strong>Botol</strong><br>${esc(row.botol)}</div>
-            <div><strong>Sisa Qty</strong><br>${Number(row.remaining).toLocaleString("id-ID")} botol</div>
+            <div><strong>Produk</strong><br>${rows.length === 1 ? esc(row.produk) : `${new Set(rows.map((item) => item.produk)).size} produk dipilih`}</div>
+            <div><strong>Botol</strong><br>${rows.length === 1 ? esc(row.botol) : `${new Set(rows.map((item) => item.botol)).size} jenis botol`}</div>
+            <div><strong>Baris Dipilih</strong><br>${rows.length.toLocaleString("id-ID")}</div>
+            <div><strong>Total Sisa Qty</strong><br>${totalRemaining.toLocaleString("id-ID")} botol</div>
             <div><strong>Tanggal</strong><br>${esc(todayStr())}</div>
           </div>
           <label class="field"><span>Alasan Hapus <b>*</b></span>
@@ -2404,6 +2497,22 @@
       start,
       start + CONFIG.PRESS_BALANCE_PAGE_SIZE,
     );
+    const selectableRowIds = new Set(
+      allRows
+        .filter(
+          (row) =>
+            canLevel("press", "admin") &&
+            row.hasSpreadsheet &&
+            !row.hasPreview &&
+            row.batchNo &&
+            row.tanggalAsal &&
+            Number(row.qtyBotolPerKardus[0]) > 0,
+        )
+        .map((row) => String(row.id)),
+    );
+    selectedPressBalanceRows.forEach((rowId) => {
+      if (!selectableRowIds.has(rowId)) selectedPressBalanceRows.delete(rowId);
+    });
 
     if (searchInput && searchInput.value !== state.pressBalance.search) {
       searchInput.value = state.pressBalance.search || "";
@@ -2422,6 +2531,7 @@
                   : '<span class="sync-badge saved">Spreadsheet</span>';
             const deleteAllowed = canLevel("press", "admin");
             const deleteDisabled = row.hasPreview || !row.hasSpreadsheet;
+            const selectable = selectableRowIds.has(String(row.id));
             // !deleteAllowed || row.hasPreview || !row.hasSpreadsheet;
             const deleteTitle = row.hasPreview
               ? // !deleteAllowed
@@ -2434,6 +2544,7 @@
 
             return `
       <tr>
+        <td class="select-col">${selectable ? `<input type="checkbox" class="press-balance-row-select" data-row-id="${esc(row.id)}" aria-label="Pilih sisa Press No Batch ${esc(row.batchNo)}" ${selectedPressBalanceRows.has(String(row.id)) ? "checked" : ""}>` : ""}</td>
         <td><strong>${esc(row.batchNo || "—")}</strong></td>
         <td>
           <div class="press-product-name" title="${esc(row.produk)}">${esc(row.produk)}</div>
@@ -2457,7 +2568,7 @@
                 ? `
             <button type="button" class="btn btn-danger press-balance-delete"
             data-produk="${esc(row.produk)}"
-            data-tanggal-asal="${esc(row.tanggalAsal)}"
+            data-batch-no="${esc(row.batchNo || "")}" data-tanggal-asal="${esc(row.tanggalAsal)}"
             data-per-kardus="${Number(row.qtyBotolPerKardus[0]) || 0}"
             data-botol="${esc(row.botol)}" ${deleteDisabled ? "disabled" : ""}
             title="${esc(deleteTitle)}"> Hapus </button>
@@ -2469,7 +2580,7 @@
       </tr>`;
           })
           .join("")
-      : `<tr><td colspan="9" class="empty-row">${query ? "Nama produk tidak ditemukan." : "Tidak ada sisa Filling yang menunggu Press."}</td></tr>`;
+      : `<tr><td colspan="10" class="empty-row">${query ? "Nama produk tidak ditemukan." : "Tidak ada sisa Filling yang menunggu Press."}</td></tr>`;
 
     const remainingTotal = rows.reduce(
       (sum, row) => sum + (Number(row.remaining) || 0),
@@ -2495,6 +2606,29 @@
         block: "start",
       });
     });
+
+    const visibleRowIds = visibleRows
+      .filter((row) => selectableRowIds.has(String(row.id)))
+      .map((row) => String(row.id));
+    const selectAll = qs(".press-balance-select-all", section);
+    if (selectAll) {
+      const selectedCount = visibleRowIds.filter((rowId) =>
+        selectedPressBalanceRows.has(rowId),
+      ).length;
+      selectAll.disabled = !visibleRowIds.length;
+      selectAll.checked =
+        Boolean(visibleRowIds.length) && selectedCount === visibleRowIds.length;
+      selectAll.indeterminate =
+        selectedCount > 0 && selectedCount < visibleRowIds.length;
+      selectAll.dataset.rowIds = JSON.stringify(visibleRowIds);
+    }
+    const massDeleteButton = qs(".press-balance-mass-delete", section);
+    if (massDeleteButton) {
+      massDeleteButton.hidden =
+        !selectedPressBalanceRows.size || !canLevel("press", "admin");
+      massDeleteButton.disabled = !selectedPressBalanceRows.size;
+      massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Terpilih${selectedPressBalanceRows.size ? ` (${selectedPressBalanceRows.size})` : ""}`;
+    }
 
     const form = qs(".form-panel", section);
     updatePressAvailabilityHint(form);
@@ -5605,6 +5739,20 @@
     );
     const start = (state.spk.fillingPage - 1) * pageSize;
     const visibleRows = rows.slice(start, start + pageSize);
+    const selectableBatchNos = new Set(
+      rows
+        .filter(
+          (item) =>
+            Number(item.usedQty) <= 0 &&
+            canManageSpk(item) &&
+            canLevel("spk", "write"),
+        )
+        .map((item) => String(item.batchNo)),
+    );
+    selectedFillingSpkRows.forEach((batchNo) => {
+      if (!selectableBatchNos.has(batchNo))
+        selectedFillingSpkRows.delete(batchNo);
+    });
     const fillingRows = [
       ...(state.entries || []).filter((item) => item.tab === "filling"),
       ...(state.preview.filling || []),
@@ -5612,14 +5760,17 @@
     tbody.innerHTML = visibleRows.length
       ? visibleRows
           .map((item) => {
+            const batchNo = String(item.batchNo || "");
+            const selectable = selectableBatchNos.has(batchNo);
             const fillingCount = fillingRows.filter(
-              (entry) => entryBatchNo(entry) === item.batchNo,
+              (entry) => entryBatchNo(entry) === batchNo,
             ).length;
             const qty = Math.max(0, Number(item.qty) || 0);
             const remainingLabel = qty
               ? Number(item.remainingQty).toLocaleString("id-ID")
               : "Belum ada Qty";
             return `<tr>
+            <td class="select-col">${selectable ? `<input type="checkbox" class="filling-spk-row-select" data-batch-no="${esc(batchNo)}" aria-label="Pilih SPK ${esc(batchNo)}" ${selectedFillingSpkRows.has(batchNo) ? "checked" : ""}>` : ""}</td>
             <td><span class="id-badge">${esc(item.batchNo)}</span></td>
             <td>${esc(item.produk)}</td><td>${esc(item.botol)}</td>
             <td>${qty ? qty.toLocaleString("id-ID") : "—"}</td>
@@ -5631,7 +5782,7 @@
           </tr>`;
           })
           .join("")
-      : '<tr><td colspan="7" class="empty-row">Tidak ada SPK dengan sisa Qty.</td></tr>';
+      : '<tr><td colspan="8" class="empty-row">Tidak ada SPK dengan sisa Qty.</td></tr>';
     dashboardSetText(
       "fillingSpkSummary",
       `${rows.length ? start + 1 : 0}–${Math.min(start + pageSize, rows.length)} dari ${rows.length} SPK belum selesai · ${fillingRows.length} total input Filling`,
@@ -5645,9 +5796,85 @@
         renderFillingSpkQueue();
       },
     );
+    const visibleBatchNos = visibleRows
+      .filter((item) => selectableBatchNos.has(String(item.batchNo)))
+      .map((item) => String(item.batchNo));
+    const selectAll = el("fillingSpkSelectAll");
+    if (selectAll) {
+      const selectedCount = visibleBatchNos.filter((batchNo) =>
+        selectedFillingSpkRows.has(batchNo),
+      ).length;
+      selectAll.disabled = !visibleBatchNos.length;
+      selectAll.checked =
+        Boolean(visibleBatchNos.length) &&
+        selectedCount === visibleBatchNos.length;
+      selectAll.indeterminate =
+        selectedCount > 0 && selectedCount < visibleBatchNos.length;
+      selectAll.dataset.batchNos = JSON.stringify(visibleBatchNos);
+    }
+    const massDeleteButton = el("fillingSpkMassDeleteButton");
+    if (massDeleteButton) {
+      massDeleteButton.hidden =
+        !selectedFillingSpkRows.size || !canLevel("spk", "write");
+      massDeleteButton.disabled = !selectedFillingSpkRows.size;
+      massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Terpilih${selectedFillingSpkRows.size ? ` (${selectedFillingSpkRows.size})` : ""}`;
+    }
   }
 
   function initFillingSpkQueue() {
+    el("fillingSpkBody")?.addEventListener("change", (event) => {
+      const checkbox = event.target.closest(".filling-spk-row-select");
+      if (!checkbox) return;
+      const batchNo = String(checkbox.dataset.batchNo || "");
+      if (checkbox.checked) selectedFillingSpkRows.add(batchNo);
+      else selectedFillingSpkRows.delete(batchNo);
+      renderFillingSpkQueue();
+    });
+    el("fillingSpkSelectAll")?.addEventListener("change", (event) => {
+      let batchNos = [];
+      try {
+        batchNos = JSON.parse(event.target.dataset.batchNos || "[]");
+      } catch (_) {}
+      batchNos.forEach((batchNo) => {
+        if (event.target.checked) selectedFillingSpkRows.add(batchNo);
+        else selectedFillingSpkRows.delete(batchNo);
+      });
+      renderFillingSpkQueue();
+    });
+    el("fillingSpkMassDeleteButton")?.addEventListener("click", async () => {
+      const batchNos = Array.from(selectedFillingSpkRows);
+      if (!batchNos.length) return;
+      if (batchNos.length > 100)
+        return toast("Maksimal 100 SPK per sekali penghapusan.", true);
+      if (
+        !(await confirmDelete({
+          title: `Hapus ${batchNos.length} SPK terpilih?`,
+          message:
+            "SPK terpilih akan dihapus dari Spreadsheet. SPK yang sudah digunakan tidak dapat dihapus.",
+          item: `${batchNos.length} SPK belum digunakan`,
+        }))
+      )
+        return;
+
+      const button = el("fillingSpkMassDeleteButton");
+      button.disabled = true;
+      button.textContent = "Menghapus…";
+      try {
+        await enqueueWrite(() => apiPost("spk.batchDelete", { batchNos }));
+        const deleted = new Set(batchNos);
+        state.spkEntries = state.spkEntries.filter(
+          (item) => !deleted.has(String(item.batchNo)),
+        );
+        selectedFillingSpkRows.clear();
+        renderFillingSpkQueue();
+        renderSpkToday();
+        renderSpkReport();
+        toast(`${batchNos.length} SPK berhasil dihapus.`);
+      } catch (err) {
+        toast(`Gagal menghapus SPK terpilih: ${err.message}`, true);
+        renderFillingSpkQueue();
+      }
+    });
     el("fillingSpkBody")?.addEventListener("click", (event) => {
       const button = event.target.closest(".filling-spk-use");
       if (!button || button.disabled) return;

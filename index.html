@@ -780,6 +780,13 @@
                 <table class="data-table">
                   <thead>
                     <tr>
+                      <th class="select-col">
+                        <input
+                          type="checkbox"
+                          id="fillingSpkSelectAll"
+                          aria-label="Pilih semua SPK yang dapat dihapus pada halaman ini"
+                        />
+                      </th>
                       <th>No Batch</th>
                       <th>Nama Produk</th>
                       <th>Botol</th>
@@ -791,7 +798,7 @@
                   </thead>
                   <tbody id="fillingSpkBody">
                     <tr>
-                      <td colspan="7" class="empty-row">
+                      <td colspan="8" class="empty-row">
                         Tidak ada SPK dengan sisa Qty.
                       </td>
                     </tr>
@@ -807,6 +814,15 @@
                   class="pagination"
                   aria-label="Navigasi halaman SPK Filling"
                 ></div>
+                <button
+                  type="button"
+                  class="btn btn-danger"
+                  id="fillingSpkMassDeleteButton"
+                  hidden
+                  disabled
+                >
+                  <i class="fa-solid fa-trash"></i> Hapus Terpilih
+                </button>
               </div>
             </section>
             <form
@@ -2430,7 +2446,7 @@
       });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="script.js?v=20260926-v102-press-batch-column"></script>
+    <script src="script.js?v=20260926-v103-bulk-delete"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>
