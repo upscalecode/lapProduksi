@@ -44,7 +44,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbzFDJvy69OMCD0Zy-GZvsAz2va7DCuj7YwBDG6q1aZqEcs47ks-V41kaXrO5x7gZ-CeTg/exec",
+      "https://script.google.com/macros/s/AKfycbxx1_bAIZTvf5XHQY_X_xGnbjcFdJrwY_JVCvng0XkP346eHbyoqW-yxRS3umOX4MW0eA/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -112,6 +112,24 @@
   const selectedSpkRows = new Set();
   const selectedFillingSpkRows = new Set();
   const selectedPressBalanceRows = new Set();
+  let openFillingDowntimeModal = null;
+  let fillingDowntimeAutoOpened = false;
+  let fillingDowntimeDataReady = false;
+  let fillingDowntimeDismissed = false;
+
+  function maybeOpenFillingDowntimeModal() {
+    if (
+      fillingDowntimeAutoOpened ||
+      !fillingDowntimeDataReady ||
+      todayDowntimeEntry() ||
+      !canLevel("filling", "write") ||
+      el("view-filling")?.hidden ||
+      typeof openFillingDowntimeModal !== "function"
+    )
+      return;
+    fillingDowntimeAutoOpened = true;
+    openFillingDowntimeModal();
+  }
 
   // Antrean tulis: UI tetap instan, request Spreadsheet dikirim satu per satu
   // agar input cepat berulang tidak saling berebut LockService di Apps Script.
@@ -399,10 +417,10 @@
     });
     const activeReport = qs(".laporan-subnav-btn.active");
     if (activeReport?.hidden) {
-      const fallback = can("accessWorkReport")
-        ? "hasil"
-        : canLevel("spkReport")
-          ? "spk"
+      const fallback = canLevel("spkReport")
+        ? "spk"
+        : can("accessWorkReport")
+          ? "hasil"
           : "kpi";
       qsa(".laporan-subnav-btn").forEach((btn) => {
         const selected = btn.dataset.laporanView === fallback;
@@ -1090,7 +1108,8 @@
       const submit = el("loginSubmit");
       errorEl.hidden = true;
       submit.disabled = true;
-      submit.textContent = "Masuk…";
+      submit.innerHTML =
+        'Login... <span class="spinner" aria-hidden="true"></span>';
 
       try {
         const data = await apiPost(
@@ -1200,6 +1219,11 @@
     if (!filling || !oldPress) return;
 
     const clone = filling.cloneNode(true);
+    // Validasi kedatangan racikan hanya diperlukan sebelum proses Filling.
+    // View Press dibuat dari clone Filling, jadi pastikan gate ini tidak ikut.
+    qs(".filling-validation-gate", clone)?.remove();
+    qs(".filling-validation-reopen", clone)?.remove();
+    clone.classList.remove("filling-awaiting-validation");
     qsa("[id]", clone).forEach((node) => node.removeAttribute("id"));
     clone.id = "view-press";
     clone.dataset.line = "press";
@@ -1553,8 +1577,10 @@
     if (Array.isArray(data.remainders)) state.remainders = data.remainders;
     if (Array.isArray(data.spkEntries)) state.spkEntries = data.spkEntries;
     if (Array.isArray(data.apdEntries)) state.apdEntries = data.apdEntries;
-    if (Array.isArray(data.downtimeEntries))
+    if (Array.isArray(data.downtimeEntries)) {
       state.downtimeEntries = data.downtimeEntries;
+      fillingDowntimeDataReady = true;
+    }
     if (Array.isArray(data.users)) state.users = data.users;
     if (data.settings && typeof data.settings === "object") {
       const pressTarget = Math.round(
@@ -1590,6 +1616,7 @@
     renderKpiFillingSetting();
     renderUserHeader();
     applyAccessControl();
+    maybeOpenFillingDowntimeModal();
     if (el("spkOpenButton"))
       el("spkOpenButton").hidden = !canLevel("spk", "write");
     if (Array.isArray(data.reportEntries) || data.reportEntriesSameAsEntries)
@@ -5797,6 +5824,8 @@
     const status = el("fillingValidationStatus");
     const validateButton = el("fillingDowntimeValidateButton");
     const historyButton = el("fillingDowntimeHistoryButton");
+    const reopen = el("fillingValidationReopen");
+    if (reopen) reopen.hidden = validated || !fillingDowntimeDismissed;
     if (gate) gate.hidden = validated;
     if (status) {
       status.textContent = validated
@@ -5871,6 +5900,8 @@
     const close = () => {
       modal.hidden = true;
       if (error) error.hidden = true;
+      fillingDowntimeDismissed = !todayDowntimeEntry();
+      renderFillingDowntimeValidation();
     };
     const open = () => {
       if (!canLevel("filling", "write")) {
@@ -5882,6 +5913,8 @@
         toast("Validasi Down Time hanya dapat diubah oleh Super User.", true);
         return;
       }
+      fillingDowntimeDismissed = false;
+      renderFillingDowntimeValidation();
       form.reset();
       const arrivalDate = entry?.timestamp
         ? new Date(entry.timestamp)
@@ -5889,12 +5922,16 @@
       arrivalTimestamp = arrivalDate.toISOString();
       arrival.value = timeValue(arrivalDate);
       if (entry) {
-        const arrivalMinutes = minutesOfDay(arrival.value);
-        const startMinutes = Math.max(
-          0,
-          (arrivalMinutes ?? 0) - Math.max(0, Number(entry.downTime) || 0),
-        );
-        productionStart.value = `${String(Math.floor(startMinutes / 60)).padStart(2, "0")}:${String(startMinutes % 60).padStart(2, "0")}`;
+        if (/^\d{2}:\d{2}$/.test(entry.productionStartTime || "")) {
+          productionStart.value = entry.productionStartTime;
+        } else {
+          const arrivalMinutes = minutesOfDay(arrival.value);
+          const startMinutes = Math.max(
+            0,
+            (arrivalMinutes ?? 0) - Math.max(0, Number(entry.downTime) || 0),
+          );
+          productionStart.value = `${String(Math.floor(startMinutes / 60)).padStart(2, "0")}:${String(startMinutes % 60).padStart(2, "0")}`;
+        }
       }
       reason.value = entry?.alasan || "";
       note.value = entry?.keterangan || "";
@@ -5904,11 +5941,13 @@
       modal.hidden = false;
       productionStart.focus();
     };
+    openFillingDowntimeModal = open;
 
     reason.addEventListener("change", syncNote);
     productionStart.addEventListener("input", syncDowntime);
     productionStart.addEventListener("change", syncDowntime);
     el("fillingDowntimeValidateButton")?.addEventListener("click", open);
+    el("fillingDowntimeReopenButton")?.addEventListener("click", open);
     el("fillingDowntimeHistoryButton")?.addEventListener("click", open);
     el("fillingDowntimeClose")?.addEventListener("click", close);
     el("fillingDowntimeCancel")?.addEventListener("click", close);
@@ -7044,6 +7083,7 @@
       qsa(".content > .view").forEach((node) => {
         node.hidden = node.id !== "view-" + view;
       });
+      if (view === "filling") maybeOpenFillingDowntimeModal();
       if (view === "laporan") {
         window.refreshLaporanAutoPreview?.();
         window.refreshKpiLaporanAutoPreview?.();
@@ -8757,9 +8797,13 @@
       .filter((entry) => entry && dashboardDateInPeriod(entry.tanggal, period))
       .map((entry) => Number(entry.downTime))
       .filter((value) => Number.isFinite(value) && value >= 0);
-    const downtimeAverage = downtimeValues.length
-      ? downtimeValues.reduce((sum, value) => sum + value, 0) /
-        downtimeValues.length
+    const downtimeTotalMinutes = downtimeValues.reduce(
+      (sum, value) => sum + value,
+      0,
+    );
+    const downtimeEntryCount = downtimeValues.length;
+    const downtimeAverage = downtimeEntryCount
+      ? downtimeTotalMinutes / downtimeEntryCount
       : null;
     const outputPercent =
       report.outputTarget > 0
@@ -8768,7 +8812,8 @@
 
     report.spillActual = spillPercent;
     report.downtimeAverage = downtimeAverage;
-    report.downtimeEntryCount = downtimeValues.length;
+    report.downtimeEntryCount = downtimeEntryCount;
+    report.downtimeTotalMinutes = downtimeTotalMinutes;
     report.rows = [
       {
         no: 1,
@@ -8823,7 +8868,7 @@
         actualText:
           downtimeAverage === null
             ? "Belum ada data"
-            : `${downtimeAverage.toLocaleString("id-ID", { maximumFractionDigits: 2 })} menit`,
+            : `${downtimeAverage.toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} menit`,
         achievement:
           downtimeAverage === null
             ? 0
@@ -9218,7 +9263,7 @@
           .join("");
 
         const qualitySummary = isSpv
-          ? `Reject ${esc(kpiPressPercentText(report.rejectActual, 2))} · Tumpahan ${esc(kpiPressPercentText(report.spillActual, 2))} · Down time ${report.downtimeAverage === null ? "belum ada data" : `${esc(report.downtimeAverage.toLocaleString("id-ID", { maximumFractionDigits: 2 }))} menit`}`
+          ? `Reject ${esc(kpiPressPercentText(report.rejectActual, 2))} · Tumpahan ${esc(kpiPressPercentText(report.spillActual, 2))} · Down time ${report.downtimeAverage === null ? "belum ada data" : `${esc(report.downtimeAverage.toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 }))} menit`}`
           : isShift
             ? `Reject ${esc(kpiPressPercentText(report.rejectActual, 2))} · Rata-rata update ${esc(String(report.updateAverage.toLocaleString("id-ID", { maximumFractionDigits: 2 })))}`
             : isPress
@@ -9255,7 +9300,7 @@
     const notes = isSpv
       ? `<p><strong>Keterangan:</strong> Pencapaian Team mencapai bobot penuh saat hasil produksi mencapai lebih dari 95% target gabungan SPK Filling dan Press.</p>
          <p>Reject memakai gabungan botol pecah Press dan kardus basah Filling. Efisiensi bahan baku memakai persentase kardus basah terhadap total kardus Filling sebagai data tumpahan.</p>
-         <p>Down Time Racikan dihitung dari rata-rata field menit downtime yang tersedia; jika belum dicatat, capaian indikator ini bernilai 0.</p>
+         <p>Down Time Racikan = total seluruh menit downtime periode dibagi jumlah entri Down Time pada periode. Rata-rata di bawah 10 menit mendapat bobot penuh 15; rata-rata 10 menit atau lebih dihitung dengan rumus 10 dibagi rata-rata menit dikali 15. Jika tidak ada catatan downtime, capaian indikator bernilai 0.</p>
          <p>Aktual APD SPV Produksi memakai rata-rata seluruh nilai APD pada periode laporan.</p>`
       : isShift
         ? `<p><strong>Keterangan:</strong> Target gabungan memakai target bulanan Filling dan Press di Setting, dikalikan jumlah karyawan aktif pada masing-masing bagian. Capaian target penuh saat hasil mencapai 90% target gabungan.</p>
@@ -9384,10 +9429,10 @@
                   canKpiType("press") ||
                   canKpiType("spv"))
               ? "kpi"
-              : can("accessWorkReport")
-                ? "hasil"
-                : canLevel("spkReport")
-                  ? "spk"
+              : canLevel("spkReport")
+                ? "spk"
+                : can("accessWorkReport")
+                  ? "hasil"
                   : "kpi";
       buttons.forEach((btn) => {
         const active = btn.dataset.laporanView === target;
@@ -9415,14 +9460,14 @@
 
     // initAppPage memasang event sebelum profil/cache pengguna selesai dimuat.
     // Jangan memilih fallback KPI ketika currentUser masih null; pertahankan
-    // markup default "Laporan Hasil Produksi", lalu applyAccessControl akan
-    // memindahkannya ke KPI hanya jika user memang tidak memiliki akses hasil.
+    // markup default "Data SPK", lalu applyAccessControl akan memilih submenu
+    // pertama yang tersedia jika user tidak memiliki akses laporan SPK.
     if (state.currentUser) {
       showLaporanSubview(
-        can("accessWorkReport")
-          ? "hasil"
-          : canLevel("spkReport")
-            ? "spk"
+        canLevel("spkReport")
+          ? "spk"
+          : can("accessWorkReport")
+            ? "hasil"
             : "kpi",
       );
     }

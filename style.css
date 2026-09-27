@@ -240,12 +240,12 @@ button {
   transform: translateY(1px);
 }
 .btn-primary {
-  background: #333a73;
+  background: #387adf;
   color: #fff;
-  border-color: none;
+  border-color: transparent;
 }
 .btn-primary:hover {
-  background: #387adf;
+  background: #004e98;
 }
 .btn-secondary {
   background: #387adf;
@@ -255,7 +255,7 @@ button {
   margin-right: 0;
 }
 .btn-secondary:hover {
-  background: #50c4ed;
+  background: #004e98;
   color: #fff;
 }
 .btn-ghost {
@@ -268,12 +268,12 @@ button {
   color: #fff;
 }
 .btn-danger {
-  background: var(--danger-soft);
-  color: var(--danger);
+  background: #ff5a5f;
+  color: #fff;
   border-color: transparent;
 }
 .btn-danger:hover {
-  background: #f7573f;
+  background: #c81d25;
   color: #fff;
 }
 .btn-block {
@@ -1223,22 +1223,24 @@ button {
   padding: 0 10px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--ink-soft);
+  background: #387adf;
+  color: #fff;
+  border-color: #387adf;
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
 }
 
 .page-btn:hover:not(:disabled):not(.active) {
-  background: var(--surface-2);
-  color: var(--ink);
+  background: #004e98;
+  color: #fff;
+  border-color: #004e98;
 }
 
 .page-btn.active {
-  background: var(--ink);
+  background: #004e98;
   color: #fff;
-  border-color: var(--ink);
+  border-color: #004e98;
 }
 
 .page-btn:disabled {
@@ -2865,7 +2867,10 @@ body.filling-popup-open {
   height: 100%;
   font-weight: 700;
 }
-.apd-photo-thumb-view small { display: block; color: var(--ink-faint); }
+.apd-photo-thumb-view small {
+  display: block;
+  color: var(--ink-faint);
+}
 .apd-input-layout .apd-photo-preview-box img {
   display: block;
   width: 100%;
@@ -3845,12 +3850,12 @@ button {
 }
 .delete-confirm-submit {
   color: #fff;
-  background: var(--danger);
-  border-color: var(--danger);
+  background: #387adf;
+  border-color: #387adf;
 }
 .delete-confirm-submit:hover {
-  background: #a93423;
-  border-color: #a93423;
+  background: #004e98;
+  border-color: #004e98;
 }
 @media (max-width: 480px) {
   .delete-confirm-modal {
@@ -4522,6 +4527,95 @@ button {
   }
 }
 
+/* Warna aksi spesifik untuk tombol yang memakai gaya ghost. */
+.btn-ghost.btn-edit,
+.btn-ghost.btn-preview-edit,
+.btn-ghost.spk-edit,
+.btn-ghost.apd-edit,
+.btn-ghost.apd-saved-edit,
+.btn-ghost.btn-access-user,
+.btn-ghost.btn-reset-user,
+.btn-ghost.press-balance-search-reset,
+.btn-ghost.f-search-reset,
+.btn-ghost#lap-spk-reset,
+.btn-ghost#apdHistoryReset,
+.btn-ghost#fillingDowntimeHistoryButton,
+.btn-ghost#dashboardPressKpiOperatorClear,
+.btn-ghost#lap-kpi-toggle-all,
+.btn-ghost.kpi-card-toggle,
+.btn-ghost#logoutBtn {
+  background: #fec960;
+  border-color: transparent;
+  color: var(--ink);
+}
+.btn-ghost.btn-edit:hover,
+.btn-ghost.btn-preview-edit:hover,
+.btn-ghost.spk-edit:hover,
+.btn-ghost.apd-edit:hover,
+.btn-ghost.apd-saved-edit:hover,
+.btn-ghost.btn-access-user:hover,
+.btn-ghost.btn-reset-user:hover,
+.btn-ghost.press-balance-search-reset:hover,
+.btn-ghost.f-search-reset:hover,
+.btn-ghost#lap-spk-reset:hover,
+.btn-ghost#apdHistoryReset:hover,
+.btn-ghost#fillingDowntimeHistoryButton:hover,
+.btn-ghost#dashboardPressKpiOperatorClear:hover,
+.btn-ghost#lap-kpi-toggle-all:hover,
+.btn-ghost.kpi-card-toggle:hover,
+.btn-ghost#logoutBtn:hover {
+  background: #ffbd24;
+  border-color: transparent;
+  color: var(--ink);
+}
+
+.btn-ghost.f-cancel-btn,
+.btn-ghost[id$="Cancel"],
+.btn-ghost[id$="Close"],
+.btn-ghost#apdCancelEdit,
+.btn-ghost.filling-popup-close,
+.btn-ghost.press-popup-close,
+.btn-ghost.press-close-cancel,
+.btn-ghost.apd-photo-close,
+.permission-actions .btn-ghost,
+.delete-confirm-cancel {
+  background: #ff5a5f;
+  border-color: transparent;
+  color: #fff;
+}
+.btn-ghost.f-cancel-btn:hover,
+.btn-ghost[id$="Cancel"]:hover,
+.btn-ghost[id$="Close"]:hover,
+.btn-ghost#apdCancelEdit:hover,
+.btn-ghost.filling-popup-close:hover,
+.btn-ghost.press-popup-close:hover,
+.btn-ghost.press-close-cancel:hover,
+.btn-ghost.apd-photo-close:hover,
+.permission-actions .btn-ghost:hover,
+.delete-confirm-cancel:hover {
+  background: #c81d25;
+  border-color: transparent;
+  color: #fff;
+}
+
+.btn-ghost.press-balance-use,
+.master-suggest button {
+  background: #387adf;
+  border-color: #387adf;
+  color: #fff;
+}
+.btn-ghost.press-balance-use:hover,
+.master-suggest button:hover,
+.master-suggest button.active {
+  background: #004e98;
+  border-color: #004e98;
+  color: #fff;
+}
+
+.page-btn:disabled {
+  opacity: 0.45;
+}
+
 /* ---------- landscape phones / short viewports ---------- */
 @media (max-height: 520px) and (orientation: landscape) {
   .login-screen {
@@ -4916,26 +5010,44 @@ button {
   display: none !important;
 }
 
-.filling-validation-gate {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18px;
-  margin-bottom: 14px;
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
-}
-.filling-validation-gate[hidden] {
-  display: none !important;
-}
-.filling-validation-gate h2 {
-  margin: 2px 0 5px;
-  font-size: 17px;
-}
 .filling-awaiting-validation > .line-stack {
   filter: blur(3px);
   opacity: 0.48;
   pointer-events: none;
   user-select: none;
+}
+.filling-validation-reopen {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.filling-validation-reopen[hidden] {
+  display: none !important;
+}
+.filling-validation-reopen .btn {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-width: 300px;
+  min-height: 64px;
+  padding: 16px 28px;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  box-shadow: 0 14px 34px rgb(15 23 42 / 24%);
+}
+
+@media (max-width: 480px) {
+  .filling-validation-reopen .btn {
+    width: calc(100vw - 48px);
+    min-width: 0;
+  }
 }
 .filling-downtime-history {
   display: flex;
@@ -4967,7 +5079,6 @@ button {
 }
 
 @media (max-width: 680px) {
-  .filling-validation-gate,
   .filling-spk-panel .panel-head {
     align-items: stretch;
     flex-direction: column;
@@ -5723,44 +5834,32 @@ button {
 }
 
 .kpi-press-row .kpi-press-score.kpi-score-equal,
-.kpi-press-result
-  .kpi-employee-card
-  .kpi-achievement-card.kpi-score-equal {
+.kpi-press-result .kpi-employee-card .kpi-achievement-card.kpi-score-equal {
   background: #dcf0e3 !important;
   color: #2c7a4b !important;
 }
 
 .kpi-press-row .kpi-press-score.kpi-score-below,
-.kpi-press-result
-  .kpi-employee-card
-  .kpi-achievement-card.kpi-score-below {
+.kpi-press-result .kpi-employee-card .kpi-achievement-card.kpi-score-below {
   background: #f8deda !important;
   color: #c1402c !important;
 }
 
 .kpi-press-row .kpi-press-score.kpi-score-above,
-.kpi-press-result
-  .kpi-employee-card
-  .kpi-achievement-card.kpi-score-above {
+.kpi-press-result .kpi-employee-card .kpi-achievement-card.kpi-score-above {
   background: #fba834 !important;
   color: #ffffff !important;
 }
 
-.kpi-press-result
-  .kpi-achievement-card.kpi-score-equal
-  :is(span, strong) {
+.kpi-press-result .kpi-achievement-card.kpi-score-equal :is(span, strong) {
   color: #2c7a4b !important;
 }
 
-.kpi-press-result
-  .kpi-achievement-card.kpi-score-below
-  :is(span, strong) {
+.kpi-press-result .kpi-achievement-card.kpi-score-below :is(span, strong) {
   color: #c1402c !important;
 }
 
-.kpi-press-result
-  .kpi-achievement-card.kpi-score-above
-  :is(span, strong) {
+.kpi-press-result .kpi-achievement-card.kpi-score-above :is(span, strong) {
   color: #ffffff !important;
 }
 @media (max-width: 560px) {
@@ -6130,10 +6229,18 @@ button {
     grid-column: 1;
   }
 
-  #view-apd .apd-photo-label { grid-row: 1; }
-  #view-apd .apd-photo-picker { grid-row: 2; }
-  #view-apd .apd-photo-preview-box { grid-row: 3; }
-  #view-apd .apd-photo-field #apdPhotoInfo { grid-row: 4; }
+  #view-apd .apd-photo-label {
+    grid-row: 1;
+  }
+  #view-apd .apd-photo-picker {
+    grid-row: 2;
+  }
+  #view-apd .apd-photo-preview-box {
+    grid-row: 3;
+  }
+  #view-apd .apd-photo-field #apdPhotoInfo {
+    grid-row: 4;
+  }
 
   #view-apd .apd-photo-picker > .btn {
     height: auto;

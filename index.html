@@ -15,10 +15,7 @@
       crossorigin="anonymous"
       defer
     ></script>
-    <link
-      rel="stylesheet"
-      href="style.css?v=20260927-v65-hide-validated-gate"
-    />
+    <link rel="stylesheet" href="style.css?v=20260928-v69-action-button-colors" />
 
     <style>
       /* Aturan inti modal SPK ditempatkan bersama dokumen agar tidak dapat
@@ -790,25 +787,19 @@
         </section>
 
         <section class="view" id="view-filling" data-line="filling" hidden>
-          <section
-            class="panel filling-validation-gate"
-            id="fillingValidationGate"
+          <div
+            class="filling-validation-reopen"
+            id="fillingValidationReopen"
+            hidden
           >
-            <div>
-              <p class="eyebrow">Validasi Harian Filling</p>
-              <h2>Validasi kedatangan racikan sebelum memulai Filling</h2>
-              <p class="hint-text" id="fillingValidationStatus">
-                Down Time hari ini wajib diisi untuk membuka proses Filling.
-              </p>
-            </div>
             <button
               type="button"
               class="btn btn-primary"
-              id="fillingDowntimeValidateButton"
+              id="fillingDowntimeReopenButton"
             >
-              <i class="fa-solid fa-clock"></i> Validasi Down Time
+              <i class="fa-solid fa-stopwatch"></i> Validasi Down Time
             </button>
-          </section>
+          </div>
           <div class="line-stack">
             <section class="panel table-panel filling-spk-panel">
               <div class="panel-head">
@@ -1563,20 +1554,20 @@
             <button
               type="button"
               class="laporan-subnav-btn active"
-              data-laporan-view="hasil"
+              data-laporan-view="spk"
               role="tab"
               aria-selected="true"
             >
-              <i class="fa-solid fa-table-list"></i> Laporan Hasil Produksi
+              <i class="fa-solid fa-file-lines"></i> Data SPK
             </button>
             <button
               type="button"
               class="laporan-subnav-btn"
-              data-laporan-view="spk"
+              data-laporan-view="hasil"
               role="tab"
               aria-selected="false"
             >
-              <i class="fa-solid fa-file-lines"></i> Data SPK
+              <i class="fa-solid fa-table-list"></i> Laporan Hasil Produksi
             </button>
             <button
               type="button"
@@ -1589,7 +1580,7 @@
             </button>
           </div>
 
-          <div class="laporan-subview" id="laporan-subview-hasil">
+          <div class="laporan-subview" id="laporan-subview-hasil" hidden>
             <div class="panel">
               <div class="panel-head"><h2>Laporan Hasil Produksi</h2></div>
               <div class="search-bar laporan-production-filters">
@@ -1730,7 +1721,7 @@
             </div>
           </div>
 
-          <div class="laporan-subview" id="laporan-subview-spk" hidden>
+          <div class="laporan-subview" id="laporan-subview-spk">
             <section class="panel">
               <div class="panel-head">
                 <div>
@@ -2614,7 +2605,7 @@
       });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="script.js?v=20260927-v141-downtime-superuser-edit"></script>
+    <script src="script.js?v=20260928-v149-report-submenu-order"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>

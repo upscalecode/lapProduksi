@@ -89,7 +89,13 @@ const APP = {
     "updatedAt",
   ],
   SETTINGS_HEADERS: ["key", "value", "updatedAt", "updatedBy"],
-  DOWNTIME_HEADERS: ["Time Stamp", "Down Time", "Alasan", "Keterangan"],
+  DOWNTIME_HEADERS: [
+    "Waktu Masuk Kerja Produksi",
+    "Kedatangan Racikan",
+    "Down Time",
+    "Alasan",
+    "Keterangan",
+  ],
   // Audit SPK disimpan terpisah dan tidak pernah digabungkan ke updateCount
   // Pengerjaan yang menjadi sumber perhitungan KPI Karyawan.
   SPK_HEADERS: [
@@ -151,7 +157,7 @@ function setupSpreadsheet() {
     APP.PRESS_ADJUSTMENT_HEADERS,
   );
   ensureSheet_(ss, APP.SHEETS.PRESS_REMAINDERS, APP.PRESS_REMAINDER_HEADERS);
-  ensureSheet_(ss, APP.SHEETS.DOWNTIME, APP.DOWNTIME_HEADERS);
+  ensureDowntimeSheet_(ss);
   ensureApdSheet_(ss, true);
   ensureSpkSheet_(ss, true);
   ensureSettingsSheet_(ss);
@@ -679,12 +685,68 @@ function clearAllInputData_() {
   return { clearedSheets: cleared, clearedAt: new Date().toISOString() };
 }
 
-function downtimeSheet_() {
-  return ensureSheet_(
-    spreadsheet_(),
-    APP.SHEETS.DOWNTIME,
+function ensureDowntimeSheet_(ss) {
+  let sh = ss.getSheetByName(APP.SHEETS.DOWNTIME);
+  if (!sh) sh = ss.insertSheet(APP.SHEETS.DOWNTIME);
+
+  const currentHeaders = sh
+    .getRange(1, 1, 1, Math.min(5, sh.getMaxColumns()))
+    .getDisplayValues()[0]
+    .map(function (value) {
+      return String(value || "").trim();
+    });
+  const isLegacySchema =
+    (currentHeaders[0] === "Time Stamp" ||
+      currentHeaders[0] === "Kedatangan Racikan") &&
+    currentHeaders[1] === "Down Time" &&
+    currentHeaders[2] === "Alasan" &&
+    currentHeaders[3] === "Keterangan";
+
+  // Sisipkan kolom baru di depan agar data lama tetap berada pada kolomnya.
+  if (isLegacySchema) sh.insertColumnBefore(1);
+  if (sh.getMaxColumns() < APP.DOWNTIME_HEADERS.length) {
+    sh.insertColumnsAfter(
+      sh.getMaxColumns(),
+      APP.DOWNTIME_HEADERS.length - sh.getMaxColumns(),
+    );
+  }
+  sh.getRange(1, 1, 1, APP.DOWNTIME_HEADERS.length).setValues([
     APP.DOWNTIME_HEADERS,
-  );
+  ]);
+  styleHeader_(sh, APP.DOWNTIME_HEADERS.length);
+  sh.setFrozenRows(1);
+
+  // Lengkapi baris lama dari Kedatangan Racikan dikurangi durasi Down Time.
+  const lastRow = sh.getLastRow();
+  if (lastRow >= 2) {
+    const rows = sh
+      .getRange(2, 1, lastRow - 1, APP.DOWNTIME_HEADERS.length)
+      .getValues();
+    let changed = false;
+    rows.forEach(function (row) {
+      if (String(row[0] || "").trim()) return;
+      const arrival = row[1] instanceof Date ? row[1] : new Date(row[1]);
+      const duration = Number(row[2]);
+      if (isNaN(arrival.getTime()) || !isFinite(duration)) return;
+      const productionStart = new Date(arrival.getTime() - duration * 60000);
+      row[0] = Utilities.formatDate(
+        productionStart,
+        Session.getScriptTimeZone() || "Asia/Jakarta",
+        "HH:mm",
+      );
+      changed = true;
+    });
+    if (changed) {
+      sh.getRange(2, 1, rows.length, APP.DOWNTIME_HEADERS.length).setValues(
+        rows,
+      );
+    }
+  }
+  return sh;
+}
+
+function downtimeSheet_() {
+  return ensureDowntimeSheet_(spreadsheet_());
 }
 
 function downtimeDateKey_(value) {
@@ -705,16 +767,25 @@ function getDowntimeEntries_() {
     .getRange(2, 1, lastRow - 1, APP.DOWNTIME_HEADERS.length)
     .getValues()
     .map(function (row) {
-      const timestamp = row[0] instanceof Date ? row[0] : new Date(row[0]);
+      const timestamp = row[1] instanceof Date ? row[1] : new Date(row[1]);
+      const productionStartTime =
+        row[0] instanceof Date
+          ? Utilities.formatDate(
+              row[0],
+              Session.getScriptTimeZone() || "Asia/Jakarta",
+              "HH:mm",
+            )
+          : String(row[0] || "");
       return {
+        productionStartTime: productionStartTime,
         timestamp:
           timestamp && !isNaN(timestamp.getTime())
             ? timestamp.toISOString()
-            : String(row[0] || ""),
+            : String(row[1] || ""),
         tanggal: downtimeDateKey_(timestamp),
-        downTime: number_(row[1]),
-        alasan: String(row[2] || ""),
-        keterangan: String(row[3] || ""),
+        downTime: number_(row[2]),
+        alasan: String(row[3] || ""),
+        keterangan: String(row[4] || ""),
       };
     })
     .filter(function (item) {
@@ -772,7 +843,7 @@ function upsertDowntimeEntry_(user, data) {
   const sh = downtimeSheet_();
   const lastRow = sh.getLastRow();
   if (lastRow >= 2) {
-    const timestamps = sh.getRange(2, 1, lastRow - 1, 1).getValues();
+    const timestamps = sh.getRange(2, 2, lastRow - 1, 1).getValues();
     for (let index = timestamps.length - 1; index >= 0; index--) {
       if (downtimeDateKey_(timestamps[index][0]) !== today) continue;
       if (!user || user.role !== "superuser")
@@ -780,14 +851,20 @@ function upsertDowntimeEntry_(user, data) {
           "Validasi Down Time yang sudah tersimpan hanya dapat diubah oleh Super User.",
         );
       sh.getRange(index + 2, 1, 1, APP.DOWNTIME_HEADERS.length).setValues([
-        [arrivalTimestamp, downTime, alasan, keterangan],
+        [productionStartTime, arrivalTimestamp, downTime, alasan, keterangan],
       ]);
       return getDowntimeEntries_().find(function (item) {
         return item.tanggal === today;
       });
     }
   }
-  sh.appendRow([arrivalTimestamp, downTime, alasan, keterangan]);
+  sh.appendRow([
+    productionStartTime,
+    arrivalTimestamp,
+    downTime,
+    alasan,
+    keterangan,
+  ]);
   return getDowntimeEntries_().find(function (item) {
     return item.tanggal === today;
   });
