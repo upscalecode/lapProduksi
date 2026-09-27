@@ -5689,6 +5689,10 @@
 
     const entries = dashboardEntries();
     const today = todayStr();
+    const spkVariantsToday = [
+      ...(state.spkEntries || []),
+      ...(state.preview.spk || []),
+    ].filter((item) => item.tanggal === today).length;
     const balanceRows = getPressBalanceRows();
     const fillingToday = entries
       .filter((entry) => entry.tab === "filling" && entry.tanggal === today)
@@ -5731,10 +5735,7 @@
     dashboardSetText("dashFillingToday", dashboardQty(fillingToday));
     dashboardSetText("dashPressToday", dashboardQty(pressToday));
     dashboardSetText("dashPressRemaining", dashboardQty(waiting));
-    dashboardSetText(
-      "dashActiveProducts",
-      dashboardQty(masterValues("produk").length),
-    );
+    dashboardSetText("dashTodaySpkVariants", dashboardQty(spkVariantsToday));
     dashboardSetText("dashBrokenToday", dashboardQty(brokenToday));
     dashboardSetText("dashWetCartonsToday", dashboardQty(wetCartonsToday));
     dashboardSetText("dashFlowFilling", `${dashboardQty(fillingToday)} pcs`);
@@ -5968,6 +5969,12 @@
           .toLowerCase()
           .includes(query),
     );
+    const today = todayStr();
+    const todayRowCount = [
+      ...(state.spkEntries || []),
+      ...(state.preview.spk || []),
+    ].filter((item) => item.tanggal === today).length;
+    dashboardSetText("dashTodaySpkVariants", dashboardQty(todayRowCount));
     const totalPages = Math.max(1, Math.ceil(rows.length / 20));
     state.spk.page = Math.min(Math.max(1, state.spk.page), totalPages);
     const start = (state.spk.page - 1) * 20;
