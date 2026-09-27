@@ -44,7 +44,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbxoiVUDEQ5f817b9xUQvohS5SI8WuhQ4kBBBscIwt_NdTjGr8j6GX4rn3nCFsHEa-aveg/exec",
+      "https://script.google.com/macros/s/AKfycbzFDJvy69OMCD0Zy-GZvsAz2va7DCuj7YwBDG6q1aZqEcs47ks-V41kaXrO5x7gZ-CeTg/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -61,6 +61,7 @@
     remainders: [],
     spkEntries: [],
     apdEntries: [],
+    downtimeEntries: [],
     preview: { filling: [], press: [], apd: [], spk: [] },
     users: [],
     settings: {
@@ -153,6 +154,7 @@
     accessKpiReport: false,
     accessKpiFillingReport: false,
     accessKpiPressReport: false,
+    accessKpiSpvReport: false,
     deleteUnpressed: false,
     viewAllData: false,
     editOwn: true,
@@ -181,6 +183,11 @@
         saved.accessKpiFillingReport ?? saved.accessReports ?? false,
       accessKpiPressReport:
         saved.accessKpiPressReport ?? saved.accessReports ?? false,
+      accessKpiSpvReport:
+        saved.accessKpiSpvReport ??
+        saved.accessKpiReport ??
+        saved.accessReports ??
+        false,
       accessKpiSettings: saved.accessKpiSettings ?? saved.accessMaster ?? false,
       ...saved,
     };
@@ -209,6 +216,7 @@
       spkReport: "accessSpkReport",
       kpiFilling: "accessKpiFillingReport",
       kpiPress: "accessKpiPressReport",
+      kpiSpv: "accessKpiSpvReport",
       master: "accessMaster",
       kpiSettings: "accessKpiSettings",
     };
@@ -219,7 +227,11 @@
           )
         ? "write"
         : "read";
-    if (["workReport", "spkReport", "kpiFilling", "kpiPress"].includes(scope)) {
+    if (
+      ["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiSpv"].includes(
+        scope,
+      )
+    ) {
       const parent =
         perms.levels?.reports || (perms.accessReports ? "admin" : "read");
       if (parent === "admin") return true;
@@ -241,6 +253,7 @@
     if (can("accessKpiReport")) return true;
     if (type === "press") return canLevel("kpiPress");
     if (type === "filling") return canLevel("kpiFilling");
+    if (type === "spv") return canLevel("kpiSpv");
     return false;
   }
 
@@ -250,7 +263,8 @@
       (canLevel("workReport") ||
         canLevel("spkReport") ||
         canKpiType("filling") ||
-        canKpiType("press"))
+        canKpiType("press") ||
+        canKpiType("spv"))
     );
   }
 
@@ -259,7 +273,9 @@
     if (!input || input.dataset.userSelected === "1") return;
     const type = el("lap-kpi-type")?.value || "filling";
     const months = (state.reportEntries || [])
-      .filter((entry) => type === "shift" || entry.tab === type)
+      .filter(
+        (entry) => type === "shift" || type === "spv" || entry.tab === type,
+      )
       .map((entry) => String(entry.tanggal || "").slice(0, 7))
       .filter((value) => /^\d{4}-\d{2}$/.test(value))
       .sort();
@@ -375,7 +391,11 @@
           ? !can("accessWorkReport")
           : btn.dataset.laporanView === "spk"
             ? !canLevel("spkReport")
-            : !(canKpiType("filling") || canKpiType("press"));
+            : !(
+                canKpiType("filling") ||
+                canKpiType("press") ||
+                canKpiType("spv")
+              );
     });
     const activeReport = qs(".laporan-subnav-btn.active");
     if (activeReport?.hidden) {
@@ -1533,6 +1553,8 @@
     if (Array.isArray(data.remainders)) state.remainders = data.remainders;
     if (Array.isArray(data.spkEntries)) state.spkEntries = data.spkEntries;
     if (Array.isArray(data.apdEntries)) state.apdEntries = data.apdEntries;
+    if (Array.isArray(data.downtimeEntries))
+      state.downtimeEntries = data.downtimeEntries;
     if (Array.isArray(data.users)) state.users = data.users;
     if (data.settings && typeof data.settings === "object") {
       const pressTarget = Math.round(
@@ -1560,6 +1582,7 @@
     renderPressBalance();
     renderSpkToday();
     renderFillingSpkQueue();
+    renderFillingDowntimeValidation();
     renderSpkReport();
     renderMasterChips();
     renderUsers();
@@ -5757,6 +5780,196 @@
     renderDashboardPressKpi(entries);
   }
 
+  function todayDowntimeEntry() {
+    const today = todayStr();
+    return (state.downtimeEntries || []).find(
+      (entry) => String(entry.tanggal || "") === today,
+    );
+  }
+
+  function renderFillingDowntimeValidation() {
+    const view = el("view-filling");
+    if (!view) return;
+    const entry = todayDowntimeEntry();
+    const validated = Boolean(entry);
+    view.classList.toggle("filling-awaiting-validation", !validated);
+    const gate = el("fillingValidationGate");
+    const status = el("fillingValidationStatus");
+    const validateButton = el("fillingDowntimeValidateButton");
+    const historyButton = el("fillingDowntimeHistoryButton");
+    if (gate) gate.hidden = validated;
+    if (status) {
+      status.textContent = validated
+        ? `Tervalidasi hari ini: ${dashboardQty(entry.downTime)} menit · ${entry.alasan}`
+        : "Down Time hari ini wajib diisi untuk membuka proses Filling.";
+    }
+    if (validateButton) {
+      validateButton.innerHTML = validated
+        ? '<i class="fa-solid fa-pen-to-square"></i> Ubah Validasi'
+        : '<i class="fa-solid fa-clock"></i> Validasi Down Time';
+      validateButton.hidden = !canLevel("filling", "write");
+    }
+    if (historyButton) {
+      historyButton.disabled =
+        !validated || state.currentUser?.role !== "superuser";
+      historyButton.textContent = validated
+        ? `${dashboardQty(entry.downTime)} menit · ${entry.alasan}`
+        : "Belum ada data hari ini";
+      historyButton.title = validated
+        ? `${fmtDateTime(entry.timestamp)}${entry.keterangan ? ` · ${entry.keterangan}` : ""}${state.currentUser?.role === "superuser" ? " · Klik untuk mengubah" : " · Hanya Super User yang dapat mengubah"}`
+        : "Validasi Down Time belum diisi";
+    }
+  }
+
+  function initFillingDowntime() {
+    const modal = el("fillingDowntimeModal");
+    const form = el("fillingDowntimeForm");
+    const arrival = el("fillingDowntimeArrival");
+    const productionStart = el("fillingProductionStartTime");
+    const minutes = el("fillingDowntimeMinutes");
+    const reason = el("fillingDowntimeReason");
+    const note = el("fillingDowntimeNote");
+    const noteWrap = el("fillingDowntimeNoteWrap");
+    const error = el("fillingDowntimeError");
+    if (
+      !modal ||
+      !form ||
+      !arrival ||
+      !productionStart ||
+      !minutes ||
+      !reason ||
+      !note ||
+      !noteWrap
+    )
+      return;
+
+    let arrivalTimestamp = "";
+    const timeValue = (date) =>
+      `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+    const minutesOfDay = (value) => {
+      const match = /^(\d{2}):(\d{2})$/.exec(String(value || ""));
+      return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+    };
+    const syncDowntime = () => {
+      const arrivalMinutes = minutesOfDay(arrival.value);
+      const startMinutes = minutesOfDay(productionStart.value);
+      const result =
+        arrivalMinutes === null || startMinutes === null
+          ? ""
+          : arrivalMinutes - startMinutes;
+      minutes.value = result === "" ? "" : String(result);
+      minutes.classList.toggle("input-invalid", result !== "" && result <= 0);
+      return result;
+    };
+
+    const syncNote = () => {
+      const other = reason.value === "Lainnya";
+      noteWrap.hidden = !other;
+      note.required = other;
+      if (!other) note.value = "";
+    };
+    const close = () => {
+      modal.hidden = true;
+      if (error) error.hidden = true;
+    };
+    const open = () => {
+      if (!canLevel("filling", "write")) {
+        toast("Anda tidak memiliki akses menulis data Filling.", true);
+        return;
+      }
+      const entry = todayDowntimeEntry();
+      if (entry && state.currentUser?.role !== "superuser") {
+        toast("Validasi Down Time hanya dapat diubah oleh Super User.", true);
+        return;
+      }
+      form.reset();
+      const arrivalDate = entry?.timestamp
+        ? new Date(entry.timestamp)
+        : new Date();
+      arrivalTimestamp = arrivalDate.toISOString();
+      arrival.value = timeValue(arrivalDate);
+      if (entry) {
+        const arrivalMinutes = minutesOfDay(arrival.value);
+        const startMinutes = Math.max(
+          0,
+          (arrivalMinutes ?? 0) - Math.max(0, Number(entry.downTime) || 0),
+        );
+        productionStart.value = `${String(Math.floor(startMinutes / 60)).padStart(2, "0")}:${String(startMinutes % 60).padStart(2, "0")}`;
+      }
+      reason.value = entry?.alasan || "";
+      note.value = entry?.keterangan || "";
+      syncNote();
+      syncDowntime();
+      if (error) error.hidden = true;
+      modal.hidden = false;
+      productionStart.focus();
+    };
+
+    reason.addEventListener("change", syncNote);
+    productionStart.addEventListener("input", syncDowntime);
+    productionStart.addEventListener("change", syncDowntime);
+    el("fillingDowntimeValidateButton")?.addEventListener("click", open);
+    el("fillingDowntimeHistoryButton")?.addEventListener("click", open);
+    el("fillingDowntimeClose")?.addEventListener("click", close);
+    el("fillingDowntimeCancel")?.addEventListener("click", close);
+    modal.addEventListener("click", (event) => {
+      if (event.target === modal) close();
+    });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const downTime = Number(syncDowntime());
+      const alasan = reason.value;
+      const keterangan = note.value.trim();
+      if (!Number.isFinite(downTime) || downTime <= 0) {
+        if (error) {
+          error.textContent = "Durasi Down Time wajib lebih dari 0 menit.";
+          error.hidden = false;
+        }
+        productionStart.focus();
+        return;
+      }
+      if (!alasan || (alasan === "Lainnya" && !keterangan)) {
+        if (error) {
+          error.textContent =
+            alasan === "Lainnya"
+              ? "Keterangan wajib diisi untuk alasan Lainnya."
+              : "Alasan wajib dipilih.";
+          error.hidden = false;
+        }
+        return;
+      }
+      const button = el("fillingDowntimeSave");
+      if (button) button.disabled = true;
+      try {
+        const response = await enqueueWrite(() =>
+          apiPost("downtime.upsert", {
+            data: JSON.stringify({
+              arrivalTimestamp,
+              productionStartTime: productionStart.value,
+              downTime,
+              alasan,
+              keterangan,
+            }),
+          }),
+        );
+        state.downtimeEntries = response.downtimeEntries || [];
+        renderFillingDowntimeValidation();
+        if (typeof window.refreshKpiLaporanAutoPreview === "function")
+          window.refreshKpiLaporanAutoPreview();
+        close();
+        toast("Validasi Down Time Filling berhasil disimpan.");
+      } catch (err) {
+        if (error) {
+          error.textContent = err.message;
+          error.hidden = false;
+        }
+      } finally {
+        if (button) button.disabled = false;
+      }
+    });
+    renderFillingDowntimeValidation();
+  }
+
   function renderFillingSpkQueue() {
     const tbody = el("fillingSpkBody");
     if (!tbody) return;
@@ -7616,16 +7829,18 @@
 
   function normalizeKpiType(value) {
     const type = String(value || "").toLowerCase();
-    return type === "press" || type === "shift" ? type : "filling";
+    return ["press", "shift", "spv"].includes(type) ? type : "filling";
   }
 
   function kpiTypeLabel(type) {
     const normalized = normalizeKpiType(type);
-    return normalized === "shift"
-      ? "Ka. Shift"
-      : normalized === "press"
-        ? "Press"
-        : "Filling";
+    return normalized === "spv"
+      ? "SPV Produksi"
+      : normalized === "shift"
+        ? "Ka. Shift"
+        : normalized === "press"
+          ? "Press"
+          : "Filling";
   }
 
   function getKpiPressOutputTarget() {
@@ -8366,7 +8581,7 @@
         (item) =>
           item &&
           !item._syncState &&
-          (line === "shift"
+          (line === "shift" || line === "spv"
             ? item.tab === "filling" || item.tab === "press"
             : item.tab === line) &&
           dashboardDateInPeriod(item.tanggal, period),
@@ -8381,7 +8596,7 @@
     return Array.from(names.values()).sort((a, b) => a.localeCompare(b, "id"));
   }
 
-  function buildShiftKpiReport(monthValue) {
+  function buildShiftKpiReport(monthValue, reportType = "shift") {
     const period = kpiPressMonthPeriod(monthValue);
     if (!period) return null;
     const entries = (state.reportEntries || []).filter(
@@ -8490,9 +8705,12 @@
       },
     ];
     return {
-      kpiType: "shift",
-      lineLabel: "Ka. Shift",
-      operator: getShiftLeaderName(),
+      kpiType: normalizeKpiType(reportType),
+      lineLabel: kpiTypeLabel(reportType),
+      operator:
+        normalizeKpiType(reportType) === "spv"
+          ? "SPV Produksi"
+          : getShiftLeaderName(),
       period,
       outputTarget,
       outputActual: totalQty,
@@ -8510,6 +8728,130 @@
       rows,
       totalAchievement: rows.reduce((sum, row) => sum + row.achievement, 0),
     };
+  }
+
+  function buildSpvKpiReport(monthValue) {
+    const report = buildShiftKpiReport(monthValue, "spv");
+    if (!report) return null;
+
+    const period = report.period;
+    const entries = (state.reportEntries || []).filter(
+      (entry) =>
+        entry &&
+        !entry._syncState &&
+        (entry.tab === "filling" || entry.tab === "press") &&
+        dashboardDateInPeriod(entry.tanggal, period),
+    );
+    const fillingEntries = entries.filter((entry) => entry.tab === "filling");
+    const workedCartons = fillingEntries.reduce(
+      (sum, entry) => sum + Math.max(0, Number(entry.qtyKardus) || 0),
+      0,
+    );
+    const wetCartons = fillingEntries.reduce(
+      (sum, entry) => sum + Math.max(0, Number(entry.qtyKardusBasah) || 0),
+      0,
+    );
+    const spillPercent =
+      workedCartons > 0 ? (wetCartons / workedCartons) * 100 : null;
+    const downtimeValues = (state.downtimeEntries || [])
+      .filter((entry) => entry && dashboardDateInPeriod(entry.tanggal, period))
+      .map((entry) => Number(entry.downTime))
+      .filter((value) => Number.isFinite(value) && value >= 0);
+    const downtimeAverage = downtimeValues.length
+      ? downtimeValues.reduce((sum, value) => sum + value, 0) /
+        downtimeValues.length
+      : null;
+    const outputPercent =
+      report.outputTarget > 0
+        ? (report.outputActual / report.outputTarget) * 100
+        : 0;
+
+    report.spillActual = spillPercent;
+    report.downtimeAverage = downtimeAverage;
+    report.downtimeEntryCount = downtimeValues.length;
+    report.rows = [
+      {
+        no: 1,
+        field: "TARGET",
+        indicator: "PENCAPAIAN TEAM",
+        weight: 40,
+        targetText: "> 95% DARI SPK",
+        targetPercent: 100,
+        actualText: kpiPressPercentText(outputPercent),
+        achievement: Math.min(40, (outputPercent / 95) * 40),
+        tone: "output",
+      },
+      {
+        no: 2,
+        field: "QC",
+        indicator: "MEMINIMALISIR REJECT PADA PRODUKSI",
+        weight: 20,
+        targetText: "RATA-RATA 0,5%",
+        targetPercent: 100,
+        actualText: kpiPressPercentText(report.rejectActual),
+        achievement:
+          report.rejectActual === null
+            ? 0
+            : report.rejectActual <= 0.5
+              ? 20
+              : (0.5 / report.rejectActual) * 20,
+        tone: "quality",
+      },
+      {
+        no: 3,
+        field: "EFISIENSI",
+        indicator: "EFISIENSI BAHAN BAKU",
+        weight: 15,
+        targetText: "MAKSIMAL 1% TUMPAHAN",
+        targetPercent: 100,
+        actualText: kpiPressPercentText(spillPercent),
+        achievement:
+          spillPercent === null
+            ? 0
+            : spillPercent <= 1
+              ? 15
+              : (1 / spillPercent) * 15,
+        tone: "quality",
+      },
+      {
+        no: 4,
+        field: "DOWN TIME",
+        indicator: "EFISIENSI DOWN TIME RACIKAN",
+        weight: 15,
+        targetText: "RATA-RATA < 10 MENIT",
+        targetPercent: 100,
+        actualText:
+          downtimeAverage === null
+            ? "Belum ada data"
+            : `${downtimeAverage.toLocaleString("id-ID", { maximumFractionDigits: 2 })} menit`,
+        achievement:
+          downtimeAverage === null
+            ? 0
+            : downtimeAverage < 10
+              ? 15
+              : (10 / downtimeAverage) * 15,
+        tone: "attendance",
+      },
+      {
+        no: 5,
+        field: "KEPATUHAN",
+        indicator: "KEDISIPLINAN PEMAKAIAN APD",
+        weight: 10,
+        targetText: "RATA-RATA ≥ 95%",
+        targetPercent: 100,
+        actualText: kpiPressPercentText(report.apdActual),
+        achievement:
+          report.apdActual === null
+            ? 0
+            : Math.min(10, (report.apdActual / 95) * 10),
+        tone: "apd",
+      },
+    ];
+    report.totalAchievement = report.rows.reduce(
+      (sum, row) => sum + row.achievement,
+      0,
+    );
+    return report;
   }
 
   function kpiResolveExactOperator(rawOperator, allowedOperators = []) {
@@ -8531,8 +8873,10 @@
     const label = kpiTypeLabel(normalized);
     const isPress = normalized === "press";
     const isShift = normalized === "shift";
+    const isSpv = normalized === "spv";
+    const isProductionManagement = isShift || isSpv;
     const operatorFilter = qs(".kpi-press-employee-filter");
-    if (operatorFilter) operatorFilter.hidden = isShift;
+    if (operatorFilter) operatorFilter.hidden = isProductionManagement;
 
     const panel = el("lap-kpi-panel");
     const result = el("lap-kpi-result");
@@ -8545,8 +8889,8 @@
 
     const intro = el("lap-kpi-intro");
     if (intro) {
-      intro.textContent = isShift
-        ? "KPI Ka. Shift merangkum seluruh pengerjaan Filling dan Press serta penilaian APD karyawan pada bulan terpilih."
+      intro.textContent = isProductionManagement
+        ? `KPI ${label} merangkum seluruh pengerjaan Filling dan Press serta penilaian APD karyawan pada bulan terpilih.`
         : isPress
           ? "Preview KPI Press akan tampil otomatis. Karyawan yang ditampilkan hanya karyawan yang mempunyai pengerjaan Press pada bulan terpilih. Target output KPI Press tetap mengikuti menu Setting."
           : `Preview KPI Filling akan tampil otomatis. Karyawan yang ditampilkan hanya karyawan yang mempunyai pengerjaan Filling pada bulan terpilih. Target output KPI Filling mengikuti menu Setting (${kpiPressQtyText(getKpiFillingOutputTarget())} botol/bulan).`;
@@ -8554,11 +8898,13 @@
 
     if (badge) {
       badge.dataset.kpiType = normalized;
-      badge.innerHTML = isShift
-        ? '<i class="fa-solid fa-users"></i> KPI KA. SHIFT'
-        : isPress
-          ? '<i class="fa-solid fa-circle-down"></i> KPI PRESS'
-          : '<i class="fa-solid fa-droplet"></i> KPI FILLING';
+      badge.innerHTML = isSpv
+        ? '<i class="fa-solid fa-user-tie"></i> KPI SPV PRODUKSI'
+        : isShift
+          ? '<i class="fa-solid fa-users"></i> KPI KA. SHIFT'
+          : isPress
+            ? '<i class="fa-solid fa-circle-down"></i> KPI PRESS'
+            : '<i class="fa-solid fa-droplet"></i> KPI FILLING';
     }
   }
 
@@ -8656,7 +9002,7 @@
 
           <div class="kpi-employee-detail-summary">
             ${
-              report.kpiType === "shift"
+              report.kpiType === "shift" || report.kpiType === "spv"
                 ? `<span>Hari Produksi <strong>${report.productionDays}</strong></span><span>Karyawan Aktif <strong>${report.presentDays}</strong></span><span>Entri Produksi <strong>${report.lineDays}</strong></span>`
                 : `<span>Acuan Kehadiran <strong>${report.productionDays} hari</strong></span><span>Hari Hadir <strong>${report.presentDays}</strong></span><span>Hari ${esc(report.lineLabel || "Produksi")} <strong>${report.lineDays || 0}</strong></span>`
             }
@@ -8695,8 +9041,8 @@
         ? "1 karyawan"
         : `${reports.length} karyawan`;
       summary.textContent =
-        reportSet.kpiType === "shift"
-          ? `KPI Ka. Shift · Periode ${reportSet.period.label} · Target gabungan ${kpiPressQtyText(reportSet.outputTarget)} botol/bulan`
+        reportSet.kpiType === "shift" || reportSet.kpiType === "spv"
+          ? `KPI ${reportSet.lineLabel} · Periode ${reportSet.period.label} · Target gabungan ${kpiPressQtyText(reportSet.outputTarget)} botol/bulan`
           : `${selectedLabel} KPI ${reportSet.lineLabel} · Periode ${reportSet.period.label} · Target output ${kpiPressQtyText(reportSet.outputTarget)} botol/bulan`;
     }
   }
@@ -8733,7 +9079,7 @@
       ? genLaporanId().replace(/^LAP-/, `KPI-${lineLabel.toUpperCase()}-`)
       : "PREVIEW";
     const outputTarget =
-      kpiType === "shift"
+      kpiType === "shift" || kpiType === "spv"
         ? reports[0].outputTarget
         : getKpiOutputTarget(kpiType);
     state.lastKpiLaporan = {
@@ -8786,12 +9132,16 @@
       };
     }
 
-    if (type === "shift") {
-      const report = buildShiftKpiReport(monthValue);
+    if (type === "shift" || type === "spv") {
+      const report =
+        type === "spv"
+          ? buildSpvKpiReport(monthValue)
+          : buildShiftKpiReport(monthValue);
       return {
         reports: report ? [report] : [],
         period,
-        selectedOperator: getShiftLeaderName(),
+        selectedOperator:
+          type === "spv" ? "SPV Produksi" : getShiftLeaderName(),
         type,
         error: "",
       };
@@ -8846,6 +9196,8 @@
     const by = el("lap-kpi-by")?.textContent || "—";
     const isPress = reportSet.kpiType === "press";
     const isShift = reportSet.kpiType === "shift";
+    const isSpv = reportSet.kpiType === "spv";
+    const isProductionManagement = isShift || isSpv;
 
     const sections = reportSet.reports
       .map((report, index) => {
@@ -8865,11 +9217,13 @@
           )
           .join("");
 
-        const qualitySummary = isShift
-          ? `Reject ${esc(kpiPressPercentText(report.rejectActual, 2))} · Rata-rata update ${esc(String(report.updateAverage.toLocaleString("id-ID", { maximumFractionDigits: 2 })))}`
-          : isPress
-            ? `Kerusakan ${esc(report.outputActual > 0 ? kpiPressPercentText(report.rejectActual || 0, 2) : "—")}`
-            : `Kardus Basah ${esc(kpiPressQtyText(report.wetCartonsActual || 0))} dus · Tumpahan ${esc(kpiPressPercentText(report.spillActual, 2))}`;
+        const qualitySummary = isSpv
+          ? `Reject ${esc(kpiPressPercentText(report.rejectActual, 2))} · Tumpahan ${esc(kpiPressPercentText(report.spillActual, 2))} · Down time ${report.downtimeAverage === null ? "belum ada data" : `${esc(report.downtimeAverage.toLocaleString("id-ID", { maximumFractionDigits: 2 }))} menit`}`
+          : isShift
+            ? `Reject ${esc(kpiPressPercentText(report.rejectActual, 2))} · Rata-rata update ${esc(String(report.updateAverage.toLocaleString("id-ID", { maximumFractionDigits: 2 })))}`
+            : isPress
+              ? `Kerusakan ${esc(report.outputActual > 0 ? kpiPressPercentText(report.rejectActual || 0, 2) : "—")}`
+              : `Kardus Basah ${esc(kpiPressQtyText(report.wetCartonsActual || 0))} dus · Tumpahan ${esc(kpiPressPercentText(report.spillActual, 2))}`;
 
         return `
         <section class="employee-section">
@@ -8887,9 +9241,9 @@
           </table>
           <div class="compact">
             Output ${esc(kpiPressQtyText(report.outputActual))} · ${qualitySummary} ·
-            APD ${esc(kpiPressPercentText(report.apdActual, 2))} ${isShift ? "" : `· Kehadiran ${esc(kpiPressPercentText(report.attendanceActual, 2))}`} ·
-            ${isShift ? "Hari produksi" : "Acuan kehadiran"} ${report.productionDays} · ${
-              isShift
+            APD ${esc(kpiPressPercentText(report.apdActual, 2))} ${isProductionManagement ? "" : `· Kehadiran ${esc(kpiPressPercentText(report.attendanceActual, 2))}`} ·
+            ${isProductionManagement ? "Hari produksi" : "Acuan kehadiran"} ${report.productionDays} · ${
+              isProductionManagement
                 ? `Karyawan aktif ${report.presentDays} · Entri produksi ${report.lineDays}`
                 : `Hari hadir ${report.presentDays} · Hari ${esc(report.lineLabel)} ${report.lineDays || 0}`
             }
@@ -8898,15 +9252,20 @@
       })
       .join("");
 
-    const notes = isShift
-      ? `<p><strong>Keterangan:</strong> Target gabungan memakai target bulanan Filling dan Press di Setting, dikalikan jumlah karyawan aktif pada masing-masing bagian. Capaian target penuh saat hasil mencapai 90% target gabungan.</p>
+    const notes = isSpv
+      ? `<p><strong>Keterangan:</strong> Pencapaian Team mencapai bobot penuh saat hasil produksi mencapai lebih dari 95% target gabungan SPK Filling dan Press.</p>
+         <p>Reject memakai gabungan botol pecah Press dan kardus basah Filling. Efisiensi bahan baku memakai persentase kardus basah terhadap total kardus Filling sebagai data tumpahan.</p>
+         <p>Down Time Racikan dihitung dari rata-rata field menit downtime yang tersedia; jika belum dicatat, capaian indikator ini bernilai 0.</p>
+         <p>Aktual APD SPV Produksi memakai rata-rata seluruh nilai APD pada periode laporan.</p>`
+      : isShift
+        ? `<p><strong>Keterangan:</strong> Target gabungan memakai target bulanan Filling dan Press di Setting, dikalikan jumlah karyawan aktif pada masing-masing bagian. Capaian target penuh saat hasil mencapai 90% target gabungan.</p>
          <p>Reject = (botol rusak Press + kardus basah Filling) ÷ total pengerjaan pcs. Rata-rata update = total updateCount ÷ jumlah seluruh baris Pengerjaan Filling dan Press dalam periode; nilai 0 tetap dihitung.</p>
-         <p>Aktual APD Ka. Shift = total persentase seluruh baris APD pada periode laporan ÷ jumlah baris APD, sama dengan AVERAGE kolom Nilai Prosentase APD di Spreadsheet.</p>`
-      : isPress
-        ? `
+         <p>Aktual APD ${esc(reportSet.lineLabel)} = total persentase seluruh baris APD pada periode laporan ÷ jumlah baris APD, sama dengan AVERAGE kolom Nilai Prosentase APD di Spreadsheet.</p>`
+        : isPress
+          ? `
         <p><strong>Keterangan:</strong> Target output KPI Press diatur melalui menu Setting.</p>
         <p>Kerusakan botol dihitung dari rata-rata persentase kerusakan harian pada data Press. Target &lt; 1%.</p>`
-        : `
+          : `
         <p><strong>Keterangan:</strong> Target output KPI Filling diatur melalui menu Setting (${esc(kpiPressQtyText(reportSet.outputTarget))} botol/bulan).</p>
         <p>Seluruh pengerjaan Filling karyawan pada tanggal yang sama digabung: 0 kardus basah = 0%; total 1–5 = 1%; di atas 5 = 1% + ((Total Kardus Basah Harian − 5) ÷ Total Qty Pengerjaan Dus Harian × 30%). Nilai aktual periode adalah rata-rata persentase harian.</p>`;
 
@@ -8964,8 +9323,8 @@
   ${sections}
   <div class="notes">
     ${notes}
-    <p>${isShift ? "APD menggunakan rata-rata nilai tiap karyawan aktif pada bulan yang sama. Target > 95%." : "APD menggunakan rata-rata nilai APD operator pada bulan yang sama. Target ≥ 95%."}</p>
-    ${isShift ? "" : "<p>Kehadiran dihitung dari jumlah tanggal kerja unik karyawan dibandingkan jumlah tanggal kerja terbanyak milik satu karyawan pada periode yang sama. Bobot Kehadiran tetap 15.</p>"}
+    <p>${isProductionManagement ? "APD menggunakan rata-rata nilai tiap karyawan aktif pada bulan yang sama. Target > 95%." : "APD menggunakan rata-rata nilai APD operator pada bulan yang sama. Target ≥ 95%."}</p>
+    ${isProductionManagement ? "" : "<p>Kehadiran dihitung dari jumlah tanggal kerja unik karyawan dibandingkan jumlah tanggal kerja terbanyak milik satu karyawan pada periode yang sama. Bobot Kehadiran tetap 15.</p>"}
   </div>
 </body>
 </html>`;
@@ -9020,7 +9379,10 @@
           ? "hasil"
           : name === "spk" && canLevel("spkReport")
             ? "spk"
-            : name === "kpi" && (canKpiType("filling") || canKpiType("press"))
+            : name === "kpi" &&
+                (canKpiType("filling") ||
+                  canKpiType("press") ||
+                  canKpiType("spv"))
               ? "kpi"
               : can("accessWorkReport")
                 ? "hasil"
@@ -10009,11 +10371,12 @@
       ["spkReport", "Data SPK"],
       ["kpiFilling", "Laporan KPI Filling"],
       ["kpiPress", "Laporan KPI Press"],
+      ["kpiSpv", "Laporan KPI SPV Produksi"],
       ["master", "Data Master (Sumber Search)"],
       ["kpiSettings", "Pengaturan KPI"],
     ];
     if (permissionGrid) {
-      permissionGrid.innerHTML = `<div class="permission-table-wrap"><table class="permission-table"><thead><tr><th>Bagian</th><th>Read</th><th>Write</th><th>Administrator</th><th>Kelola Sendiri</th><th>Kelola User Lain</th><th>Export CSV</th></tr></thead><tbody>${permissionScopes.map(([scope, title]) => `<tr data-scope="${scope}" ${["workReport", "spkReport", "kpiFilling", "kpiPress"].includes(scope) ? 'class="permission-child"' : ""}><th scope="row">${title}</th>${["read", "write", "admin"].map((level) => `<td><label><input type="checkbox" data-level="${level}" aria-label="${title}: ${level}" ${["dashboard", "reports", "workReport", "spkReport", "kpiFilling", "kpiPress"].includes(scope) && level === "write" ? 'disabled title="Bagian ini tidak memiliki aksi tulis"' : ""}></label></td>`).join("")}${["own", "others"].map((owner) => `<td><label><input type="checkbox" data-manage="${owner}" aria-label="${title}: kelola data ${owner === "own" ? "sendiri" : "user lain"}" ${["spk", "filling", "press", "apd"].includes(scope) ? "" : 'disabled title="Tidak berlaku pada bagian ini"'}></label></td>`).join("")}<td><label><input type="checkbox" data-export-csv aria-label="${title}: Export CSV" ${["filling", "press"].includes(scope) ? "" : 'disabled title="Export CSV khusus Filling dan Press"'}></label></td></tr>`).join("")}</tbody></table></div><p class="hint-text">Export CSV dapat diberikan secara terpisah untuk Filling dan Press. Kelola Sendiri dan Kelola User Lain berlaku pada SPK, Filling, Press, dan APD.</p>`;
+      permissionGrid.innerHTML = `<div class="permission-table-wrap"><table class="permission-table"><thead><tr><th>Bagian</th><th>Read</th><th>Write</th><th>Administrator</th><th>Kelola Sendiri</th><th>Kelola User Lain</th><th>Export CSV</th></tr></thead><tbody>${permissionScopes.map(([scope, title]) => `<tr data-scope="${scope}" ${["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiSpv"].includes(scope) ? 'class="permission-child"' : ""}><th scope="row">${title}</th>${["read", "write", "admin"].map((level) => `<td><label><input type="checkbox" data-level="${level}" aria-label="${title}: ${level}" ${["dashboard", "reports", "workReport", "spkReport", "kpiFilling", "kpiPress", "kpiSpv"].includes(scope) && level === "write" ? 'disabled title="Bagian ini tidak memiliki aksi tulis"' : ""}></label></td>`).join("")}${["own", "others"].map((owner) => `<td><label><input type="checkbox" data-manage="${owner}" aria-label="${title}: kelola data ${owner === "own" ? "sendiri" : "user lain"}" ${["spk", "filling", "press", "apd"].includes(scope) ? "" : 'disabled title="Tidak berlaku pada bagian ini"'}></label></td>`).join("")}<td><label><input type="checkbox" data-export-csv aria-label="${title}: Export CSV" ${["filling", "press"].includes(scope) ? "" : 'disabled title="Export CSV khusus Filling dan Press"'}></label></td></tr>`).join("")}</tbody></table></div><p class="hint-text">Export CSV dapat diberikan secara terpisah untuk Filling dan Press. Kelola Sendiri dan Kelola User Lain berlaku pada SPK, Filling, Press, dan APD.</p>`;
       function syncManagement(row, reset) {
         if (!["spk", "filling", "press", "apd"].includes(row.dataset.scope))
           return;
@@ -10073,7 +10436,22 @@
     }
 
     function openPermissionModal(user) {
-      if (!modal || !permissionGrid || !user || user.role !== "user") return;
+      if (!modal || !permissionGrid) {
+        toast("Komponen popup Hak Akses tidak ditemukan.", true);
+        return;
+      }
+      if (!user) {
+        toast("Data user untuk pengaturan Hak Akses tidak ditemukan.", true);
+        return;
+      }
+      if (
+        String(user.role || "")
+          .trim()
+          .toLowerCase() !== "user"
+      ) {
+        toast("Hak akses khusus hanya dapat diatur untuk User Biasa.", true);
+        return;
+      }
       permissionUsername = user.username;
       el("permissionUserLabel").textContent =
         `${user.name} (@${user.username})`;
@@ -10165,11 +10543,15 @@
           permissionGrid,
         ).checked;
         if (permissions.levels.reports !== "read") {
-          ["workReport", "spkReport", "kpiFilling", "kpiPress"].forEach(
-            (scope) => {
-              permissions.levels[scope] = "none";
-            },
-          );
+          [
+            "workReport",
+            "spkReport",
+            "kpiFilling",
+            "kpiPress",
+            "kpiSpv",
+          ].forEach((scope) => {
+            permissions.levels[scope] = "none";
+          });
         }
         const data = await apiPost("user.permissions.set", {
           username: permissionUsername,
@@ -10208,44 +10590,64 @@
       }
     });
 
-    tbody.addEventListener("click", async (event) => {
-      const accessBtn = event.target.closest(".btn-access-user");
-      if (accessBtn) {
-        const user = state.users.find(
-          (item) => item.username === accessBtn.dataset.username,
-        );
-        openPermissionModal(user);
-        return;
-      }
-      const resetBtn = event.target.closest(".btn-reset-user");
-      if (resetBtn) {
-        const user = state.users.find(
-          (item) => item.username === resetBtn.dataset.username,
-        );
-        openResetPasswordModal(user);
-        return;
-      }
-      const btn = event.target.closest(".btn-del-user");
-      if (!btn) return;
-      if (
-        !(await confirmDelete({
-          title: "Hapus pengguna?",
-          message: "Akun pengguna ini tidak akan dapat mengakses sistem lagi.",
-          item: btn.dataset.username,
-        }))
-      )
-        return;
-      try {
-        const data = await apiPost("user.remove", {
-          username: btn.dataset.username,
-        });
-        state.users = data.users || [];
-        renderUsers();
-        toast("User berhasil dihapus.");
-      } catch (err) {
-        toast(err.message, true);
-      }
-    });
+    document.addEventListener(
+      "click",
+      async (event) => {
+        const target =
+          event.target instanceof Element
+            ? event.target
+            : event.target?.parentElement;
+        const accessBtn = target?.closest(".btn-access-user");
+        if (accessBtn) {
+          if (!accessBtn.closest("#userTbody")) return;
+          event.preventDefault();
+          event.stopPropagation();
+          const targetUsername = String(accessBtn.dataset.username || "")
+            .trim()
+            .toLowerCase();
+          const user = state.users.find(
+            (item) =>
+              String(item.username || "")
+                .trim()
+                .toLowerCase() === targetUsername,
+          );
+          openPermissionModal(user);
+          return;
+        }
+        const resetBtn = target?.closest(".btn-reset-user");
+        if (resetBtn) {
+          if (!resetBtn.closest("#userTbody")) return;
+          const user = state.users.find(
+            (item) => item.username === resetBtn.dataset.username,
+          );
+          openResetPasswordModal(user);
+          return;
+        }
+        const btn = target?.closest(".btn-del-user");
+        if (!btn) return;
+        if (!btn.closest("#userTbody")) return;
+        if (
+          !(await confirmDelete({
+            title: "Hapus pengguna?",
+            message:
+              "Akun pengguna ini tidak akan dapat mengakses sistem lagi.",
+            item: btn.dataset.username,
+          }))
+        )
+          return;
+        try {
+          const data = await apiPost("user.remove", {
+            username: btn.dataset.username,
+          });
+          state.users = data.users || [];
+          renderUsers();
+          toast("User berhasil dihapus.");
+        } catch (err) {
+          toast(err.message, true);
+        }
+      },
+      true,
+    );
   }
 
   function initLogout() {
@@ -10266,6 +10668,11 @@
       return;
     }
 
+    // Pasang event pengelolaan user lebih dahulu agar tombol Atur Akses,
+    // Reset Password, dan Hapus tetap aktif meski modul lain gagal inisialisasi.
+    initUserManagement();
+    initLogout();
+
     buildPressView();
     buildFillingPopup();
     wireLineView("filling");
@@ -10275,6 +10682,7 @@
     initDashboard();
     initSpkModal();
     initFillingSpkQueue();
+    initFillingDowntime();
     initLaporanSubmenu();
     initSpkReport();
     initLaporan();
@@ -10283,8 +10691,6 @@
     initInputDataCleanup();
     initSettingCards();
     initMasterData();
-    initUserManagement();
-    initLogout();
 
     // Tampilkan aplikasi langsung memakai profil + master cache terakhir.
     // Validasi server tetap berjalan segera setelahnya.

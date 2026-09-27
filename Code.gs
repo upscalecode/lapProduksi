@@ -28,6 +28,7 @@ const APP = {
     PRESS_REMAINDERS: "Sisa Press",
     APD: "APD",
     SPK: "SPK",
+    DOWNTIME: "Down Time",
     SETTINGS: "Settings",
   },
   ENTRY_HEADERS: [
@@ -88,6 +89,7 @@ const APP = {
     "updatedAt",
   ],
   SETTINGS_HEADERS: ["key", "value", "updatedAt", "updatedBy"],
+  DOWNTIME_HEADERS: ["Time Stamp", "Down Time", "Alasan", "Keterangan"],
   // Audit SPK disimpan terpisah dan tidak pernah digabungkan ke updateCount
   // Pengerjaan yang menjadi sumber perhitungan KPI Karyawan.
   SPK_HEADERS: [
@@ -149,6 +151,7 @@ function setupSpreadsheet() {
     APP.PRESS_ADJUSTMENT_HEADERS,
   );
   ensureSheet_(ss, APP.SHEETS.PRESS_REMAINDERS, APP.PRESS_REMAINDER_HEADERS);
+  ensureSheet_(ss, APP.SHEETS.DOWNTIME, APP.DOWNTIME_HEADERS);
   ensureApdSheet_(ss, true);
   ensureSpkSheet_(ss, true);
   ensureSettingsSheet_(ss);
@@ -268,7 +271,8 @@ function doGet(e) {
       const readKpi =
         can_(session.user, "accessKpiReport") ||
         canLevel_(session.user, "kpiFilling", "read") ||
-        canLevel_(session.user, "kpiPress", "read");
+        canLevel_(session.user, "kpiPress", "read") ||
+        canLevel_(session.user, "kpiSpv", "read");
       const readSpkReport = canLevel_(session.user, "spkReport", "read");
       const readReports = can_(session.user, "accessWorkReport") || readKpi;
       const readApd =
@@ -313,6 +317,8 @@ function doGet(e) {
             : [],
         // KPI pada Dashboard/Laporan membutuhkan nilai APD meskipun user tidak membuka tab APD.
         apdEntries: readApd ? getApdEntries_() : [],
+        downtimeEntries:
+          readFilling || readDashboard || readKpi ? getDowntimeEntries_() : [],
         users: session.user.role === "superuser" ? getUsers_() : [],
         settings: getSettings_(),
       });
@@ -508,6 +514,20 @@ function doPost(e) {
         discardApdPhoto_(session.user, param_(e, "photoFileId"));
         return json_({ ok: true });
 
+      case "downtime.upsert":
+        requireLevel_(session.user, "filling", "write");
+        return withWriteLock_(function () {
+          const entry = upsertDowntimeEntry_(
+            session.user,
+            parseJsonParam_(e, "data"),
+          );
+          return json_({
+            ok: true,
+            entry: entry,
+            downtimeEntries: getDowntimeEntries_(),
+          });
+        });
+
       case "master.add":
         requireLevel_(session.user, "master", "write");
         return withWriteLock_(function () {
@@ -657,6 +677,120 @@ function clearAllInputData_() {
   });
 
   return { clearedSheets: cleared, clearedAt: new Date().toISOString() };
+}
+
+function downtimeSheet_() {
+  return ensureSheet_(
+    spreadsheet_(),
+    APP.SHEETS.DOWNTIME,
+    APP.DOWNTIME_HEADERS,
+  );
+}
+
+function downtimeDateKey_(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!date || isNaN(date.getTime())) return "";
+  return Utilities.formatDate(
+    date,
+    Session.getScriptTimeZone(),
+    "yyyy-MM-dd",
+  );
+}
+
+function getDowntimeEntries_() {
+  const sh = downtimeSheet_();
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return [];
+  return sh
+    .getRange(2, 1, lastRow - 1, APP.DOWNTIME_HEADERS.length)
+    .getValues()
+    .map(function (row) {
+      const timestamp = row[0] instanceof Date ? row[0] : new Date(row[0]);
+      return {
+        timestamp:
+          timestamp && !isNaN(timestamp.getTime())
+            ? timestamp.toISOString()
+            : String(row[0] || ""),
+        tanggal: downtimeDateKey_(timestamp),
+        downTime: number_(row[1]),
+        alasan: String(row[2] || ""),
+        keterangan: String(row[3] || ""),
+      };
+    })
+    .filter(function (item) {
+      return item.tanggal;
+    })
+    .sort(function (a, b) {
+      return String(b.timestamp).localeCompare(String(a.timestamp));
+    });
+}
+
+function upsertDowntimeEntry_(user, data) {
+  data = data || {};
+  const arrivalTimestamp = new Date(data.arrivalTimestamp || "");
+  if (!arrivalTimestamp || isNaN(arrivalTimestamp.getTime()))
+    throw new Error("Waktu kedatangan racikan tidak valid.");
+  const productionStartTime = String(data.productionStartTime || "").trim();
+  const startMatch = /^(\d{2}):(\d{2})$/.exec(productionStartTime);
+  if (
+    !startMatch ||
+    Number(startMatch[1]) > 23 ||
+    Number(startMatch[2]) > 59
+  )
+    throw new Error("Jam Masuk Kerja Produksi wajib diisi.");
+  const arrivalTime = Utilities.formatDate(
+    arrivalTimestamp,
+    Session.getScriptTimeZone(),
+    "HH:mm",
+  );
+  const arrivalParts = arrivalTime.split(":");
+  const arrivalMinutes = Number(arrivalParts[0]) * 60 + Number(arrivalParts[1]);
+  const startMinutes = Number(startMatch[1]) * 60 + Number(startMatch[2]);
+  const downTime = arrivalMinutes - startMinutes;
+  const alasan = String(data.alasan || "").trim();
+  const keterangan = String(data.keterangan || "").trim();
+  const allowedReasons = [
+    "Tepat Waktu",
+    "Raw Material Belum Ready",
+    "Kendala Mesin",
+    "Menunggu QC",
+    "Salah Formulasi",
+    "Human Error",
+    "Lainnya",
+  ];
+  if (!isFinite(downTime) || downTime <= 0)
+    throw new Error("Down Time wajib lebih dari 0 menit.");
+  if (allowedReasons.indexOf(alasan) < 0)
+    throw new Error("Alasan Down Time tidak valid.");
+  if (alasan === "Lainnya" && !keterangan)
+    throw new Error("Keterangan wajib diisi untuk alasan Lainnya.");
+
+  const now = new Date();
+  const today = downtimeDateKey_(now);
+  if (downtimeDateKey_(arrivalTimestamp) !== today)
+    throw new Error("Kedatangan racikan harus divalidasi pada hari ini.");
+  const sh = downtimeSheet_();
+  const lastRow = sh.getLastRow();
+  if (lastRow >= 2) {
+    const timestamps = sh.getRange(2, 1, lastRow - 1, 1).getValues();
+    for (let index = timestamps.length - 1; index >= 0; index--) {
+      if (downtimeDateKey_(timestamps[index][0]) !== today) continue;
+      if (!user || user.role !== "superuser")
+        throw new Error(
+          "Validasi Down Time yang sudah tersimpan hanya dapat diubah oleh Super User.",
+        );
+      sh.getRange(index + 2, 1, 1, APP.DOWNTIME_HEADERS.length).setValues([
+        [arrivalTimestamp, downTime, alasan, keterangan],
+      ]);
+      return getDowntimeEntries_().find(function (item) {
+        return item.tanggal === today;
+      });
+    }
+  }
+  sh.appendRow([arrivalTimestamp, downTime, alasan, keterangan]);
+  return getDowntimeEntries_().find(function (item) {
+    return item.tanggal === today;
+  });
 }
 
 function handleLogin_(e) {
@@ -3985,6 +4119,7 @@ function addUser_(name, username, password, role) {
       spkReport: "none",
       kpiFilling: "none",
       kpiPress: "none",
+      kpiSpv: "none",
       master: "none",
       kpiSettings: "none",
     };
@@ -4153,6 +4288,7 @@ function defaultPermissions_(role) {
       accessKpiReport: true,
       accessKpiFillingReport: true,
       accessKpiPressReport: true,
+      accessKpiSpvReport: true,
       deleteUnpressed: true,
       viewAllData: true,
       editOwn: true,
@@ -4177,6 +4313,7 @@ function defaultPermissions_(role) {
     accessKpiReport: false,
     accessKpiFillingReport: false,
     accessKpiPressReport: false,
+    accessKpiSpvReport: false,
     deleteUnpressed: false,
     viewAllData: false,
     editOwn: true,
@@ -4213,6 +4350,9 @@ function normalizePermissions_(role, raw) {
     parsed.accessKpiFillingReport = parsed.accessReports === true;
   if (!Object.prototype.hasOwnProperty.call(parsed, "accessKpiPressReport"))
     parsed.accessKpiPressReport = parsed.accessReports === true;
+  if (!Object.prototype.hasOwnProperty.call(parsed, "accessKpiSpvReport"))
+    parsed.accessKpiSpvReport =
+      parsed.accessKpiReport === true || parsed.accessReports === true;
   if (!Object.prototype.hasOwnProperty.call(parsed, "accessKpiSettings"))
     parsed.accessKpiSettings = parsed.accessMaster === true;
   Object.keys(defaults).forEach(function (key) {
@@ -4234,6 +4374,7 @@ function normalizePermissions_(role, raw) {
     spkReport: "accessSpkReport",
     kpiFilling: "accessKpiFillingReport",
     kpiPress: "accessKpiPressReport",
+    kpiSpv: "accessKpiSpvReport",
     master: "accessMaster",
     kpiSettings: "accessKpiSettings",
   };
@@ -4244,7 +4385,7 @@ function normalizePermissions_(role, raw) {
       hasLevels &&
       scope === "reports" &&
       !Object.prototype.hasOwnProperty.call(parsed.levels, "reports")
-        ? ["workReport", "spkReport", "kpiFilling", "kpiPress"].some(
+        ? ["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiSpv"].some(
             function (child) {
               return (
                 ["read", "write", "admin"].indexOf(parsed.levels[child]) >= 0
@@ -4268,7 +4409,8 @@ function normalizePermissions_(role, raw) {
             defaults.accessSpkReport ||
             defaults.accessKpiReport ||
             defaults.accessKpiFillingReport ||
-            defaults.accessKpiPressReport
+            defaults.accessKpiPressReport ||
+            defaults.accessKpiSpvReport
           : defaults[scopes[scope]] ||
             (scope.indexOf("kpi") === 0 && defaults.accessKpiReport);
       levels[scope] = !allowed
@@ -4295,7 +4437,7 @@ function normalizePermissions_(role, raw) {
   });
   if (hasLevels) {
     const parent = levels.reports;
-    ["workReport", "spkReport", "kpiFilling", "kpiPress"].forEach(
+    ["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiSpv"].forEach(
       function (scope) {
         defaults[scopes[scope]] =
           parent === "admin" || (parent !== "none" && levels[scope] !== "none");
@@ -4339,7 +4481,9 @@ function canLevel_(user, scope, minimum) {
   ).levels;
   const rank = { none: 0, read: 1, write: 2, admin: 3 };
   if (
-    ["workReport", "spkReport", "kpiFilling", "kpiPress"].indexOf(scope) >= 0
+    ["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiSpv"].indexOf(
+      scope,
+    ) >= 0
   ) {
     if (levels.reports === "admin") return true;
     if (levels.reports === "none") return false;

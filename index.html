@@ -17,13 +17,14 @@
     ></script>
     <link
       rel="stylesheet"
-      href="style.css?v=20260926-v62-kpi-table-apd-icon-colors"
+      href="style.css?v=20260927-v65-hide-validated-gate"
     />
 
     <style>
       /* Aturan inti modal SPK ditempatkan bersama dokumen agar tidak dapat
          tertinggal oleh cache stylesheet ketika versi aplikasi diperbarui. */
-      #spkModal.spk-modal {
+      #spkModal.spk-modal,
+      #fillingDowntimeModal.spk-modal {
         position: fixed !important;
         inset: 0 !important;
         z-index: 10020 !important;
@@ -36,7 +37,8 @@
         -webkit-backdrop-filter: blur(10px) !important;
         backdrop-filter: blur(10px) !important;
       }
-      #spkModal.spk-modal[hidden] {
+      #spkModal.spk-modal[hidden],
+      #fillingDowntimeModal.spk-modal[hidden] {
         display: none !important;
       }
       #spkModal > .spk-dialog {
@@ -50,14 +52,27 @@
         border-radius: 16px !important;
         box-shadow: 0 24px 70px rgba(15, 23, 42, 0.35) !important;
       }
+      #fillingDowntimeModal > .spk-dialog {
+        position: relative !important;
+        width: min(620px, calc(100vw - 32px)) !important;
+        max-width: 620px !important;
+        margin: auto !important;
+        padding: 24px !important;
+        background: #fff !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 16px !important;
+        box-shadow: 0 24px 70px rgba(15, 23, 42, 0.35) !important;
+      }
       #spkModal .spk-input-grid {
         grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
       }
       @media (max-width: 700px) {
-        #spkModal.spk-modal {
+        #spkModal.spk-modal,
+        #fillingDowntimeModal.spk-modal {
           padding: 12px !important;
         }
-        #spkModal > .spk-dialog {
+        #spkModal > .spk-dialog,
+        #fillingDowntimeModal > .spk-dialog {
           padding: 18px !important;
         }
         #spkModal .spk-input-grid {
@@ -78,7 +93,11 @@
       <div class="sticky-app-header">
         <header class="topbar">
           <div class="brand">
-            <img src="assets/images/faviconAbsh.png" alt="Logo ABSH" class="brand-logo" />
+            <img
+              src="assets/images/faviconAbsh.png"
+              alt="Logo ABSH"
+              class="brand-logo"
+            />
             <!-- <span class="gear">ABSH</span> -->
             <div>
               <p class="eyebrow">PT. ABSH FRAGRANCE CREATIONS</p>
@@ -146,7 +165,7 @@
                   class="btn btn-secondary"
                   id="dashboardRefresh"
                 >
-                  <i class="fa-solid fa-retweet"></i> Refresh
+                  <i class="fa-solid fa-rotate-right"></i> Refresh
                 </button>
               </div>
             </div>
@@ -771,12 +790,44 @@
         </section>
 
         <section class="view" id="view-filling" data-line="filling" hidden>
+          <section
+            class="panel filling-validation-gate"
+            id="fillingValidationGate"
+          >
+            <div>
+              <p class="eyebrow">Validasi Harian Filling</p>
+              <h2>Validasi kedatangan racikan sebelum memulai Filling</h2>
+              <p class="hint-text" id="fillingValidationStatus">
+                Down Time hari ini wajib diisi untuk membuka proses Filling.
+              </p>
+            </div>
+            <button
+              type="button"
+              class="btn btn-primary"
+              id="fillingDowntimeValidateButton"
+            >
+              <i class="fa-solid fa-clock"></i> Validasi Down Time
+            </button>
+          </section>
           <div class="line-stack">
             <section class="panel table-panel filling-spk-panel">
               <div class="panel-head">
                 <div>
                   <p class="eyebrow">SPK → Filling</p>
                   <h2>SPK dengan Sisa Qty untuk Dikerjakan</h2>
+                </div>
+                <div
+                  class="filling-downtime-history"
+                  id="fillingDowntimeHistory"
+                >
+                  <span class="hint-text">Riwayat Down Time</span>
+                  <button
+                    type="button"
+                    class="btn btn-ghost"
+                    id="fillingDowntimeHistoryButton"
+                  >
+                    Belum ada data
+                  </button>
                 </div>
               </div>
               <div class="table-wrap">
@@ -1771,6 +1822,7 @@
                     <option value="filling">KPI Filling</option>
                     <option value="press">KPI Press</option>
                     <option value="shift">KPI Ka. Shift</option>
+                    <option value="spv">KPI SPV Produksi</option>
                   </select>
                 </label>
                 <label class="field field-inline kpi-press-employee-filter">
@@ -2395,6 +2447,93 @@
       </main>
     </div>
 
+    <div id="fillingDowntimeModal" class="spk-modal" hidden>
+      <form
+        class="spk-dialog filling-downtime-dialog"
+        id="fillingDowntimeForm"
+        autocomplete="off"
+      >
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Validasi Harian Filling</p>
+            <h2>Input Down Time Racikan</h2>
+          </div>
+          <button
+            type="button"
+            class="btn btn-ghost"
+            id="fillingDowntimeClose"
+            aria-label="Tutup"
+          >
+            X
+          </button>
+        </div>
+        <div class="input-grid">
+          <label class="field">
+            <span>Kedatangan Racikan</span>
+            <input type="time" id="fillingDowntimeArrival" disabled />
+          </label>
+          <label class="field">
+            <span>Jam Masuk Kerja Produksi</span>
+            <input type="time" id="fillingProductionStartTime" required />
+          </label>
+          <label class="field">
+            <span>Hasil Down Time (menit)</span>
+            <input
+              type="number"
+              id="fillingDowntimeMinutes"
+              min="1"
+              step="1"
+              disabled
+            />
+          </label>
+          <label class="field">
+            <span>Alasan</span>
+            <select id="fillingDowntimeReason" required>
+              <option value="">Pilih alasan</option>
+              <option value="Tepat Waktu">Tepat Waktu</option>
+              <option value="Raw Material Belum Ready">
+                Raw Material Belum Ready
+              </option>
+              <option value="Kendala Mesin">Kendala Mesin</option>
+              <option value="Menunggu QC">Menunggu QC</option>
+              <option value="Salah Formulasi">Salah Formulasi</option>
+              <option value="Human Error">Human Error</option>
+              <option value="Lainnya">Lainnya</option>
+            </select>
+          </label>
+          <label
+            class="field filling-downtime-note"
+            id="fillingDowntimeNoteWrap"
+            hidden
+          >
+            <span>Keterangan</span>
+            <textarea
+              id="fillingDowntimeNote"
+              rows="3"
+              placeholder="Jelaskan alasan lainnya..."
+            ></textarea>
+          </label>
+        </div>
+        <p class="form-error" id="fillingDowntimeError" hidden></p>
+        <div class="form-actions">
+          <button
+            type="button"
+            class="btn btn-ghost"
+            id="fillingDowntimeCancel"
+          >
+            Batal
+          </button>
+          <button
+            type="submit"
+            class="btn btn-primary"
+            id="fillingDowntimeSave"
+          >
+            <i class="fa-solid fa-floppy-disk"></i> Simpan Validasi
+          </button>
+        </div>
+      </form>
+    </div>
+
     <div id="spkModal" class="spk-modal" hidden>
       <form class="spk-dialog" id="spkForm" autocomplete="off">
         <div class="panel-head">
@@ -2475,7 +2614,7 @@
       });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="script.js?v=20260927-v131-spk-variant-kpi"></script>
+    <script src="script.js?v=20260927-v141-downtime-superuser-edit"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>

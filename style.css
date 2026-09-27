@@ -4915,6 +4915,71 @@ button {
 .laporan-subview[hidden] {
   display: none !important;
 }
+
+.filling-validation-gate {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 14px;
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+}
+.filling-validation-gate[hidden] {
+  display: none !important;
+}
+.filling-validation-gate h2 {
+  margin: 2px 0 5px;
+  font-size: 17px;
+}
+.filling-awaiting-validation > .line-stack {
+  filter: blur(3px);
+  opacity: 0.48;
+  pointer-events: none;
+  user-select: none;
+}
+.filling-downtime-history {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  max-width: 330px;
+}
+.filling-downtime-history .btn {
+  max-width: 100%;
+  white-space: normal;
+  text-align: right;
+}
+.filling-downtime-note {
+  grid-column: 1 / -1;
+}
+.filling-downtime-dialog input:disabled {
+  color: var(--ink);
+  opacity: 1;
+  cursor: not-allowed;
+  background: var(--surface-2);
+}
+.filling-downtime-dialog .input-invalid {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.filling-downtime-dialog {
+  width: min(620px, 100%);
+}
+
+@media (max-width: 680px) {
+  .filling-validation-gate,
+  .filling-spk-panel .panel-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .filling-downtime-history {
+    align-items: stretch;
+    max-width: none;
+  }
+  .filling-downtime-history .btn {
+    text-align: left;
+  }
+}
 .laporan-subnav-btn[hidden],
 .master-layout > .panel[hidden] {
   display: none !important;
