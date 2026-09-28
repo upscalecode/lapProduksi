@@ -49,6 +49,17 @@
   outline: 2px solid #dc2626;
   outline-offset: 1px;
 }
+/* Field pencarian operator selalu memakai warna input standar. */
+.field input.master-search-input[data-master="operator"] {
+  background: var(--surface) !important;
+}
+.field input.master-search-input[data-master="operator"]:-webkit-autofill,
+.field input.master-search-input[data-master="operator"]:-webkit-autofill:hover,
+.field input.master-search-input[data-master="operator"]:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--ink);
+  -webkit-box-shadow: 0 0 0 1000px var(--surface) inset;
+  box-shadow: 0 0 0 1000px var(--surface) inset;
+}
 .press-balance-panel {
   margin-bottom: 18px;
 }
@@ -4702,18 +4713,26 @@ button {
   color: #fff;
 }
 
-.btn-ghost.press-balance-use,
-.master-suggest button {
+.btn-ghost.press-balance-use {
   background: #387adf;
   border-color: #387adf;
   color: #fff;
 }
-.btn-ghost.press-balance-use:hover,
-.master-suggest button:hover,
-.master-suggest button.active {
+.btn-ghost.press-balance-use:hover {
   background: #004e98;
   border-color: #004e98;
   color: #fff;
+}
+.master-suggest button {
+  background: var(--surface-2);
+  border: 0;
+  color: var(--ink);
+}
+.master-suggest button:hover,
+.master-suggest button.active {
+  background: #e8edf1;
+  border: 0;
+  color: var(--ink);
 }
 
 .page-btn:disabled {
