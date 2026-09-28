@@ -8980,6 +8980,15 @@
     return Array.from(names.values()).sort((a, b) => a.localeCompare(b, "id"));
   }
 
+  function shiftKpiCountedUpdates(entry) {
+    const updateCount = Math.max(
+      0,
+      Math.floor(Number(entry?.updateCount) || 0),
+    );
+    const allowance = entry?.tab === "filling" ? 2 : entry?.tab === "press" ? 1 : 0;
+    return Math.max(0, updateCount - allowance);
+  }
+
   function buildShiftKpiReport(monthValue, reportType = "shift") {
     const period = kpiPressMonthPeriod(monthValue);
     if (!period) return null;
@@ -9007,7 +9016,7 @@
         broken += Math.max(0, Number(entry.qtyBotolPecah) || 0);
       if (entry.tab === "filling")
         wet += Math.max(0, Number(entry.qtyKardusBasah) || 0);
-      updateTotal += Math.max(0, Number(entry.updateCount) || 0);
+      updateTotal += shiftKpiCountedUpdates(entry);
     });
     const outputTarget =
       workersByLine.filling.size * getKpiFillingOutputTarget() +
@@ -9020,8 +9029,9 @@
       ...workersByLine.filling,
       ...workersByLine.press,
     ]);
-    // Rata-rata seluruh kolom updateCount pada data Pengerjaan periode ini.
-    // Setiap baris Filling dan Press mempunyai bobot yang sama, termasuk 0.
+    // KPI Ka. Shift hanya menghitung update yang melewati toleransi per baris:
+    // Filling dua kali update dan Press satu kali update belum menjadi kesalahan.
+    // Setiap baris tetap mempunyai bobot yang sama, termasuk hasil hitung 0.
     const updateAverage = entries.length ? updateTotal / entries.length : 0;
     // Nilai Ka. Shift harus sama dengan AVERAGE kolom persentase APD pada
     // periode laporan. Seluruh baris APD bulan terpilih ikut dihitung sekali,
@@ -9065,9 +9075,9 @@
       {
         no: 3,
         field: "AKURASI DATA",
-        indicator: "AKURASI DATA HASIL OPERATOR",
+        indicator: "KESALAHAN UPDATE DATA OPERATOR",
         weight: 20,
-        targetText: "AVERAGE < 3 KESALAHAN PENCATATAN",
+        targetText: "AVERAGE ≤ 3 KESALAHAN UPDATE",
         targetPercent: 100,
         actualText: updateAverage.toLocaleString("id-ID", {
           maximumFractionDigits: 2,
@@ -9609,7 +9619,7 @@
         const qualitySummary = isSpv
           ? `Reject ${esc(kpiPressPercentText(report.rejectActual, 2))} · Tumpahan ${esc(kpiPressPercentText(report.spillActual, 2))} · Down time ${report.downtimeAverage === null ? "belum ada data" : `${esc(report.downtimeAverage.toLocaleString("id-ID", { minimumFractionDigits: 2, maximumFractionDigits: 2 }))} menit`}`
           : isShift
-            ? `Reject ${esc(kpiPressPercentText(report.rejectActual, 2))} · Rata-rata update ${esc(String(report.updateAverage.toLocaleString("id-ID", { maximumFractionDigits: 2 })))}`
+            ? `Reject ${esc(kpiPressPercentText(report.rejectActual, 2))} · Rata-rata kesalahan update ${esc(String(report.updateAverage.toLocaleString("id-ID", { maximumFractionDigits: 2 })))}`
             : isPress
               ? `Kerusakan ${esc(report.outputActual > 0 ? kpiPressPercentText(report.rejectActual || 0, 2) : "—")}`
               : `Kardus Basah ${esc(kpiPressQtyText(report.wetCartonsActual || 0))} dus · Tumpahan ${esc(kpiPressPercentText(report.spillActual, 2))}`;
@@ -9648,7 +9658,7 @@
          <p>Aktual APD SPV Produksi memakai rata-rata seluruh nilai APD pada periode laporan.</p>`
       : isShift
         ? `<p><strong>Keterangan:</strong> Target gabungan memakai target bulanan Filling dan Press di Setting, dikalikan jumlah karyawan aktif pada masing-masing bagian. Capaian target penuh saat hasil mencapai 90% target gabungan.</p>
-         <p>Reject = (botol rusak Press + kardus basah Filling) ÷ total pengerjaan pcs. Rata-rata update = total updateCount ÷ jumlah seluruh baris Pengerjaan Filling dan Press dalam periode; nilai 0 tetap dihitung.</p>
+         <p>Reject = (botol rusak Press + kardus basah Filling) ÷ total pengerjaan pcs. Kesalahan update per baris Filling = maks(0, updateCount − 2), sedangkan Press = maks(0, updateCount − 1). Aktual KPI adalah total kesalahan update ÷ jumlah seluruh baris Pengerjaan dalam periode; nilai 0 tetap dihitung.</p>
          <p>Aktual APD ${esc(reportSet.lineLabel)} = total persentase seluruh baris APD pada periode laporan ÷ jumlah baris APD, sama dengan AVERAGE kolom Nilai Prosentase APD di Spreadsheet.</p>`
         : isPress
           ? `
