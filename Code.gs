@@ -1765,7 +1765,12 @@ function createEntriesBatch_(user, dataList) {
     data.batchNo = validateSpkBatchForEntry_(data, spkEntries);
 
     const qtyKardus = Number(data.qtyKardus);
-    const qtyBotol = Number(data.qtyBotolPerKardus);
+    const spkForQty = spkByBatchNo[data.batchNo];
+    const qtyBotol =
+      data.line === "filling" && spkForQty && number_(spkForQty.qtyPerDus) > 0
+        ? number_(spkForQty.qtyPerDus)
+        : Number(data.qtyBotolPerKardus);
+    data.qtyBotolPerKardus = qtyBotol;
     const qtyPecah = Number(data.qtyBotolPecah || 0);
     const qtyKardusBasah =
       data.line === "filling" ? Number(data.qtyKardusBasah || 0) : 0;
@@ -2309,6 +2314,9 @@ function assertSpkFillingQty_(data, excludeEntryId) {
     return item.batchNo === batchNo;
   });
   if (!spk || number_(spk.qty) <= 0) return; // kompatibilitas SPK lama tanpa Qty
+  if (number_(spk.qtyPerDus) > 0) {
+    data.qtyBotolPerKardus = number_(spk.qtyPerDus);
+  }
   const requested = Number(data.qtyKardus) * Number(data.qtyBotolPerKardus);
   const used = getEntries_()
     .filter(function (entry) {

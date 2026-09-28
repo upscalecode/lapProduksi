@@ -44,7 +44,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbyrGWx8khIxksmB5Q9iFoifO92d6ONynG1sHnk_ENIEnb2SbR-Rnc-H05x2K7bRrJR2qw/exec",
+      "https://script.google.com/macros/s/AKfycbzlETRwrIdblOLvYt1z1NMwWPjlSkV1J2-Q1_iI_nFlKr__MbY5LivVgsffyoqtKpaYuA/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -1170,7 +1170,7 @@
   function buildFillingPopup() {
     const form = el("form-filling");
     if (!form || el("fillingFormPopup")) return;
-    qsa(".f-produk, .f-botol", form).forEach((input) => {
+    qsa(".f-produk, .f-botol, .f-qty-botol", form).forEach((input) => {
       input.readOnly = true;
     });
     const popup = document.createElement("div");
@@ -1247,10 +1247,16 @@
     const stack = qs(".line-stack", clone);
     const form = qs(".form-panel", clone);
     if (stack && form) {
-      // Identitas Filling dan isi kardus mengikuti baris yang dipilih.
+      // Produk dan botol mengikuti baris Filling yang dipilih. Qty botol per
+      // kardus mengambil nilai awal Filling, tetapi boleh disesuaikan di Press.
       qsa(".f-produk, .f-botol", form).forEach((input) => {
         input.readOnly = true;
       });
+      const pressQtyBotolPerKardus = qs(".f-qty-botol", form);
+      if (pressQtyBotolPerKardus) {
+        pressQtyBotolPerKardus.readOnly = false;
+        pressQtyBotolPerKardus.removeAttribute("readonly");
+      }
       const balancePanel = document.createElement("section");
       balancePanel.className = "panel table-panel press-balance-panel";
       balancePanel.innerHTML = `
@@ -3602,7 +3608,16 @@
         produk.value = entry.produk;
         botol.value = entry.botol;
         qtyKardus.value = entry.qtyKardus;
-        qtyBotol.value = entry.qtyBotolPerKardus;
+        const editSpk =
+          line === "filling"
+            ? [...(state.spkEntries || []), ...(state.preview.spk || [])].find(
+                (item) => String(item.batchNo) === entryBatchNo(entry),
+              )
+            : null;
+        qtyBotol.value =
+          editSpk && Number(editSpk.qtyPerDus) > 0
+            ? editSpk.qtyPerDus
+            : entry.qtyBotolPerKardus;
         if (botolPecah)
           botolPecah.value = entry.botolPecahJenis || entry.botol || "-";
         qtyPecah.value = entry.qtyBotolPecah || 0;
@@ -3686,7 +3701,16 @@
         qs(".f-produk", form).value = entry.produk;
         qs(".f-botol", form).value = entry.botol;
         qtyKardus.value = entry.qtyKardus;
-        qtyBotol.value = entry.qtyBotolPerKardus;
+        const editSpk =
+          line === "filling"
+            ? [...(state.spkEntries || []), ...(state.preview.spk || [])].find(
+                (item) => String(item.batchNo) === entryBatchNo(entry),
+              )
+            : null;
+        qtyBotol.value =
+          editSpk && Number(editSpk.qtyPerDus) > 0
+            ? editSpk.qtyPerDus
+            : entry.qtyBotolPerKardus;
         if (botolPecah)
           botolPecah.value = entry.botolPecahJenis || entry.botol || "-";
         qtyPecah.value = entry.qtyBotolPecah || 0;
@@ -6311,6 +6335,11 @@
               (entry) => entryBatchNo(entry) === batchNo,
             ).length;
             const qty = Math.max(0, Number(item.qty) || 0);
+            const qtyPerDus = Math.max(0, Number(item.qtyPerDus) || 0);
+            const remainingProductionDus =
+              qtyPerDus > 0
+                ? Math.max(0, Number(item.remainingQty) || 0) / qtyPerDus
+                : Math.max(0, Number(item.produksiDus) || 0);
             const remainingLabel = qty
               ? Number(item.remainingQty).toLocaleString("id-ID")
               : "Belum ada Qty";
@@ -6318,13 +6347,14 @@
             <td class="select-col"><input type="checkbox" class="filling-spk-row-select" data-batch-no="${esc(batchNo)}" aria-label="Pilih SPK ${esc(batchNo)}" title="${selectionTitle}" ${selectable ? "" : "disabled"} ${selectedFillingSpkRows.has(batchNo) ? "checked" : ""}></td>
             <td><span class="id-badge">${esc(item.batchNo)}</span></td>
             <td>${esc(item.produk)}</td><td>${esc(item.botol)}</td>
-            <td>${Math.max(0, Number(item.produksiDus) || 0).toLocaleString("id-ID")}</td>
-            <td>${Math.max(0, Number(item.qtyPerDus) || 0).toLocaleString("id-ID")}</td>
+            <td><strong>${remainingProductionDus.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</strong></td>
+            <td>${qtyPerDus.toLocaleString("id-ID")}</td>
             <td>${qty ? qty.toLocaleString("id-ID") : "—"}</td>
             <td><strong>${remainingLabel}</strong></td>
             <td><span class="sync-badge ${fillingCount ? "saved" : "pending"}">${fillingCount ? `${fillingCount} Input Filling` : "Belum ada Filling"}</span></td>
             <td><button type="button" class="btn btn-primary filling-spk-use"
               data-batch-no="${esc(item.batchNo)}" data-produk="${esc(item.produk)}" data-botol="${esc(item.botol)}"
+              data-qty-per-dus="${qtyPerDus}"
               >Gunakan</button></td>
           </tr>`;
           })
@@ -6432,6 +6462,13 @@
       qs(".f-batch-display", form).value = button.dataset.batchNo || "";
       qs(".f-produk", form).value = button.dataset.produk || "";
       qs(".f-botol", form).value = button.dataset.botol || "";
+      const qtyBotolPerKardus = qs(".f-qty-botol", form);
+      if (qtyBotolPerKardus) {
+        qtyBotolPerKardus.value = String(
+          Math.max(0, Number(button.dataset.qtyPerDus) || 0),
+        );
+        qtyBotolPerKardus.dispatchEvent(new Event("input", { bubbles: true }));
+      }
       qs(".f-produk", form).dispatchEvent(
         new Event("change", { bubbles: true }),
       );
@@ -6491,12 +6528,18 @@
             const key = item.preview ? item.id : item.batchNo;
             const selectionKey = `${source}:${key}`;
             const selectable = item.preview || canManageSpk(item);
+            const qtyPerDus = Math.max(0, Number(item.qtyPerDus) || 0);
+            const remainingQty = spkRemainingQty(item);
+            const remainingProductionDus =
+              qtyPerDus > 0
+                ? remainingQty / qtyPerDus
+                : Math.max(0, Number(item.produksiDus) || 0);
             return `<tr>
       <td class="select-col">${selectable ? `<input type="checkbox" class="spk-row-select" data-source="${source}" data-key="${esc(key)}" aria-label="Pilih SPK ${esc(item.batchNo)}" ${selectedSpkRows.has(selectionKey) ? "checked" : ""}>` : ""}</td>
       <td><span class="id-badge">${esc(item.batchNo)}</span></td><td>${esc(item.tanggal)}</td>
       <td>${esc(item.produk)}</td><td>${esc(item.botol)}</td>
-      <td>${Math.max(0, Number(item.produksiDus) || 0).toLocaleString("id-ID")}</td>
-      <td>${Math.max(0, Number(item.qtyPerDus) || 0).toLocaleString("id-ID")}</td>
+      <td><strong>${remainingProductionDus.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</strong></td>
+      <td>${qtyPerDus.toLocaleString("id-ID")}</td>
       <td>${Math.max(0, Number(item.qty) || 0).toLocaleString("id-ID")}</td>
       <td><span class="sync-badge ${item.preview ? "pending" : "saved"}">${item.preview ? "Preview" : "Tersimpan"}</span></td>
       <td class="row-actions">
