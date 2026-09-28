@@ -44,7 +44,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbxx1_bAIZTvf5XHQY_X_xGnbjcFdJrwY_JVCvng0XkP346eHbyoqW-yxRS3umOX4MW0eA/exec",
+      "https://script.google.com/macros/s/AKfycbyrGWx8khIxksmB5Q9iFoifO92d6ONynG1sHnk_ENIEnb2SbR-Rnc-H05x2K7bRrJR2qw/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -97,7 +97,7 @@
       chartStart: "",
       chartEnd: "",
       priorityPage: 1,
-      pressKpiMode: "date",
+      pressKpiMode: "month",
       pressKpiOperator: "",
       pressKpiDate: "",
       pressKpiMonth: "",
@@ -1277,16 +1277,17 @@
                 <th>No Batch</th>
                 <th>Produk</th>
                 <th>Botol</th>
-                <th>Qty (Kardus)</th>
+                <th>Qty/Dus</th>
                 <th>Qty Filling</th>
                 <th>Sudah Press</th>
-                <th>Sisa</th>
+                <th>Sisa Kardus</th>
+                <th>Sisa Qty</th>
                 <th>Sumber</th>
                 <th>Aksi</th>
               </tr>
             </thead>
             <tbody class="press-balance-tbody">
-              <tr><td colspan="10" class="empty-row">Memuat sisa pengerjaan Press…</td></tr>
+              <tr><td colspan="11" class="empty-row">Memuat sisa pengerjaan Press…</td></tr>
             </tbody>
           </table>
         </div>
@@ -2269,6 +2270,10 @@
       (sum, item) => sum + (Number(item.remaining) || 0),
       0,
     );
+    const totalRemainingCartons = rows.reduce(
+      (sum, item) => sum + (Number(item.sisaKardus) || 0),
+      0,
+    );
     return new Promise((resolve) => {
       const overlay = document.createElement("div");
       overlay.className = "press-close-overlay";
@@ -2281,6 +2286,7 @@
             <div><strong>Botol</strong><br>${rows.length === 1 ? esc(row.botol) : `${new Set(rows.map((item) => item.botol)).size} jenis botol`}</div>
             <div><strong>Baris Dipilih</strong><br>${rows.length.toLocaleString("id-ID")}</div>
             <div><strong>Total Sisa Qty</strong><br>${totalRemaining.toLocaleString("id-ID")} botol</div>
+            <div><strong>Total Sisa Kardus</strong><br>${totalRemainingCartons.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kardus</div>
             <div><strong>Tanggal</strong><br>${esc(todayStr())}</div>
           </div>
           <label class="field"><span>Alasan Hapus <b>*</b></span>
@@ -2491,15 +2497,21 @@
 
     return Array.from(grouped.values())
       .filter((group) => group.remaining > 0)
-      .map((group) => ({
-        ...group,
-        qtyBotolPerKardus: Array.from(group.qtyBotolPerKardusValues).sort(
-          (a, b) => a - b,
-        ),
-        source: group.sources.size > 1 ? "mixed" : Array.from(group.sources)[0],
-        hasPreview: group.sources.has("preview"),
-        hasSpreadsheet: group.sources.has("spreadsheet"),
-      }))
+      .map((group) => {
+        const qtyBotolPerKardus = Array.from(
+          group.qtyBotolPerKardusValues,
+        ).sort((a, b) => a - b);
+        const perKardus = Number(qtyBotolPerKardus[0]) || 0;
+        return {
+          ...group,
+          qtyBotolPerKardus,
+          sisaKardus: perKardus > 0 ? group.remaining / perKardus : 0,
+          source:
+            group.sources.size > 1 ? "mixed" : Array.from(group.sources)[0],
+          hasPreview: group.sources.has("preview"),
+          hasSpreadsheet: group.sources.has("spreadsheet"),
+        };
+      })
       .sort(
         (a, b) =>
           String(a.tanggalAsal || "").localeCompare(
@@ -2636,6 +2648,7 @@
         <td>${row.qtyBotolPerKardus.length ? row.qtyBotolPerKardus.map((value) => Number(value).toLocaleString("id-ID")).join(" / ") : "—"}</td>
         <td>${Number(row.qtyFilling).toLocaleString("id-ID")}</td>
         <td>${Number(row.qtyPressTerpakai).toLocaleString("id-ID")}</td>
+        <td><strong>${Number(row.sisaKardus).toLocaleString("id-ID", { maximumFractionDigits: 2 })}</strong></td>
         <td><strong>${Number(row.remaining).toLocaleString("id-ID")}</strong></td>
         <td>${sourceLabel}</td>
         <td>
@@ -2662,10 +2675,14 @@
       </tr>`;
           })
           .join("")
-      : `<tr><td colspan="10" class="empty-row">${query ? "Nama produk tidak ditemukan." : "Tidak ada sisa Filling yang menunggu Press."}</td></tr>`;
+      : `<tr><td colspan="11" class="empty-row">${query ? "Nama produk tidak ditemukan." : "Tidak ada sisa Filling yang menunggu Press."}</td></tr>`;
 
     const remainingTotal = rows.reduce(
       (sum, row) => sum + (Number(row.remaining) || 0),
+      0,
+    );
+    const remainingCartonTotal = rows.reduce(
+      (sum, row) => sum + (Number(row.sisaKardus) || 0),
       0,
     );
     const from = rows.length ? start + 1 : 0;
@@ -2673,7 +2690,7 @@
     if (summary) {
       const previewCount = rows.filter((row) => row.hasPreview).length;
       summary.textContent =
-        `${from}–${to} dari ${rows.length} kombinasi Produk + Botol + Botol/Kardus · Sisa ${remainingTotal.toLocaleString("id-ID")} botol` +
+        `${from}–${to} dari ${rows.length} kombinasi Produk + Botol + Qty/Dus · Sisa ${remainingTotal.toLocaleString("id-ID")} botol (${remainingCartonTotal.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kardus)` +
         (query ? ` · Pencarian: ${state.pressBalance.search}` : "") +
         (previewCount
           ? ` · ${previewCount} kombinasi memuat Preview Filling`
@@ -2795,11 +2812,12 @@
         (!row.tanggalAsal || row.tanggalAsal <= pressDate),
     );
     const oldest = lots.length ? lots[0].tanggalAsal : "";
+    const availableCartons = perKardus > 0 ? available / perKardus : 0;
 
     hint.dataset.state = available > 0 ? "ok" : "empty";
     hint.textContent =
       available > 0
-        ? `Sisa Qty Filling untuk ${produk} / ${botol} (${perKardus.toLocaleString("id-ID")} botol/kardus): ${available.toLocaleString("id-ID")} botol` +
+        ? `Sisa Filling untuk ${produk} / ${botol}: ${available.toLocaleString("id-ID")} botol (${availableCartons.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kardus × ${perKardus.toLocaleString("id-ID")} botol)` +
           (oldest && oldest < todayStr()
             ? ` · termasuk tinggalan sejak ${oldest}`
             : "") +
@@ -5548,7 +5566,7 @@
     return Boolean(date && date >= period.start && date <= period.end);
   }
 
-  function renderDashboardPressKpi(entries) {
+  function renderDashboardPressKpiLegacy(entries) {
     const tbody = el("dashboardPressKpiBody");
     const summary = el("dashboardPressKpiSummary");
     const pagination = el("dashboardPressKpiPagination");
@@ -5693,6 +5711,235 @@
         state.dashboard.pressKpiPage = nextPage;
         renderDashboardPressKpi(entries);
       });
+    }
+  }
+
+  function renderDashboardPressKpi(entries) {
+    const chart = el("dashboardDamageChart");
+    const summary = el("dashboardDamageSummary");
+    if (!chart) return;
+
+    const period = dashboardPressKpiPeriod();
+    const operatorFilter = String(state.dashboard.pressKpiOperator || "")
+      .trim()
+      .toLowerCase();
+    const filtered = entries.filter((entry) => {
+      if (!dashboardDateInPeriod(entry.tanggal, period)) return false;
+      return (
+        !operatorFilter ||
+        String(entry.operator || "")
+          .trim()
+          .toLowerCase()
+          .includes(operatorFilter)
+      );
+    });
+
+    const dayCount = Math.round((period.end - period.start) / 86400000) + 1;
+    const groupByMonth = period.mode === "year" || dayCount > 62;
+    const buckets = [];
+    if (groupByMonth) {
+      let cursor = new Date(
+        period.start.getFullYear(),
+        period.start.getMonth(),
+        1,
+      );
+      const last = new Date(period.end.getFullYear(), period.end.getMonth(), 1);
+      while (cursor <= last) {
+        buckets.push({
+          key: dashboardMonthKey(cursor),
+          label: cursor.toLocaleDateString("id-ID", {
+            month: "short",
+            year:
+              period.start.getFullYear() !== period.end.getFullYear()
+                ? "2-digit"
+                : undefined,
+          }),
+          broken: 0,
+          wet: 0,
+        });
+        cursor = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1);
+      }
+    } else {
+      for (
+        let cursor = new Date(period.start);
+        cursor <= period.end;
+        cursor = dashboardAddDays(cursor, 1)
+      ) {
+        buckets.push({
+          key: dashboardDateKey(cursor),
+          label: cursor.toLocaleDateString("id-ID", {
+            day: "2-digit",
+            month: "short",
+          }),
+          broken: 0,
+          wet: 0,
+        });
+      }
+    }
+
+    const byKey = new Map(buckets.map((bucket) => [bucket.key, bucket]));
+    const pressOperators = new Set();
+    const fillingOperators = new Set();
+    filtered.forEach((entry) => {
+      const key = groupByMonth
+        ? String(entry.tanggal || "").slice(0, 7)
+        : entry.tanggal;
+      const bucket = byKey.get(key);
+      if (!bucket) return;
+      const operator = String(entry.operator || "")
+        .trim()
+        .toLowerCase();
+      if (entry.tab === "press") {
+        const value = Math.max(0, Number(entry.qtyBotolPecah) || 0);
+        bucket.broken += value;
+        if (value > 0 && operator) pressOperators.add(operator);
+      } else if (entry.tab === "filling") {
+        const value = Math.max(0, Number(entry.qtyKardusBasah) || 0);
+        bucket.wet += value;
+        if (value > 0 && operator) fillingOperators.add(operator);
+      }
+    });
+
+    const totalBroken = buckets.reduce((sum, item) => sum + item.broken, 0);
+    const totalWet = buckets.reduce((sum, item) => sum + item.wet, 0);
+    const brokenPeak = buckets.reduce(
+      (best, item) => (item.broken > best.broken ? item : best),
+      buckets[0] || { broken: 0, label: "—" },
+    );
+    const wetPeak = buckets.reduce(
+      (best, item) => (item.wet > best.wet ? item : best),
+      buckets[0] || { wet: 0, label: "—" },
+    );
+
+    dashboardSetText("dashboardDamageBroken", dashboardQty(totalBroken));
+    dashboardSetText("dashboardDamageWet", dashboardQty(totalWet));
+    dashboardSetText(
+      "dashboardDamagePressOperators",
+      dashboardQty(pressOperators.size),
+    );
+    dashboardSetText(
+      "dashboardDamageFillingOperators",
+      dashboardQty(fillingOperators.size),
+    );
+    dashboardSetText(
+      "dashboardDamageBrokenPeak",
+      dashboardQty(brokenPeak.broken),
+    );
+    dashboardSetText(
+      "dashboardDamageBrokenPeakDate",
+      brokenPeak.broken ? brokenPeak.label : "—",
+    );
+    dashboardSetText("dashboardDamageWetPeak", dashboardQty(wetPeak.wet));
+    dashboardSetText(
+      "dashboardDamageWetPeakDate",
+      wetPeak.wet ? wetPeak.label : "—",
+    );
+
+    const width = 900;
+    const height = 340;
+    const plot = { left: 54, right: 22, top: 24, bottom: 54 };
+    const plotWidth = width - plot.left - plot.right;
+    const plotHeight = height - plot.top - plot.bottom;
+    const maxValue = Math.max(
+      1,
+      ...buckets.flatMap((item) => [item.broken, item.wet]),
+    );
+    const yMax = Math.max(5, Math.ceil(maxValue / 5) * 5);
+    const x = (index) =>
+      plot.left +
+      (buckets.length <= 1
+        ? plotWidth / 2
+        : (index / (buckets.length - 1)) * plotWidth);
+    const y = (value) => plot.top + plotHeight - (value / yMax) * plotHeight;
+    const pathFor = (key) =>
+      buckets
+        .map(
+          (item, index) =>
+            `${index ? "L" : "M"}${x(index).toFixed(1)},${y(item[key]).toFixed(1)}`,
+        )
+        .join(" ");
+    const labelStep = Math.max(1, Math.ceil(buckets.length / 10));
+    const grid = Array.from({ length: 5 }, (_, index) => {
+      const value = (yMax / 4) * index;
+      const py = y(value);
+      return `<line x1="${plot.left}" y1="${py}" x2="${width - plot.right}" y2="${py}" class="damage-grid-line"/><text x="${plot.left - 10}" y="${py + 4}" class="damage-axis-label" text-anchor="end">${dashboardQty(value)}</text>`;
+    }).join("");
+    const labels = buckets
+      .map((item, index) =>
+        index % labelStep === 0 || index === buckets.length - 1
+          ? `<text x="${x(index)}" y="${height - 20}" class="damage-axis-label" text-anchor="middle">${esc(item.label)}</text>`
+          : "",
+      )
+      .join("");
+    const points = (key, cssClass, name) =>
+      buckets
+        .map(
+          (item, index) =>
+            `<circle cx="${x(index)}" cy="${y(item[key])}" r="${buckets.length > 45 ? 3 : 4.5}" class="${cssClass}" tabindex="0" data-tooltip="${esc(item.label)} — ${name}: ${dashboardQty(item[key])}"></circle>`,
+        )
+        .join("");
+
+    chart.innerHTML = `<svg viewBox="0 0 ${width} ${height}" aria-hidden="true" preserveAspectRatio="xMidYMid meet">
+      ${grid}
+      <line x1="${plot.left}" y1="${plot.top}" x2="${plot.left}" y2="${plot.top + plotHeight}" class="damage-axis-line"/>
+      <line x1="${plot.left}" y1="${plot.top + plotHeight}" x2="${width - plot.right}" y2="${plot.top + plotHeight}" class="damage-axis-line"/>
+      ${labels}
+      <path d="${pathFor("broken")}" class="damage-line damage-bottle-line"/>
+      <path d="${pathFor("wet")}" class="damage-line damage-carton-line"/>
+      ${points("broken", "damage-point damage-bottle-point", "Botol pecah")}
+      ${points("wet", "damage-point damage-carton-point", "Kardus basah")}
+    </svg>`;
+
+    const tooltip = el("dashboardDamageTooltip");
+    const showTooltip = (point, clientX, clientY) => {
+      if (!tooltip || !point) return;
+      window.clearTimeout(chart._damageTooltipTimer);
+      const wrap = chart.parentElement;
+      const wrapRect = wrap.getBoundingClientRect();
+      const pointRect = point.getBoundingClientRect();
+      tooltip.textContent = point.dataset.tooltip || "";
+      tooltip.hidden = false;
+      const anchorX = Number.isFinite(clientX)
+        ? clientX
+        : pointRect.left + pointRect.width / 2;
+      const anchorY = Number.isFinite(clientY) ? clientY : pointRect.top;
+      const relativeX = anchorX - wrapRect.left + wrap.scrollLeft;
+      const relativeY = anchorY - wrapRect.top + wrap.scrollTop;
+      tooltip.style.left = `${Math.max(wrap.scrollLeft + 8, Math.min(wrap.scrollLeft + wrap.clientWidth - 8, relativeX))}px`;
+      tooltip.style.top = `${Math.max(wrap.scrollTop + 8, relativeY - 12)}px`;
+    };
+    const hideTooltip = () => {
+      if (tooltip) tooltip.hidden = true;
+    };
+    chart.onpointermove = (event) => {
+      const point = event.target.closest?.(".damage-point");
+      if (point) showTooltip(point, event.clientX, event.clientY);
+    };
+    chart.onpointerout = (event) => {
+      const point = event.target.closest?.(".damage-point");
+      if (point && event.pointerType !== "touch") hideTooltip();
+    };
+    chart.onpointerleave = (event) => {
+      if (event.pointerType !== "touch") hideTooltip();
+    };
+    chart.onclick = (event) => {
+      const point = event.target.closest?.(".damage-point");
+      if (!point) return;
+      showTooltip(point, event.clientX, event.clientY);
+      window.clearTimeout(chart._damageTooltipTimer);
+      chart._damageTooltipTimer = window.setTimeout(hideTooltip, 2500);
+    };
+    chart.onfocusin = (event) => {
+      const point = event.target.closest?.(".damage-point");
+      if (point) showTooltip(point);
+    };
+    chart.onfocusout = hideTooltip;
+
+    if (summary) {
+      const operatorText = state.dashboard.pressKpiOperator
+        ? ` · Operator: ${state.dashboard.pressKpiOperator}`
+        : " · Semua operator";
+      summary.textContent = `${period.label}${operatorText} · Botol pecah ${dashboardQty(totalBroken)} · Kardus basah ${dashboardQty(totalWet)}`;
     }
   }
 
@@ -6071,6 +6318,8 @@
             <td class="select-col"><input type="checkbox" class="filling-spk-row-select" data-batch-no="${esc(batchNo)}" aria-label="Pilih SPK ${esc(batchNo)}" title="${selectionTitle}" ${selectable ? "" : "disabled"} ${selectedFillingSpkRows.has(batchNo) ? "checked" : ""}></td>
             <td><span class="id-badge">${esc(item.batchNo)}</span></td>
             <td>${esc(item.produk)}</td><td>${esc(item.botol)}</td>
+            <td>${Math.max(0, Number(item.produksiDus) || 0).toLocaleString("id-ID")}</td>
+            <td>${Math.max(0, Number(item.qtyPerDus) || 0).toLocaleString("id-ID")}</td>
             <td>${qty ? qty.toLocaleString("id-ID") : "—"}</td>
             <td><strong>${remainingLabel}</strong></td>
             <td><span class="sync-badge ${fillingCount ? "saved" : "pending"}">${fillingCount ? `${fillingCount} Input Filling` : "Belum ada Filling"}</span></td>
@@ -6080,7 +6329,7 @@
           </tr>`;
           })
           .join("")
-      : '<tr><td colspan="8" class="empty-row">Tidak ada SPK dengan sisa Qty.</td></tr>';
+      : '<tr><td colspan="10" class="empty-row">Tidak ada SPK dengan sisa Qty.</td></tr>';
     dashboardSetText(
       "fillingSpkSummary",
       `${rows.length ? start + 1 : 0}–${Math.min(start + pageSize, rows.length)} dari ${rows.length} SPK belum selesai · ${fillingRows.length} total input Filling`,
@@ -6246,6 +6495,8 @@
       <td class="select-col">${selectable ? `<input type="checkbox" class="spk-row-select" data-source="${source}" data-key="${esc(key)}" aria-label="Pilih SPK ${esc(item.batchNo)}" ${selectedSpkRows.has(selectionKey) ? "checked" : ""}>` : ""}</td>
       <td><span class="id-badge">${esc(item.batchNo)}</span></td><td>${esc(item.tanggal)}</td>
       <td>${esc(item.produk)}</td><td>${esc(item.botol)}</td>
+      <td>${Math.max(0, Number(item.produksiDus) || 0).toLocaleString("id-ID")}</td>
+      <td>${Math.max(0, Number(item.qtyPerDus) || 0).toLocaleString("id-ID")}</td>
       <td>${Math.max(0, Number(item.qty) || 0).toLocaleString("id-ID")}</td>
       <td><span class="sync-badge ${item.preview ? "pending" : "saved"}">${item.preview ? "Preview" : "Tersimpan"}</span></td>
       <td class="row-actions">
@@ -6255,7 +6506,7 @@
     </tr>`;
           })
           .join("")
-      : `<tr><td colspan="8" class="empty-row">${query ? "No Batch atau Nama Produk tidak ditemukan." : "Belum ada SPK pada tanggal ini."}</td></tr>`;
+      : `<tr><td colspan="10" class="empty-row">${query ? "No Batch atau Nama Produk tidak ditemukan." : "Belum ada SPK pada tanggal ini."}</td></tr>`;
     dashboardSetText(
       "spkSummary",
       `${rows.length ? start + 1 : 0}–${Math.min(start + 20, rows.length)} dari ${rows.length} SPK tanggal ${selectedDate} · Total Qty tampil: ${visibleQtyTotal.toLocaleString("id-ID")} pcs${query ? ` · Pencarian: ${state.spk.query}` : ""} · ${preview.length} preview belum disimpan`,
@@ -6309,6 +6560,8 @@
     const batchInput = el("spkBatchNo");
     const produkInput = el("spkProduk");
     const botolInput = el("spkBotol");
+    const produksiDusInput = el("spkProduksiDus");
+    const qtyPerDusInput = el("spkQtyPerDus");
     const qtyInput = el("spkQty");
     const errorEl = el("spkError");
     const cancelButton = el("spkCancel");
@@ -6385,7 +6638,8 @@
           "MERK",
           "VARIAN",
           "BOTOL (MILL)",
-          "TOTAL (PCS)",
+          "PRODUKSI (DUS)",
+          "QTY/DUS (PCS/DUS)",
         ];
         const indexes = Object.fromEntries(
           required.map((header) => [header, headers.indexOf(header)]),
@@ -6422,7 +6676,12 @@
           // Pada merged header, SheetJS menyimpan nilai di sel pertama.
           // indexOf mengambil kolom pertama/paling kiri tersebut.
           const botolText = String(row[indexes["BOTOL (MILL)"]] || "").trim();
-          const qtyText = String(row[indexes["TOTAL (PCS)"]] || "").trim();
+          const produksiDusText = String(
+            row[indexes["PRODUKSI (DUS)"]] || "",
+          ).trim();
+          const qtyPerDusText = String(
+            row[indexes["QTY/DUS (PCS/DUS)"]] || "",
+          ).trim();
           const lineNo = headerRowIndex + rowIndex + 2;
           const batchKey = batchNo.toLowerCase();
           if (existingBatchNos.has(batchKey)) {
@@ -6450,9 +6709,21 @@
               botol,
             ];
           }
-          const qty = Math.floor(Number(qtyText.replace(/[.,\s]/g, "")) || 0);
-          if (qty <= 0)
-            throw new Error(`Baris ${lineNo}: TOTAL (PCS) harus lebih dari 0.`);
+          const produksiDus = Math.floor(
+            Number(produksiDusText.replace(/[.,\s]/g, "")) || 0,
+          );
+          const qtyPerDus = Math.floor(
+            Number(qtyPerDusText.replace(/[.,\s]/g, "")) || 0,
+          );
+          if (produksiDus <= 0)
+            throw new Error(
+              `Baris ${lineNo}: PRODUKSI (DUS) harus lebih dari 0.`,
+            );
+          if (qtyPerDus <= 0)
+            throw new Error(
+              `Baris ${lineNo}: QTY/DUS (PCS/DUS) harus lebih dari 0.`,
+            );
+          const qty = produksiDus * qtyPerDus;
           existingBatchNos.add(batchKey);
           imported.push({
             id: makeClientRequestId(),
@@ -6460,6 +6731,8 @@
             tanggal: todayStr(),
             produk,
             botol,
+            produksiDus,
+            qtyPerDus,
             qty,
             imported: true,
             createdAt: nowIso(),
@@ -6490,8 +6763,21 @@
         String(batchInput.value || "").trim() &&
         String(produkInput.value || "").trim() &&
         String(botolInput.value || "").trim() &&
-        Number(qtyInput?.value) > 0
+        Number(produksiDusInput?.value) > 0 &&
+        Number(qtyPerDusInput?.value) > 0
       );
+    };
+    const syncSpkTotalQty = () => {
+      const produksiDus = Math.max(
+        0,
+        Math.floor(Number(produksiDusInput?.value) || 0),
+      );
+      const qtyPerDus = Math.max(
+        0,
+        Math.floor(Number(qtyPerDusInput?.value) || 0),
+      );
+      if (qtyInput) qtyInput.value = String(produksiDus * qtyPerDus);
+      syncCancelState();
     };
 
     const close = () => {
@@ -6540,7 +6826,8 @@
     produkInput.addEventListener("change", syncCancelState);
     botolInput.addEventListener("input", syncCancelState);
     botolInput.addEventListener("change", syncCancelState);
-    qtyInput?.addEventListener("input", syncCancelState);
+    produksiDusInput?.addEventListener("input", syncSpkTotalQty);
+    qtyPerDusInput?.addEventListener("input", syncSpkTotalQty);
     modal.addEventListener("keydown", (event) => {
       if (event.key === "Escape") close();
     });
@@ -6556,11 +6843,13 @@
         errorEl.hidden = false;
         return;
       }
-      const qty = Math.floor(Number(qtyInput?.value) || 0);
-      if (qty <= 0) {
-        errorEl.textContent = "Qty SPK harus lebih dari 0 pcs.";
+      const produksiDus = Math.floor(Number(produksiDusInput?.value) || 0);
+      const qtyPerDus = Math.floor(Number(qtyPerDusInput?.value) || 0);
+      const qty = produksiDus * qtyPerDus;
+      if (produksiDus <= 0 || qtyPerDus <= 0) {
+        errorEl.textContent = "Produksi (Dus) dan Qty/Dus harus lebih dari 0.";
         errorEl.hidden = false;
-        qtyInput?.focus();
+        (produksiDus <= 0 ? produksiDusInput : qtyPerDusInput)?.focus();
         return;
       }
       const edit = editingSpk;
@@ -6570,6 +6859,8 @@
         tanggal: todayStr(),
         produk: canonicalMasterValue("produk", produkInput.value),
         botol: canonicalMasterValue("botol", botolInput.value),
+        produksiDus,
+        qtyPerDus,
         qty,
         imported:
           edit?.source === "preview" &&
@@ -6603,7 +6894,8 @@
               data: {
                 produk: values.produk,
                 botol: values.botol,
-                qty: values.qty,
+                produksiDus: values.produksiDus,
+                qtyPerDus: values.qtyPerDus,
               },
             }),
           );
@@ -6729,6 +7021,14 @@
         batchInput.value = item.batchNo;
         produkInput.value = item.produk;
         botolInput.value = item.botol;
+        if (produksiDusInput)
+          produksiDusInput.value = String(
+            Math.max(0, Number(item.produksiDus) || 0),
+          );
+        if (qtyPerDusInput)
+          qtyPerDusInput.value = String(
+            Math.max(0, Number(item.qtyPerDus) || 0),
+          );
         if (qtyInput)
           qtyInput.value = String(Math.max(0, Number(item.qty) || 0));
         submitButton.innerHTML =
@@ -6791,7 +7091,8 @@
               batchNo: item.batchNo,
               produk: item.produk,
               botol: item.botol,
-              qty: Math.max(0, Number(item.qty) || 0),
+              produksiDus: Math.max(0, Number(item.produksiDus) || 0),
+              qtyPerDus: Math.max(0, Number(item.qtyPerDus) || 0),
               imported: item.imported === true,
               updatedAt: item.updatedAt || "",
               updateCount: Math.max(
@@ -9512,10 +9813,10 @@
       ? visibleRows
           .map(
             (item) =>
-              `<tr><td><span class="id-badge">${esc(item.batchNo)}</span></td><td>${esc(item.tanggal)}</td><td>${esc(item.produk)}</td><td>${esc(item.botol)}</td><td>${Math.max(0, Number(item.qty) || 0).toLocaleString("id-ID")}</td><td>${esc(item.createdBy || "—")}</td><td>${item.createdAt ? esc(fmtDateTime(item.createdAt)) : "—"}</td><td>${Math.max(0, Number(item.updateCount) || 0)}</td></tr>`,
+              `<tr><td><span class="id-badge">${esc(item.batchNo)}</span></td><td>${esc(item.tanggal)}</td><td>${esc(item.produk)}</td><td>${esc(item.botol)}</td><td>${Math.max(0, Number(item.produksiDus) || 0).toLocaleString("id-ID")}</td><td>${Math.max(0, Number(item.qtyPerDus) || 0).toLocaleString("id-ID")}</td><td>${Math.max(0, Number(item.qty) || 0).toLocaleString("id-ID")}</td><td>${esc(item.createdBy || "—")}</td><td>${item.createdAt ? esc(fmtDateTime(item.createdAt)) : "—"}</td><td>${Math.max(0, Number(item.updateCount) || 0)}</td></tr>`,
           )
           .join("")
-      : '<tr><td colspan="8" class="empty-row">Tidak ada data SPK pada periode ini.</td></tr>';
+      : '<tr><td colspan="10" class="empty-row">Tidak ada data SPK pada periode ini.</td></tr>';
     dashboardSetText(
       "lap-spk-summary",
       `${rows.length ? start + 1 : 0}–${Math.min(start + 20, rows.length)} dari ${rows.length} SPK ditampilkan`,
@@ -9571,7 +9872,7 @@
       const popup = window.open("", "_blank", "width=1100,height=800");
       if (!popup) return toast("Popup PDF diblokir browser.", true);
       popup.document.write(
-        `<!doctype html><html><head><title>Data SPK</title><style>@page{size:A4 landscape;margin:12mm}body{font-family:Arial,sans-serif;color:#17202a}h1{font-size:20px}p{color:#59636e}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bcc5ce;padding:6px;font-size:11px}th{background:#eaf0f5;text-align:left}</style></head><body><h1>Data SPK</h1><p>PT. ABSH FRAGRANCE CREATIONS · Dicetak ${esc(fmtDateTime(nowIso()))}</p><table><thead><tr><th>No Batch</th><th>Tanggal</th><th>Produk</th><th>Botol</th><th>Qty</th><th>Dibuat Oleh</th><th>Dibuat Pada</th><th>Update</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${esc(item.batchNo)}</td><td>${esc(item.tanggal)}</td><td>${esc(item.produk)}</td><td>${esc(item.botol)}</td><td>${Math.max(0, Number(item.qty) || 0).toLocaleString("id-ID")}</td><td>${esc(item.createdBy || "—")}</td><td>${item.createdAt ? esc(fmtDateTime(item.createdAt)) : "—"}</td><td>${Math.max(0, Number(item.updateCount) || 0)}</td></tr>`).join("")}</tbody></table></body></html>`,
+        `<!doctype html><html><head><title>Data SPK</title><style>@page{size:A4 landscape;margin:12mm}body{font-family:Arial,sans-serif;color:#17202a}h1{font-size:20px}p{color:#59636e}table{width:100%;border-collapse:collapse}th,td{border:1px solid #bcc5ce;padding:6px;font-size:11px}th{background:#eaf0f5;text-align:left}</style></head><body><h1>Data SPK</h1><p>PT. ABSH FRAGRANCE CREATIONS · Dicetak ${esc(fmtDateTime(nowIso()))}</p><table><thead><tr><th>No Batch</th><th>Tanggal</th><th>Produk</th><th>Botol</th><th>Produksi (Dus)</th><th>Qty/Dus</th><th>Total Qty (PCS)</th><th>Dibuat Oleh</th><th>Dibuat Pada</th><th>Update</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${esc(item.batchNo)}</td><td>${esc(item.tanggal)}</td><td>${esc(item.produk)}</td><td>${esc(item.botol)}</td><td>${Math.max(0, Number(item.produksiDus) || 0).toLocaleString("id-ID")}</td><td>${Math.max(0, Number(item.qtyPerDus) || 0).toLocaleString("id-ID")}</td><td>${Math.max(0, Number(item.qty) || 0).toLocaleString("id-ID")}</td><td>${esc(item.createdBy || "—")}</td><td>${item.createdAt ? esc(fmtDateTime(item.createdAt)) : "—"}</td><td>${Math.max(0, Number(item.updateCount) || 0)}</td></tr>`).join("")}</tbody></table></body></html>`,
       );
       popup.document.close();
       window.setTimeout(() => {

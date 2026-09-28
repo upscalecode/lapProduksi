@@ -15,7 +15,10 @@
       crossorigin="anonymous"
       defer
     ></script>
-    <link rel="stylesheet" href="style.css?v=20260928-v69-action-button-colors" />
+    <link
+      rel="stylesheet"
+      href="style.css?v=20260928-v69-action-button-colors"
+    />
 
     <style>
       /* Aturan inti modal SPK ditempatkan bersama dokumen agar tidak dapat
@@ -398,185 +401,180 @@
                           class="panel-head dashboard-panel-head dashboard-press-kpi-head"
                         >
                           <div>
-                            <p class="eyebrow">KPI Press Harian</p>
-                            <h2>Kinerja Operator Press</h2>
+                            <p class="eyebrow">Kualitas Produksi</p>
+                            <h2>Tren Kerusakan per Operator</h2>
                           </div>
-                          <div class="dashboard-press-kpi-filters">
-                            <label
-                              class="field dashboard-kpi-filter dashboard-kpi-operator-filter"
+                          <div
+                            class="dashboard-legend dashboard-damage-legend"
+                            aria-label="Legenda grafik"
+                          >
+                            <span
+                              ><i class="legend-dot damage-bottle"></i>Botol
+                              Pecah</span
                             >
-                              <span>Operator</span>
-                              <div class="dashboard-kpi-operator-search-row">
-                                <input
-                                  type="text"
-                                  id="dashboardPressKpiOperator"
-                                  class="master-search-input filter-master-search"
-                                  data-master="operator"
-                                  placeholder="Cari operator..."
-                                  autocomplete="off"
-                                />
-                                <button
-                                  type="button"
-                                  class="dashboard-kpi-operator-clear"
-                                  id="dashboardPressKpiOperatorClear"
-                                  hidden
-                                  title="Clear search operator"
-                                  aria-label="Clear search operator"
-                                >
-                                  <i class="fa-solid fa-xmark"></i>
-                                  <span>Clear</span>
-                                </button>
-                              </div>
-                            </label>
-                            <label class="field dashboard-kpi-filter">
-                              <span>Periode</span>
-                              <select id="dashboardPressKpiMode">
-                                <option value="date">Tanggal</option>
-                                <option value="month">Bulan</option>
-                                <option value="year">Tahun</option>
-                                <option value="range">Rentang Tanggal</option>
-                              </select>
-                            </label>
-                            <label
-                              class="field dashboard-kpi-filter"
-                              id="dashboardPressKpiDateWrap"
+                            <span
+                              ><i class="legend-dot damage-carton"></i>Kardus
+                              Basah</span
                             >
-                              <span>Tanggal</span>
-                              <input type="date" id="dashboardPressKpiDate" />
-                            </label>
-                            <label
-                              class="field dashboard-kpi-filter"
-                              id="dashboardPressKpiMonthWrap"
-                              hidden
-                            >
-                              <span>Bulan</span>
-                              <input type="month" id="dashboardPressKpiMonth" />
-                            </label>
-                            <label
-                              class="field dashboard-kpi-filter dashboard-kpi-year-filter"
-                              id="dashboardPressKpiYearWrap"
-                              hidden
-                            >
-                              <span>Tahun</span>
+                          </div>
+                        </div>
+                        <div class="dashboard-press-kpi-filters">
+                          <label
+                            class="field dashboard-kpi-filter dashboard-kpi-operator-filter"
+                          >
+                            <span>Operator</span>
+                            <div class="dashboard-kpi-operator-search-row">
                               <input
-                                type="number"
-                                id="dashboardPressKpiYear"
-                                min="2000"
-                                max="2100"
-                                step="1"
+                                type="text"
+                                id="dashboardPressKpiOperator"
+                                class="master-search-input filter-master-search"
+                                data-master="operator"
+                                placeholder="Semua operator..."
+                                autocomplete="off"
                               />
-                            </label>
-                            <label
-                              class="field dashboard-kpi-filter"
-                              id="dashboardPressKpiStartWrap"
-                              hidden
-                            >
-                              <span>Dari</span>
-                              <input type="date" id="dashboardPressKpiStart" />
-                            </label>
-                            <label
-                              class="field dashboard-kpi-filter"
-                              id="dashboardPressKpiEndWrap"
-                              hidden
-                            >
-                              <span>Sampai</span>
-                              <input type="date" id="dashboardPressKpiEnd" />
-                            </label>
-                          </div>
+                              <button
+                                type="button"
+                                class="dashboard-kpi-operator-clear"
+                                id="dashboardPressKpiOperatorClear"
+                                hidden
+                                title="Clear search operator"
+                                aria-label="Clear search operator"
+                              >
+                                <i class="fa-solid fa-xmark"></i>
+                                <span>Clear</span>
+                              </button>
+                            </div>
+                          </label>
+                          <label class="field dashboard-kpi-filter">
+                            <span>Periode</span>
+                            <select id="dashboardPressKpiMode">
+                              <option value="date">Tanggal</option>
+                              <option value="month">Bulan</option>
+                              <option value="year">Tahun</option>
+                              <option value="range">Rentang Tanggal</option>
+                            </select>
+                          </label>
+                          <label
+                            class="field dashboard-kpi-filter"
+                            id="dashboardPressKpiDateWrap"
+                          >
+                            <span>Tanggal</span>
+                            <input type="date" id="dashboardPressKpiDate" />
+                          </label>
+                          <label
+                            class="field dashboard-kpi-filter"
+                            id="dashboardPressKpiMonthWrap"
+                            hidden
+                          >
+                            <span>Bulan</span>
+                            <input type="month" id="dashboardPressKpiMonth" />
+                          </label>
+                          <label
+                            class="field dashboard-kpi-filter dashboard-kpi-year-filter"
+                            id="dashboardPressKpiYearWrap"
+                            hidden
+                          >
+                            <span>Tahun</span>
+                            <input
+                              type="number"
+                              id="dashboardPressKpiYear"
+                              min="2000"
+                              max="2100"
+                              step="1"
+                            />
+                          </label>
+                          <label
+                            class="field dashboard-kpi-filter"
+                            id="dashboardPressKpiStartWrap"
+                            hidden
+                          >
+                            <span>Dari</span>
+                            <input type="date" id="dashboardPressKpiStart" />
+                          </label>
+                          <label
+                            class="field dashboard-kpi-filter"
+                            id="dashboardPressKpiEndWrap"
+                            hidden
+                          >
+                            <span>Sampai</span>
+                            <input type="date" id="dashboardPressKpiEnd" />
+                          </label>
                         </div>
 
-                        <div class="table-wrap">
-                          <table class="data-table dashboard-press-kpi-table">
-                            <thead>
-                              <tr>
-                                <th>Operator</th>
-                                <th>Total Hasil Press</th>
-                                <th>Hasil / Jam</th>
-                                <th>KPI Hasil</th>
-                                <th>Botol Rusak</th>
-                                <th>KPI Reject</th>
-                                <th>KPI APD</th>
-                              </tr>
-                            </thead>
-                            <tbody id="dashboardPressKpiBody">
-                              <tr>
-                                <td colspan="7" class="empty-row">
-                                  Belum ada data Press pada tanggal ini.
-                                </td>
-                              </tr>
-                            </tbody>
-                          </table>
-                        </div>
-                        <div class="table-footer dashboard-press-kpi-footer">
-                          <p
-                            id="dashboardPressKpiSummary"
-                            class="table-summary"
-                          ></p>
+                        <div class="dashboard-damage-chart-wrap">
                           <div
-                            id="dashboardPressKpiPagination"
-                            class="pagination dashboard-press-kpi-pagination"
-                            aria-label="Navigasi Halaman KPI Press Harian"
+                            id="dashboardDamageChart"
+                            class="dashboard-damage-chart"
+                            role="img"
+                            aria-label="Grafik tren botol pecah Press dan kardus basah Filling"
+                          ></div>
+                          <div
+                            id="dashboardDamageTooltip"
+                            class="dashboard-damage-tooltip"
+                            hidden
                           ></div>
                         </div>
+                        <p
+                          id="dashboardDamageSummary"
+                          class="table-summary"
+                        ></p>
                       </section>
                       <section class="panel dashboard-press-kpi-info">
                         <div class="panel-head dashboard-panel-head">
                           <div>
-                            <p class="eyebrow">Acuan KPI</p>
-                            <h2>Target &amp; Ringkasan</h2>
+                            <p class="eyebrow">Ringkasan Periode</p>
+                            <h2>Kerusakan Produksi</h2>
                           </div>
                         </div>
 
                         <div class="dashboard-kpi-info-grid">
                           <div class="dashboard-kpi-info-card">
-                            <span>Target Harian / Operator</span>
-                            <strong>3.500</strong>
-                            <small>pcs per hari</small>
+                            <span>Botol Pecah Press</span>
+                            <strong id="dashboardDamageBroken">0</strong>
+                            <small>botol</small>
                           </div>
                           <div class="dashboard-kpi-info-card">
-                            <span>Jam Kerja</span>
-                            <strong>7</strong>
-                            <small>jam per hari</small>
+                            <span>Kardus Basah Filling</span>
+                            <strong id="dashboardDamageWet">0</strong>
+                            <small>kardus</small>
                           </div>
                           <div class="dashboard-kpi-info-card">
-                            <span>Operator Press Aktif</span>
-                            <strong id="dashboardPressKpiOperators">0</strong>
+                            <span>Operator Dengan Botol Rusak</span>
+                            <strong id="dashboardDamagePressOperators"
+                              >0</strong
+                            >
                             <small>operator</small>
                           </div>
                           <div class="dashboard-kpi-info-card">
-                            <span>Total Press</span>
-                            <strong id="dashboardPressKpiTotal">0</strong>
-                            <small>pcs</small>
-                          </div>
-                          <div class="dashboard-kpi-info-card">
-                            <span>Total Botol Rusak</span>
-                            <strong id="dashboardPressKpiBroken">0</strong>
-                            <small>pcs</small>
-                          </div>
-                          <div class="dashboard-kpi-info-card">
-                            <span>Reject Keseluruhan</span>
-                            <strong id="dashboardPressKpiRejectTotal"
-                              >0%</strong
+                            <span>Operator Dengan Kardus Basah</span>
+                            <strong id="dashboardDamageFillingOperators"
+                              >0</strong
                             >
-                            <small>rusak ÷ hasil Press</small>
+                            <small>operator</small>
+                          </div>
+                          <div class="dashboard-kpi-info-card">
+                            <span>Botol Pecah Tertinggi</span>
+                            <strong id="dashboardDamageBrokenPeak">0</strong>
+                            <small id="dashboardDamageBrokenPeakDate">—</small>
+                          </div>
+                          <div class="dashboard-kpi-info-card">
+                            <span>Kardus Basah Tertinggi</span>
+                            <strong id="dashboardDamageWetPeak">0</strong>
+                            <small id="dashboardDamageWetPeakDate">—</small>
                           </div>
                         </div>
 
                         <div class="dashboard-kpi-formulas">
-                          <p><strong>Hasil/Jam</strong> = Total Press ÷ 7</p>
                           <p>
-                            <strong>KPI Hasil</strong> = Total Press ÷ 3.500 ×
-                            100%
+                            <strong>Botol pecah</strong> diambil dari data
+                            pengerjaan Press.
                           </p>
                           <p>
-                            <strong>KPI Reject</strong> = Botol Rusak ÷ Total
-                            Press × 100%
+                            <strong>Kardus basah</strong> diambil dari data
+                            pengerjaan Filling.
                           </p>
                           <p>
-                            <strong>KPI APD</strong> = Nilai APD operator pada
-                            tanggal terpilih; untuk bulan, tahun, dan rentang
-                            tanggal menggunakan rata-rata nilai APD operator
-                            pada periode tersebut.
+                            Filter operator diterapkan pada kedua jenis data.
                           </p>
                         </div>
                       </section>
@@ -741,14 +739,16 @@
                       <th>Tanggal</th>
                       <th>Nama Produk</th>
                       <th>Botol</th>
-                      <th>Qty</th>
+                      <th>Produksi (Dus)</th>
+                      <th>Qty/Dus</th>
+                      <th>Total Qty (PCS)</th>
                       <th>Status</th>
                       <th>Aksi</th>
                     </tr>
                   </thead>
                   <tbody id="spkTableBody">
                     <tr>
-                      <td colspan="8" class="empty-row">
+                      <td colspan="10" class="empty-row">
                         Belum ada SPK hari ini.
                       </td>
                     </tr>
@@ -835,7 +835,9 @@
                       <th>No Batch</th>
                       <th>Nama Produk</th>
                       <th>Botol</th>
-                      <th>Qty SPK</th>
+                      <th>Produksi (Dus)</th>
+                      <th>Qty/Dus</th>
+                      <th>Total Qty (PCS)</th>
                       <th>Sisa Qty</th>
                       <th>Status</th>
                       <th>Aksi</th>
@@ -843,7 +845,7 @@
                   </thead>
                   <tbody id="fillingSpkBody">
                     <tr>
-                      <td colspan="8" class="empty-row">
+                      <td colspan="10" class="empty-row">
                         Tidak ada SPK dengan sisa Qty.
                       </td>
                     </tr>
@@ -1762,7 +1764,9 @@
                       <th>Tanggal</th>
                       <th>Produk</th>
                       <th>Botol</th>
-                      <th>Qty</th>
+                      <th>Produksi (Dus)</th>
+                      <th>Qty/Dus</th>
+                      <th>Total Qty (PCS)</th>
                       <th>Dibuat Oleh</th>
                       <th>Dibuat Pada</th>
                       <th>Update</th>
@@ -2569,15 +2573,30 @@
             />
           </label>
           <label class="field">
-            <span>Qty (PCS)</span>
+            <span>Produksi (Dus)</span>
             <input
               type="number"
-              id="spkQty"
+              id="spkProduksiDus"
               min="1"
               step="1"
               placeholder="0"
               required
             />
+          </label>
+          <label class="field">
+            <span>Qty/Dus (PCS/DUS)</span>
+            <input
+              type="number"
+              id="spkQtyPerDus"
+              min="1"
+              step="1"
+              placeholder="0"
+              required
+            />
+          </label>
+          <label class="field">
+            <span>Total Qty (PCS)</span>
+            <input type="number" id="spkQty" value="0" readonly />
           </label>
         </div>
         <p class="form-error" id="spkError" hidden></p>
@@ -2605,7 +2624,7 @@
       });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="script.js?v=20260928-v149-report-submenu-order"></script>
+    <script src="script.js?v=20260928-v152-press-sisa-kardus-order"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>

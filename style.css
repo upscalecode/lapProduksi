@@ -114,7 +114,7 @@
   --accent-ink: #8a4a0c;
   --accent-soft: #fcebd6;
   --accent-2: #2a5f82; /* steel blue */
-  --accent-2-soft: #ddeaf2;
+  --accent-2-soft: #bbdefb;
   --danger: #c1402c;
   --danger-soft: #f8deda;
   --success: #2c7a4b;
@@ -2303,7 +2303,7 @@ body[data-page="login"] .login-screen {
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
 }
 .dashboard-press-kpi-head {
-  align-items: flex-end;
+  align-items: center;
 }
 .dashboard-kpi-date-filter {
   min-width: 170px;
@@ -2379,6 +2379,110 @@ body[data-page="login"] .login-screen {
 }
 .dashboard-kpi-filter[hidden] {
   display: none !important;
+}
+.dashboard-damage-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+}
+.dashboard-damage-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.legend-dot.damage-bottle {
+  background: var(--dash-red);
+}
+.legend-dot.damage-carton {
+  background: #d99000;
+}
+.dashboard-damage-chart-wrap {
+  position: relative;
+  width: 100%;
+  min-height: 340px;
+  margin-top: 12px;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+.dashboard-damage-chart {
+  width: 100%;
+  min-width: 620px;
+}
+.dashboard-damage-chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.damage-grid-line {
+  stroke: var(--line);
+  stroke-width: 1;
+  stroke-dasharray: 4 5;
+}
+.damage-axis-line {
+  stroke: var(--line-strong);
+  stroke-width: 1.2;
+}
+.damage-axis-label {
+  fill: var(--ink-faint);
+  font: 11px var(--font-body);
+}
+.damage-line {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.damage-bottle-line {
+  stroke: var(--dash-red);
+}
+.damage-carton-line {
+  stroke: #d99000;
+}
+.damage-point {
+  stroke: var(--surface);
+  stroke-width: 2;
+  cursor: pointer;
+  transition: r 0.15s ease, stroke-width 0.15s ease;
+}
+.damage-point:hover,
+.damage-point:focus {
+  r: 7px;
+  stroke-width: 3;
+  outline: none;
+}
+.damage-bottle-point {
+  fill: var(--dash-red);
+}
+.damage-carton-point {
+  fill: #d99000;
+}
+.dashboard-damage-tooltip {
+  position: absolute;
+  z-index: 4;
+  max-width: 230px;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: var(--ink);
+  color: var(--surface);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  box-shadow: 0 6px 18px rgba(25, 37, 48, 0.2);
+}
+.dashboard-damage-tooltip[hidden] {
+  display: none !important;
+}
+#dashboardDamageSummary {
+  margin-top: 12px;
 }
 .dashboard-press-kpi-table {
   min-width: 900px;

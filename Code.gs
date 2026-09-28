@@ -103,7 +103,9 @@ const APP = {
     "Tanggal",
     "Nama Produk",
     "Botol",
-    "Qty",
+    "Produksi (Dus)",
+    "Qty/Dus (PCS/DUS)",
+    "Total Qty (PCS)",
     "Dibuat Oleh",
     "Dibuat Pada",
     "Di-update Pada",
@@ -3410,9 +3412,9 @@ function repairLegacySpkRows_(sh) {
 
   rows.forEach(function (row, index) {
     const hasBatch = String(row[0] || "").trim();
-    const qtyContainsCreator = String(row[4] || "").trim();
-    const columnFContainsCreatedAt = isSpkDateLike_(row[5]);
-    const currentUpdateColumnEmpty = String(row[8] || "").trim() === "";
+    const qtyContainsCreator = String(row[6] || "").trim();
+    const columnFContainsCreatedAt = isSpkDateLike_(row[7]);
+    const currentUpdateColumnEmpty = String(row[10] || "").trim() === "";
 
     if (
       !hasBatch ||
@@ -3430,10 +3432,12 @@ function repairLegacySpkRows_(sh) {
         row[2],
         row[3],
         "",
-        row[4],
-        row[5],
+        "",
+        "",
         row[6],
         row[7],
+        row[8],
+        row[9],
       ],
     });
   });
@@ -3491,6 +3495,17 @@ function ensureSpkSheet_(ss, forceSetup) {
     "Di-update Pada",
     "Jumlah Update",
   ];
+  const qtyHeaders = [
+    "No Batch",
+    "Tanggal",
+    "Nama Produk",
+    "Botol",
+    "Qty",
+    "Dibuat Oleh",
+    "Dibuat Pada",
+    "Di-update Pada",
+    "Jumlah Update",
+  ];
   const readWidth = Math.max(APP.SPK_HEADERS.length, sh.getLastColumn() || 1);
   if (sh.getMaxColumns() < readWidth) {
     sh.insertColumnsAfter(sh.getMaxColumns(), readWidth - sh.getMaxColumns());
@@ -3504,10 +3519,14 @@ function ensureSpkSheet_(ss, forceSetup) {
   const isOldSchema = oldHeaders.every(function (header, index) {
     return headers[index] === header;
   });
+  const isQtySchema = qtyHeaders.every(function (header, index) {
+    return headers[index] === header;
+  });
 
-  // Migrasi aman: sisipkan Qty setelah Botol agar data audit lama bergeser,
-  // bukan tertimpa oleh header baru.
-  if (isOldSchema) sh.insertColumnAfter(4);
+  // Migrasi aman: kolom baru disisipkan setelah Botol. Qty lama bergeser ke
+  // posisi Total Qty, sehingga data historis dan kolom audit tidak tertimpa.
+  if (isOldSchema) sh.insertColumnsAfter(4, 3);
+  else if (isQtySchema) sh.insertColumnsAfter(4, 2);
   if (sh.getMaxColumns() < APP.SPK_HEADERS.length) {
     sh.insertColumnsAfter(
       sh.getMaxColumns(),
@@ -3539,11 +3558,13 @@ function getSpkEntries_() {
         tanggal: formatDateCell_(row[1]),
         produk: String(row[2] || "").trim(),
         botol: String(row[3] || "").trim(),
-        qty: Math.max(0, number_(row[4])),
-        createdBy: String(row[5] || "").trim(),
-        createdAt: isoCell_(row[6]),
-        updatedAt: isoCell_(row[7]),
-        updateCount: Math.max(0, Math.floor(number_(row[8]))),
+        produksiDus: Math.max(0, number_(row[4])),
+        qtyPerDus: Math.max(0, number_(row[5])),
+        qty: Math.max(0, number_(row[6])),
+        createdBy: String(row[7] || "").trim(),
+        createdAt: isoCell_(row[8]),
+        updatedAt: isoCell_(row[9]),
+        updateCount: Math.max(0, Math.floor(number_(row[10]))),
       };
     });
 }
@@ -3553,8 +3574,11 @@ function createSpk_(user, data) {
   const master = getMaster_();
   const produk = canonicalMasterValue_(master.produk, data.produk, "Produk");
   const botol = canonicalMasterValue_(master.botol, data.botol, "Botol");
-  const qty = Math.max(0, number_(data.qty));
-  if (qty <= 0) throw new Error("Qty SPK harus lebih dari 0 pcs.");
+  const produksiDus = Math.max(0, Math.floor(number_(data.produksiDus)));
+  const qtyPerDus = Math.max(0, Math.floor(number_(data.qtyPerDus)));
+  if (produksiDus <= 0) throw new Error("Produksi (Dus) harus lebih dari 0.");
+  if (qtyPerDus <= 0) throw new Error("Qty/Dus harus lebih dari 0 pcs/dus.");
+  const qty = produksiDus * qtyPerDus;
   const now = new Date();
   const tz = Session.getScriptTimeZone() || "Asia/Jakarta";
   const tanggal = Utilities.formatDate(now, tz, "yyyy-MM-dd");
@@ -3580,6 +3604,8 @@ function createSpk_(user, data) {
     tanggal,
     produk,
     botol,
+    produksiDus,
+    qtyPerDus,
     qty,
     user.username,
     now.toISOString(),
@@ -3592,6 +3618,8 @@ function createSpk_(user, data) {
     tanggal: tanggal,
     produk: produk,
     botol: botol,
+    produksiDus: produksiDus,
+    qtyPerDus: qtyPerDus,
     qty: qty,
     createdBy: user.username,
     createdAt: now.toISOString(),
@@ -3678,8 +3706,13 @@ function createSpkEntriesBatch_(user, dataList) {
     data = data && typeof data === "object" ? data : {};
     const produk = canonicalMasterValue_(master.produk, data.produk, "Produk");
     const botol = canonicalMasterValue_(master.botol, data.botol, "Botol");
-    const qty = Math.max(0, number_(data.qty));
-    if (qty <= 0) throw new Error("Qty SPK harus lebih dari 0 pcs.");
+    const produksiDus = Math.max(0, Math.floor(number_(data.produksiDus)));
+    const qtyPerDus = Math.max(0, Math.floor(number_(data.qtyPerDus)));
+    if (produksiDus <= 0)
+      throw new Error("Produksi (Dus) harus lebih dari 0.");
+    if (qtyPerDus <= 0)
+      throw new Error("Qty/Dus harus lebih dari 0 pcs/dus.");
+    const qty = produksiDus * qtyPerDus;
     const suppliedBatchNo = String(data.batchNo || "").trim();
     const batchNo =
       suppliedBatchNo ||
@@ -3695,6 +3728,8 @@ function createSpkEntriesBatch_(user, dataList) {
       tanggal: tanggal,
       produk: produk,
       botol: botol,
+      produksiDus: produksiDus,
+      qtyPerDus: qtyPerDus,
       qty: qty,
       createdBy: user.username,
       createdAt: nowIso,
@@ -3707,6 +3742,8 @@ function createSpkEntriesBatch_(user, dataList) {
       item.tanggal,
       item.produk,
       item.botol,
+      item.produksiDus,
+      item.qtyPerDus,
       item.qty,
       item.createdBy,
       item.createdAt,
@@ -3755,26 +3792,31 @@ function assertSpkUnused_(batchNo) {
 function updateSpk_(user, batchNo, data) {
   const found = findSpkRow_(batchNo);
   if (!found) throw new Error("SPK yang akan di-update tidak ditemukan.");
-  const createdBy = String(found.values[5] || "").trim();
+  const createdBy = String(found.values[7] || "").trim();
   requireManage_(user, "spk", createdBy === user.username ? "own" : "others");
   assertSpkUnused_(batchNo);
   data = data && typeof data === "object" ? data : {};
   const master = getMaster_();
   const produk = canonicalMasterValue_(master.produk, data.produk, "Produk");
   const botol = canonicalMasterValue_(master.botol, data.botol, "Botol");
-  const qty = Math.max(0, number_(data.qty));
-  if (qty <= 0) throw new Error("Qty SPK harus lebih dari 0 pcs.");
+  const produksiDus = Math.max(0, Math.floor(number_(data.produksiDus)));
+  const qtyPerDus = Math.max(0, Math.floor(number_(data.qtyPerDus)));
+  if (produksiDus <= 0) throw new Error("Produksi (Dus) harus lebih dari 0.");
+  if (qtyPerDus <= 0) throw new Error("Qty/Dus harus lebih dari 0 pcs/dus.");
+  const qty = produksiDus * qtyPerDus;
   const updatedAt = new Date().toISOString();
-  const updateCount = Math.max(0, Math.floor(number_(found.values[8]))) + 1;
+  const updateCount = Math.max(0, Math.floor(number_(found.values[10]))) + 1;
   found.sheet
-    .getRange(found.row, 3, 1, 7)
+    .getRange(found.row, 3, 1, 9)
     .setValues([
       [
         produk,
         botol,
+        produksiDus,
+        qtyPerDus,
         qty,
-        found.values[5],
-        found.values[6],
+        found.values[7],
+        found.values[8],
         updatedAt,
         updateCount,
       ],
@@ -3784,9 +3826,11 @@ function updateSpk_(user, batchNo, data) {
     tanggal: formatDateCell_(found.values[1]),
     produk: produk,
     botol: botol,
+    produksiDus: produksiDus,
+    qtyPerDus: qtyPerDus,
     qty: qty,
     createdBy: createdBy,
-    createdAt: isoCell_(found.values[6]),
+    createdAt: isoCell_(found.values[8]),
     updatedAt: updatedAt,
     updateCount: updateCount,
   };
@@ -3795,7 +3839,7 @@ function updateSpk_(user, batchNo, data) {
 function deleteSpk_(user, batchNo) {
   const found = findSpkRow_(batchNo);
   if (!found) throw new Error("SPK yang akan dihapus tidak ditemukan.");
-  const createdBy = String(found.values[5] || "").trim();
+  const createdBy = String(found.values[7] || "").trim();
   requireManage_(user, "spk", createdBy === user.username ? "own" : "others");
   assertSpkUnused_(batchNo);
   found.sheet.deleteRow(found.row);
@@ -3817,7 +3861,7 @@ function deleteSpkBatch_(user, batchNos) {
   const foundRows = uniqueBatchNos.map(function (batchNo) {
     const found = findSpkRow_(batchNo);
     if (!found) throw new Error("SPK " + batchNo + " tidak ditemukan.");
-    const createdBy = String(found.values[5] || "").trim();
+    const createdBy = String(found.values[7] || "").trim();
     requireManage_(user, "spk", createdBy === user.username ? "own" : "others");
     assertSpkUnused_(batchNo);
     return { batchNo: batchNo, sheet: found.sheet, row: found.row };
