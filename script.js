@@ -44,7 +44,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbzlETRwrIdblOLvYt1z1NMwWPjlSkV1J2-Q1_iI_nFlKr__MbY5LivVgsffyoqtKpaYuA/exec",
+      "https://script.google.com/macros/s/AKfycbzpeYyhX2Ji2NOzsfQlzL27hR35-QpNciv1OpOhPUzPBZIGIFCGQTtzLXkoJ6WHFjrPyg/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -63,6 +63,7 @@
     apdEntries: [],
     downtimeEntries: [],
     preview: { filling: [], press: [], apd: [], spk: [] },
+    previewDeletedEntryAudits: [],
     users: [],
     settings: {
       kpiPressOutputTargetMonthly: 70000,
@@ -99,7 +100,6 @@
       priorityPage: 1,
       pressKpiMode: "month",
       pressKpiOperator: "",
-      pressKpiDate: "",
       pressKpiMonth: "",
       pressKpiYear: "",
       pressKpiStart: "",
@@ -482,7 +482,10 @@
     try {
       localStorage.setItem(
         userStorageKey(CONFIG.PREVIEW_KEY),
-        JSON.stringify(state.preview),
+        JSON.stringify({
+          ...state.preview,
+          deletedEntryAudits: state.previewDeletedEntryAudits,
+        }),
       );
     } catch (err) {
       console.warn("Gagal menyimpan preview lokal:", err);
@@ -501,9 +504,55 @@
         apd: Array.isArray(saved.apd) ? saved.apd : [],
         spk: Array.isArray(saved.spk) ? saved.spk : [],
       };
+      state.previewDeletedEntryAudits = Array.isArray(saved.deletedEntryAudits)
+        ? saved.deletedEntryAudits
+        : [];
     } catch (err) {
       console.warn("Preview lokal tidak dapat dibaca:", err);
     }
+  }
+
+  function previewDeletedEntryKey(entry) {
+    const line = String(entry?.tab || entry?.line || "")
+      .trim()
+      .toLowerCase();
+    const tanggal = String(entry?.tanggal || "").trim();
+    const batchNo = String(entry?.batchNo || entryBatchNo(entry) || "")
+      .trim()
+      .toLowerCase();
+    const workIdentity = batchNo
+      ? `batch:${batchNo}`
+      : `produk:${String(entry?.produk || "")
+          .trim()
+          .toLowerCase()}|botol:${String(entry?.botol || "")
+          .trim()
+          .toLowerCase()}`;
+    return `${line}|${tanggal}|${workIdentity}`;
+  }
+
+  function recordPreviewEntryDeletion(entry) {
+    if (!entry || (entry.tab !== "filling" && entry.tab !== "press")) return;
+    state.previewDeletedEntryAudits.push({
+      key: previewDeletedEntryKey(entry),
+      nextUpdateCount:
+        Math.max(0, Math.floor(Number(entry.updateCount) || 0)) + 1,
+      deletedAt: nowIso(),
+    });
+  }
+
+  function consumePreviewEntryDeletion(entry) {
+    const key = previewDeletedEntryKey(entry);
+    for (
+      let index = state.previewDeletedEntryAudits.length - 1;
+      index >= 0;
+      index -= 1
+    ) {
+      const audit = state.previewDeletedEntryAudits[index];
+      if (audit?.key !== key) continue;
+      state.previewDeletedEntryAudits.splice(index, 1);
+      return Math.max(1, Math.floor(Number(audit.nextUpdateCount) || 1));
+    }
+    return 0;
   }
 
   function getFormDrafts() {
@@ -3348,7 +3397,7 @@
 
       // CREATE hanya masuk ke preview lokal. Belum dikirim ke Spreadsheet.
       const previewId = makeClientRequestId();
-      state.preview[line].push({
+      const previewEntry = {
         id: previewId,
         tab: line,
         tanggal: payload.tanggal,
@@ -3365,7 +3414,14 @@
         createdAt: nowIso(),
         updatedAt: "",
         updateCount: 0,
-      });
+      };
+      const deletedPreviewUpdateCount =
+        consumePreviewEntryDeletion(previewEntry);
+      if (deletedPreviewUpdateCount > 0) {
+        previewEntry.updateCount = deletedPreviewUpdateCount;
+        previewEntry.updatedAt = nowIso();
+      }
+      state.preview[line].push(previewEntry);
       state.pages[line] = 1;
       persistPreview();
       resetForm();
@@ -3733,6 +3789,7 @@
         );
         if (line === "filling" && previewEntry && hasRelatedPress(previewEntry))
           return showFillingDeleteBlocked();
+        recordPreviewEntryDeletion(previewEntry);
         state.preview[line] = state.preview[line].filter(
           (x) => x.id !== previewDeleteBtn.dataset.id,
         );
@@ -5538,7 +5595,10 @@
 
   function dashboardPressKpiPeriod() {
     const today = dashboardDateParts(todayStr()) || new Date();
-    const mode = state.dashboard.pressKpiMode || "date";
+    const selectedMode = state.dashboard.pressKpiMode || "month";
+    const mode = ["month", "year", "range"].includes(selectedMode)
+      ? selectedMode
+      : "month";
 
     if (mode === "month") {
       const value = state.dashboard.pressKpiMonth || dashboardMonthKey(today);
@@ -5580,9 +5640,36 @@
       };
     }
 
-    const dateText = state.dashboard.pressKpiDate || todayStr();
-    const date = dashboardDateParts(dateText) || today;
-    return { mode: "date", start: date, end: date, label: dateText };
+    const start = new Date(today.getFullYear(), today.getMonth(), 1);
+    return {
+      mode: "month",
+      start,
+      end: new Date(today.getFullYear(), today.getMonth() + 1, 0),
+      label: start.toLocaleDateString("id-ID", {
+        month: "long",
+        year: "numeric",
+      }),
+    };
+  }
+
+  function dashboardOperatorTargetForPeriod(line, period) {
+    const monthlyTarget =
+      line === "press"
+        ? getKpiPressOutputTarget()
+        : getKpiFillingOutputTarget();
+    if (period.mode === "year") return monthlyTarget * 12;
+    if (period.mode === "month") return monthlyTarget;
+
+    let workingDays = 0;
+    for (
+      let cursor = new Date(period.start);
+      cursor <= period.end;
+      cursor = dashboardAddDays(cursor, 1)
+    ) {
+      const day = cursor.getDay();
+      if (day !== 0 && day !== 6) workingDays += 1;
+    }
+    return (monthlyTarget / KPI_WORKING_DAYS_PER_MONTH) * workingDays;
   }
 
   function dashboardDateInPeriod(dateText, period) {
@@ -5859,9 +5946,80 @@
       wetPeak.wet ? wetPeak.label : "—",
     );
 
-    const width = 900;
-    const height = 340;
-    const plot = { left: 54, right: 22, top: 24, bottom: 54 };
+    const selectedOperator = String(
+      state.dashboard.pressKpiOperator || "",
+    ).trim();
+    const hasSelectedOperator =
+      Boolean(selectedOperator) && isMasterValue("operator", selectedOperator);
+    const selectedOperatorKey = hasSelectedOperator
+      ? kpiOperatorKey(canonicalMasterValue("operator", selectedOperator))
+      : "";
+    const operatorEntries = hasSelectedOperator
+      ? entries.filter(
+          (entry) =>
+            dashboardDateInPeriod(entry.tanggal, period) &&
+            kpiOperatorKey(entry.operator) === selectedOperatorKey,
+        )
+      : [];
+    const operatorLines = ["press", "filling"].map((line) => {
+      const lineEntries = operatorEntries.filter((entry) => entry.tab === line);
+      return {
+        line,
+        entries: lineEntries,
+        result: lineEntries.reduce(
+          (sum, entry) => sum + Math.max(0, Number(entry.totalQty) || 0),
+          0,
+        ),
+      };
+    });
+    // Ringkasan hanya menampilkan satu bagian. Jika pernah mengerjakan kedua
+    // bagian pada periode yang sama, bagian dengan entri terbanyak digunakan;
+    // total hasil menjadi penentu berikutnya jika jumlah entrinya sama.
+    const activeOperatorLine = operatorLines
+      .filter((item) => item.entries.length > 0)
+      .sort(
+        (a, b) => b.entries.length - a.entries.length || b.result - a.result,
+      )[0];
+    ["press", "filling"].forEach((line) => {
+      const lineName = line === "press" ? "Press" : "Filling";
+      const lineResult = operatorLines.find((item) => item.line === line);
+      const hasLineResult = activeOperatorLine?.line === line;
+      const result = lineResult?.result || 0;
+      const target = dashboardOperatorTargetForPeriod(line, period);
+      const achievement = target > 0 ? (result / target) * 100 : 0;
+      const resultCard = el(`dashboardOperator${lineName}ResultCard`);
+      const achievementCard = el(`dashboardOperator${lineName}AchievementCard`);
+      if (resultCard) resultCard.hidden = !hasLineResult;
+      if (achievementCard) achievementCard.hidden = !hasLineResult;
+      dashboardSetText(
+        `dashboardOperator${lineName}Result`,
+        dashboardQty(result),
+      );
+      dashboardSetText(
+        `dashboardOperator${lineName}Achievement`,
+        dashboardPercent(achievement),
+      );
+      dashboardSetText(
+        `dashboardOperator${lineName}Target`,
+        `Target ${dashboardQty(Math.round(target))} pcs`,
+      );
+    });
+
+    // Panel chart mengikuti tinggi Ringkasan Periode. Pembacaan ukuran setelah
+    // kartu operator diubah memaksa layout terbaru digunakan untuk SVG.
+    const chartRect = chart.getBoundingClientRect();
+    const chartWrap = chart.parentElement;
+    const width = Math.max(620, Math.round(chartRect.width || 900));
+    const height = Math.max(
+      340,
+      Math.round(chartWrap?.getBoundingClientRect().height || 340),
+    );
+    const plot = {
+      left: 54,
+      right: 22,
+      top: Math.max(24, Math.round(height * 0.07)),
+      bottom: Math.max(42, Math.round(height * 0.1)),
+    };
     const plotWidth = width - plot.left - plot.right;
     const plotHeight = height - plot.top - plot.bottom;
     const maxValue = Math.max(
@@ -5875,23 +6033,50 @@
         ? plotWidth / 2
         : (index / (buckets.length - 1)) * plotWidth);
     const y = (value) => plot.top + plotHeight - (value / yMax) * plotHeight;
-    const pathFor = (key) =>
-      buckets
-        .map(
-          (item, index) =>
-            `${index ? "L" : "M"}${x(index).toFixed(1)},${y(item[key]).toFixed(1)}`,
-        )
-        .join(" ");
+    const pathFor = (key) => {
+      const coordinates = buckets.map((item, index) => ({
+        x: x(index),
+        y: y(item[key]),
+      }));
+      if (!coordinates.length) return "";
+      if (coordinates.length === 1)
+        return `M${coordinates[0].x.toFixed(1)},${coordinates[0].y.toFixed(1)}`;
+
+      const clampY = (value) =>
+        Math.max(plot.top, Math.min(plot.top + plotHeight, value));
+      const tension = 0.72;
+      let path = `M${coordinates[0].x.toFixed(1)},${coordinates[0].y.toFixed(1)}`;
+      for (let index = 0; index < coordinates.length - 1; index += 1) {
+        const previous = coordinates[index - 1] || coordinates[index];
+        const current = coordinates[index];
+        const next = coordinates[index + 1];
+        const following = coordinates[index + 2] || next;
+        const control1X = current.x + ((next.x - previous.x) / 6) * tension;
+        const control1Y = clampY(
+          current.y + ((next.y - previous.y) / 6) * tension,
+        );
+        const control2X = next.x - ((following.x - current.x) / 6) * tension;
+        const control2Y = clampY(
+          next.y - ((following.y - current.y) / 6) * tension,
+        );
+        path += ` C${control1X.toFixed(1)},${control1Y.toFixed(1)} ${control2X.toFixed(1)},${control2Y.toFixed(1)} ${next.x.toFixed(1)},${next.y.toFixed(1)}`;
+      }
+      return path;
+    };
     const labelStep = Math.max(1, Math.ceil(buckets.length / 10));
-    const grid = Array.from({ length: 5 }, (_, index) => {
-      const value = (yMax / 4) * index;
+    const yTickCount = Math.max(
+      5,
+      Math.min(8, Math.round(plotHeight / 65) + 1),
+    );
+    const grid = Array.from({ length: yTickCount }, (_, index) => {
+      const value = (yMax / (yTickCount - 1)) * index;
       const py = y(value);
       return `<line x1="${plot.left}" y1="${py}" x2="${width - plot.right}" y2="${py}" class="damage-grid-line"/><text x="${plot.left - 10}" y="${py + 4}" class="damage-axis-label" text-anchor="end">${dashboardQty(value)}</text>`;
     }).join("");
     const labels = buckets
       .map((item, index) =>
         index % labelStep === 0 || index === buckets.length - 1
-          ? `<text x="${x(index)}" y="${height - 20}" class="damage-axis-label" text-anchor="middle">${esc(item.label)}</text>`
+          ? `<text x="${x(index)}" y="${plot.top + plotHeight + Math.min(25, Math.round(plot.bottom * 0.55))}" class="damage-axis-label" text-anchor="middle">${esc(item.label)}</text>`
           : "",
       )
       .join("");
@@ -6033,15 +6218,12 @@
       (sum, row) => sum + (Number(row.remaining) || 0),
       0,
     );
-    const fillingAll = entries
-      .filter((entry) => entry.tab === "filling")
-      .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
-    const pressAll = entries
-      .filter((entry) => entry.tab === "press")
-      .reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0);
+    // Seluruh angka pada alur produksi ini merupakan angka hari ini. Persentase
+    // selesai harus memakai periode yang sama agar riwayat hari sebelumnya tidak
+    // menghasilkan persentase ketika proses Filling dan Press hari ini masih 0.
     const donePercent =
-      fillingAll > 0
-        ? Math.min(100, Math.max(0, (pressAll / fillingAll) * 100))
+      fillingToday > 0
+        ? Math.min(100, Math.max(0, (pressToday / fillingToday) * 100))
         : 0;
 
     dashboardSetText(
@@ -6158,7 +6340,13 @@
           ? ""
           : arrivalMinutes - startMinutes;
       minutes.value = result === "" ? "" : String(result);
-      minutes.classList.toggle("input-invalid", result !== "" && result <= 0);
+      const isOnTime = result !== "" && result <= 0;
+      if (isOnTime) {
+        reason.value = "Tepat Waktu";
+        note.value = "";
+      }
+      reason.disabled = isOnTime;
+      syncNote();
       return result;
     };
 
@@ -6230,9 +6418,9 @@
       const downTime = Number(syncDowntime());
       const alasan = reason.value;
       const keterangan = note.value.trim();
-      if (!Number.isFinite(downTime) || downTime <= 0) {
+      if (!Number.isFinite(downTime)) {
         if (error) {
-          error.textContent = "Durasi Down Time wajib lebih dari 0 menit.";
+          error.textContent = "Hasil Down Time tidak valid.";
           error.hidden = false;
         }
         productionStart.focus();
@@ -7176,10 +7364,6 @@
     const currentMonth = dashboardMonthKey(today);
     const currentYear = String(today.getFullYear());
 
-    if (!state.dashboard.pressKpiDate) {
-      state.dashboard.pressKpiDate = todayStr();
-    }
-
     if (!state.dashboard.chartMonth) {
       state.dashboard.chartMonth = currentMonth;
     }
@@ -7194,7 +7378,6 @@
     const pressKpiModeInput = el("dashboardPressKpiMode");
     const pressKpiOperatorInput = el("dashboardPressKpiOperator");
     const pressKpiOperatorClear = el("dashboardPressKpiOperatorClear");
-    const pressKpiDateInput = el("dashboardPressKpiDate");
     const pressKpiMonthInput = el("dashboardPressKpiMonth");
     const pressKpiYearInput = el("dashboardPressKpiYear");
     const pressKpiStartInput = el("dashboardPressKpiStart");
@@ -7206,9 +7389,7 @@
       state.dashboard.pressKpiYear = currentYear;
 
     function updatePressKpiFilterUI() {
-      const mode = state.dashboard.pressKpiMode || "date";
-      if (el("dashboardPressKpiDateWrap"))
-        el("dashboardPressKpiDateWrap").hidden = mode !== "date";
+      const mode = state.dashboard.pressKpiMode || "month";
       if (el("dashboardPressKpiMonthWrap"))
         el("dashboardPressKpiMonthWrap").hidden = mode !== "month";
       if (el("dashboardPressKpiYearWrap"))
@@ -7220,11 +7401,9 @@
     }
 
     if (pressKpiModeInput)
-      pressKpiModeInput.value = state.dashboard.pressKpiMode || "date";
+      pressKpiModeInput.value = state.dashboard.pressKpiMode || "month";
     if (pressKpiOperatorInput)
       pressKpiOperatorInput.value = state.dashboard.pressKpiOperator || "";
-    if (pressKpiDateInput)
-      pressKpiDateInput.value = state.dashboard.pressKpiDate;
     if (pressKpiMonthInput)
       pressKpiMonthInput.value = state.dashboard.pressKpiMonth;
     if (pressKpiYearInput)
@@ -7274,10 +7453,6 @@
       pressKpiOperatorInput?.focus();
     });
     updatePressKpiOperatorClear();
-    pressKpiDateInput?.addEventListener("change", () => {
-      state.dashboard.pressKpiDate = pressKpiDateInput.value || todayStr();
-      rerenderPressKpi();
-    });
     pressKpiMonthInput?.addEventListener("change", () => {
       state.dashboard.pressKpiMonth = pressKpiMonthInput.value || currentMonth;
       rerenderPressKpi();
@@ -7293,6 +7468,13 @@
     pressKpiEndInput?.addEventListener("change", () => {
       state.dashboard.pressKpiEnd = pressKpiEndInput.value;
       rerenderPressKpi();
+    });
+    let dashboardDamageResizeTimer = 0;
+    window.addEventListener("resize", () => {
+      window.clearTimeout(dashboardDamageResizeTimer);
+      dashboardDamageResizeTimer = window.setTimeout(() => {
+        if (!el("view-dashboard")?.hidden) rerenderPressKpi();
+      }, 120);
     });
 
     if (modeInput) {
@@ -8408,6 +8590,7 @@
           apiPost("maintenance.inputData.clear", { confirmation: phrase }),
         );
         state.preview = { spk: [], filling: [], press: [], apd: [] };
+        state.previewDeletedEntryAudits = [];
         localStorage.removeItem(userStorageKey(CONFIG.PREVIEW_KEY));
         localStorage.removeItem(userStorageKey(CONFIG.FORM_DRAFT_KEY));
         toast("Semua data input berhasil dihapus.");
@@ -8985,7 +9168,8 @@
       0,
       Math.floor(Number(entry?.updateCount) || 0),
     );
-    const allowance = entry?.tab === "filling" ? 2 : entry?.tab === "press" ? 1 : 0;
+    const allowance =
+      entry?.tab === "filling" ? 2 : entry?.tab === "press" ? 1 : 0;
     return Math.max(0, updateCount - allowance);
   }
 
@@ -9150,7 +9334,10 @@
     const downtimeValues = (state.downtimeEntries || [])
       .filter((entry) => entry && dashboardDateInPeriod(entry.tanggal, period))
       .map((entry) => Number(entry.downTime))
-      .filter((value) => Number.isFinite(value) && value >= 0);
+      .filter((value) => Number.isFinite(value))
+      // Nilai minus berarti racikan sudah siap sebelum jam masuk. Untuk KPI
+      // SPV Produksi kondisi tersebut dihitung sebagai 0 menit downtime.
+      .map((value) => Math.max(0, value));
     const downtimeTotalMinutes = downtimeValues.reduce(
       (sum, value) => sum + value,
       0,
@@ -9654,7 +9841,7 @@
     const notes = isSpv
       ? `<p><strong>Keterangan:</strong> Pencapaian Team mencapai bobot penuh saat hasil produksi mencapai lebih dari 95% target gabungan SPK Filling dan Press.</p>
          <p>Reject memakai gabungan botol pecah Press dan kardus basah Filling. Efisiensi bahan baku memakai persentase kardus basah terhadap total kardus Filling sebagai data tumpahan.</p>
-         <p>Down Time Racikan = total seluruh menit downtime periode dibagi jumlah entri Down Time pada periode. Rata-rata di bawah 10 menit mendapat bobot penuh 15; rata-rata 10 menit atau lebih dihitung dengan rumus 10 dibagi rata-rata menit dikali 15. Jika tidak ada catatan downtime, capaian indikator bernilai 0.</p>
+         <p>Down Time Racikan = total seluruh menit downtime periode dibagi jumlah entri Down Time pada periode. Racikan yang siap sebelum atau tepat pada jam masuk dihitung 0 menit untuk KPI. Rata-rata di bawah 10 menit mendapat bobot penuh 15; rata-rata 10 menit atau lebih dihitung dengan rumus 10 dibagi rata-rata menit dikali 15. Jika tidak ada catatan downtime, capaian indikator bernilai 0.</p>
          <p>Aktual APD SPV Produksi memakai rata-rata seluruh nilai APD pada periode laporan.</p>`
       : isShift
         ? `<p><strong>Keterangan:</strong> Target gabungan memakai target bulanan Filling dan Press di Setting, dikalikan jumlah karyawan aktif pada masing-masing bagian. Capaian target penuh saat hasil mencapai 90% target gabungan.</p>

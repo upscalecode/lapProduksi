@@ -23,6 +23,7 @@ const APP = {
     USERS: "Users",
     SESSIONS: "Sessions",
     ENTRIES: "Pengerjaan",
+    DELETED_ENTRY_AUDIT: "Audit Hapus Pengerjaan",
     PRESS_ADJUSTMENTS: "Penutupan Press",
     PRESS_ADJUSTMENTS_ARCHIVE: "Arsip Penutupan Press",
     PRESS_REMAINDERS: "Sisa Press",
@@ -51,6 +52,19 @@ const APP = {
     "updateCount",
     "sisaPressTanggalAsal",
     "keterangan",
+  ],
+  DELETED_ENTRY_AUDIT_HEADERS: [
+    "line",
+    "tanggal",
+    "operator",
+    "produk",
+    "botol",
+    "batchNo",
+    "nextUpdateCount",
+    "deletedAt",
+    "deletedBy",
+    "restoredEntryId",
+    "restoredAt",
   ],
   USER_HEADERS: [
     "username",
@@ -152,6 +166,11 @@ function setupSpreadsheet() {
   const users = ensureSheet_(ss, APP.SHEETS.USERS, APP.USER_HEADERS);
   ensureSheet_(ss, APP.SHEETS.SESSIONS, APP.SESSION_HEADERS);
   ensureEntrySheetSchema_(ss, true);
+  ensureSheet_(
+    ss,
+    APP.SHEETS.DELETED_ENTRY_AUDIT,
+    APP.DELETED_ENTRY_AUDIT_HEADERS,
+  );
   ensureSheet_(ss, APP.SHEETS.PRESS_ADJUSTMENTS, APP.PRESS_ADJUSTMENT_HEADERS);
   ensureSheet_(
     ss,
@@ -820,8 +839,8 @@ function upsertDowntimeEntry_(user, data) {
   const arrivalMinutes = Number(arrivalParts[0]) * 60 + Number(arrivalParts[1]);
   const startMinutes = Number(startMatch[1]) * 60 + Number(startMatch[2]);
   const downTime = arrivalMinutes - startMinutes;
-  const alasan = String(data.alasan || "").trim();
-  const keterangan = String(data.keterangan || "").trim();
+  let alasan = String(data.alasan || "").trim();
+  let keterangan = String(data.keterangan || "").trim();
   const allowedReasons = [
     "Tepat Waktu",
     "Raw Material Belum Ready",
@@ -831,8 +850,13 @@ function upsertDowntimeEntry_(user, data) {
     "Human Error",
     "Lainnya",
   ];
-  if (!isFinite(downTime) || downTime <= 0)
-    throw new Error("Down Time wajib lebih dari 0 menit.");
+  if (!isFinite(downTime)) throw new Error("Down Time tidak valid.");
+  // Racikan yang sudah siap sebelum atau tepat pada jam masuk tidak memiliki
+  // downtime untuk KPI, tetapi selisih aktualnya tetap disimpan sebagai riwayat.
+  if (downTime <= 0) {
+    alasan = "Tepat Waktu";
+    keterangan = "";
+  }
   if (allowedReasons.indexOf(alasan) < 0)
     throw new Error("Alasan Down Time tidak valid.");
   if (alasan === "Lainnya" && !keterangan)
@@ -1725,6 +1749,9 @@ function createEntriesBatch_(user, dataList) {
   const savedIds = [];
   const duplicateIds = [];
   const seenIds = {};
+  const deletedAudits = availableDeletedEntryAudits_();
+  const usedDeletedAuditRows = {};
+  const restoredAudits = [];
   const spkByBatchNo = {};
   const fillingQtyByBatchNo = {};
   spkEntries.forEach(function (item) {
@@ -1858,11 +1885,18 @@ function createEntriesBatch_(user, dataList) {
 
     const createdAt = new Date(now.getTime() + index);
     const line = data.line === "press" ? "press" : "filling";
+    const deletedAudit = takeDeletedEntryAudit_(
+      data,
+      deletedAudits,
+      usedDeletedAuditRows,
+    );
     // updateCount dari client hanya merepresentasikan edit yang sudah terjadi
-    // saat data masih berada di Preview. Nilainya dipertahankan saat CREATE.
+    // saat data masih berada di Preview. Audit hapus mencegah input ulang data
+    // yang sama kembali ke hitungan 0.
     const previewUpdateCount = Math.max(
       0,
       Math.floor(number_(data.updateCount)),
+      deletedAudit ? deletedAudit.nextUpdateCount : 0,
     );
     const previewUpdatedAt =
       normalizeIsoTimestamp_(data.updatedAt) ||
@@ -1892,6 +1926,7 @@ function createEntriesBatch_(user, dataList) {
     newEntries.push(entry);
     resultEntries.push(entry);
     savedIds.push(id);
+    if (deletedAudit) restoredAudits.push({ audit: deletedAudit, entry: entry });
   });
 
   // Semua baris baru diproyeksikan sekaligus. Ini menjaga validasi Press tetap
@@ -1949,6 +1984,13 @@ function createEntriesBatch_(user, dataList) {
       newEntries.length,
       APP.ENTRY_HEADERS.length,
     ).setValues(newEntries.map(entryToRow_));
+    restoredAudits.forEach(function (item) {
+      markDeletedEntryAuditRestored_(
+        item.audit,
+        item.entry.id,
+        item.entry.createdAt,
+      );
+    });
   }
 
   // Satu kali sinkronisasi untuk seluruh batch.
@@ -1988,7 +2030,16 @@ function createEntry_(user, data) {
   const qtyBotol = number_(data.qtyBotolPerKardus);
   const qtyPecah = number_(data.qtyBotolPecah);
   const qtyKardusBasah = line === "filling" ? number_(data.qtyKardusBasah) : 0;
-  const previewUpdateCount = Math.max(0, Math.floor(number_(data.updateCount)));
+  const deletedAudit = takeDeletedEntryAudit_(
+    data,
+    availableDeletedEntryAudits_(),
+    {},
+  );
+  const previewUpdateCount = Math.max(
+    0,
+    Math.floor(number_(data.updateCount)),
+    deletedAudit ? deletedAudit.nextUpdateCount : 0,
+  );
   const previewUpdatedAt =
     normalizeIsoTimestamp_(data.updatedAt) ||
     (previewUpdateCount > 0 ? createdAt.toISOString() : "");
@@ -2019,6 +2070,7 @@ function createEntry_(user, data) {
   assertProjectedBalance_([entry], "");
 
   entrySheet_().appendRow(entryToRow_(entry));
+  markDeletedEntryAuditRestored_(deletedAudit, entry.id, entry.createdAt);
   rebuildPressRemainders_();
 
   const saved = findEntryRow_(id);
@@ -2157,6 +2209,9 @@ function deleteEntry_(user, id) {
   }
 
   sh.deleteRow(found.row);
+  // Penghapusan dihitung sebagai satu perubahan. Audit ini akan diwariskan
+  // sekali ketika pekerjaan yang sama dimasukkan kembali.
+  recordDeletedEntryAudit_(existing, user);
   // Snapshot proyeksi yang sama langsung dipakai untuk menulis saldo baru.
   const remainders = writePressModel_(
     projectedEntries,
@@ -2585,6 +2640,97 @@ function ensureEntrySheetSchema_(ss, forceSetup) {
 
 function entrySheet_() {
   return ensureEntrySheetSchema_(spreadsheet_());
+}
+
+function deletedEntryAuditSheet_() {
+  return ensureSheet_(
+    spreadsheet_(),
+    APP.SHEETS.DELETED_ENTRY_AUDIT,
+    APP.DELETED_ENTRY_AUDIT_HEADERS,
+  );
+}
+
+function deletedEntryAuditKey_(entry) {
+  const line = String(entry.tab || entry.line || "").trim().toLowerCase();
+  const tanggal = String(entry.tanggal || "").trim();
+  const batchNo = String(
+    entry.batchNo || reportBatchNo_(entry.reportId) || "",
+  )
+    .trim()
+    .toLowerCase();
+  const workIdentity = batchNo
+    ? "batch:" + batchNo
+    : "produk:" +
+      String(entry.produk || "").trim().toLowerCase() +
+      "|botol:" +
+      String(entry.botol || "").trim().toLowerCase();
+  // Operator sengaja tidak menjadi bagian key agar mengganti nama operator
+  // tidak dapat dipakai untuk menghindari hitungan update setelah penghapusan.
+  return [line, tanggal, workIdentity].join("|");
+}
+
+function availableDeletedEntryAudits_() {
+  const sh = deletedEntryAuditSheet_();
+  const lastRow = sh.getLastRow();
+  if (lastRow < 2) return [];
+  return sh
+    .getRange(2, 1, lastRow - 1, APP.DELETED_ENTRY_AUDIT_HEADERS.length)
+    .getValues()
+    .map(function (row, index) {
+      return {
+        row: index + 2,
+        key: deletedEntryAuditKey_({
+          line: row[0],
+          tanggal: formatDateCell_(row[1]),
+          operator: row[2],
+          produk: row[3],
+          botol: row[4],
+          batchNo: row[5],
+        }),
+        nextUpdateCount: Math.max(1, Math.floor(number_(row[6]))),
+        restoredEntryId: String(row[9] || "").trim(),
+      };
+    })
+    .filter(function (item) {
+      return !item.restoredEntryId;
+    });
+}
+
+function takeDeletedEntryAudit_(entry, audits, usedRows) {
+  const key = deletedEntryAuditKey_(entry);
+  for (let index = audits.length - 1; index >= 0; index--) {
+    const audit = audits[index];
+    if (audit.key !== key || usedRows[audit.row]) continue;
+    usedRows[audit.row] = true;
+    return audit;
+  }
+  return null;
+}
+
+function markDeletedEntryAuditRestored_(audit, entryId, restoredAt) {
+  if (!audit) return;
+  deletedEntryAuditSheet_()
+    .getRange(audit.row, 10, 1, 2)
+    .setValues([[String(entryId), restoredAt || new Date().toISOString()]]);
+}
+
+function recordDeletedEntryAudit_(entry, user) {
+  const legacyAudit = parseEntryUpdateAudit_(entry.updatedAt);
+  const nextUpdateCount =
+    Math.max(number_(entry.updateCount), legacyAudit.count) + 1;
+  deletedEntryAuditSheet_().appendRow([
+    entry.tab,
+    entry.tanggal,
+    entry.operator,
+    entry.produk,
+    entry.botol,
+    reportBatchNo_(entry.reportId),
+    nextUpdateCount,
+    new Date().toISOString(),
+    String((user && user.username) || ""),
+    "",
+    "",
+  ]);
 }
 
 function pressRemainderSheet_(createIfMissing) {

@@ -448,18 +448,10 @@
                           <label class="field dashboard-kpi-filter">
                             <span>Periode</span>
                             <select id="dashboardPressKpiMode">
-                              <option value="date">Tanggal</option>
                               <option value="month">Bulan</option>
                               <option value="year">Tahun</option>
                               <option value="range">Rentang Tanggal</option>
                             </select>
-                          </label>
-                          <label
-                            class="field dashboard-kpi-filter"
-                            id="dashboardPressKpiDateWrap"
-                          >
-                            <span>Tanggal</span>
-                            <input type="date" id="dashboardPressKpiDate" />
                           </label>
                           <label
                             class="field dashboard-kpi-filter"
@@ -562,6 +554,42 @@
                             <strong id="dashboardDamageWetPeak">0</strong>
                             <small id="dashboardDamageWetPeakDate">—</small>
                           </div>
+                          <div
+                            class="dashboard-kpi-info-card"
+                            id="dashboardOperatorPressResultCard"
+                            hidden
+                          >
+                            <span>Hasil Press Operator</span>
+                            <strong id="dashboardOperatorPressResult">0</strong>
+                            <small>pcs</small>
+                          </div>
+                          <div
+                            class="dashboard-kpi-info-card"
+                            id="dashboardOperatorPressAchievementCard"
+                            hidden
+                          >
+                            <span>Capaian Press Operator</span>
+                            <strong id="dashboardOperatorPressAchievement">0%</strong>
+                            <small id="dashboardOperatorPressTarget">Target 0 pcs</small>
+                          </div>
+                          <div
+                            class="dashboard-kpi-info-card"
+                            id="dashboardOperatorFillingResultCard"
+                            hidden
+                          >
+                            <span>Hasil Filling Operator</span>
+                            <strong id="dashboardOperatorFillingResult">0</strong>
+                            <small>pcs</small>
+                          </div>
+                          <div
+                            class="dashboard-kpi-info-card"
+                            id="dashboardOperatorFillingAchievementCard"
+                            hidden
+                          >
+                            <span>Capaian Filling Operator</span>
+                            <strong id="dashboardOperatorFillingAchievement">0%</strong>
+                            <small id="dashboardOperatorFillingTarget">Target 0 pcs</small>
+                          </div>
                         </div>
 
                         <div class="dashboard-kpi-formulas">
@@ -574,7 +602,9 @@
                             pengerjaan Filling.
                           </p>
                           <p>
-                            Filter operator diterapkan pada kedua jenis data.
+                            Filter operator diterapkan pada kedua jenis data dan
+                            menampilkan hasil serta capaian sesuai bagian
+                            operator.
                           </p>
                         </div>
                       </section>
@@ -2477,7 +2507,6 @@
             <input
               type="number"
               id="fillingDowntimeMinutes"
-              min="1"
               step="1"
               disabled
             />

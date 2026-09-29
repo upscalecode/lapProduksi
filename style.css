@@ -2313,6 +2313,10 @@ body[data-page="login"] .login-screen {
   align-items: stretch;
   grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
 }
+.dashboard-press-kpi-panel {
+  display: flex;
+  flex-direction: column;
+}
 .dashboard-press-kpi-head {
   align-items: center;
 }
@@ -2415,8 +2419,10 @@ body[data-page="login"] .login-screen {
   position: relative;
   width: 100%;
   min-height: 340px;
+  flex: 1 1 340px;
   margin-top: 12px;
   overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--surface-2);
@@ -2424,11 +2430,13 @@ body[data-page="login"] .login-screen {
 .dashboard-damage-chart {
   width: 100%;
   min-width: 620px;
+  min-height: 340px;
+  height: 100%;
 }
 .dashboard-damage-chart svg {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
 }
 .damage-grid-line {
   stroke: var(--line);
@@ -2546,6 +2554,9 @@ body[data-page="login"] .login-screen {
   display: flex;
   flex-direction: column;
   justify-content: center;
+}
+.dashboard-kpi-info-card[hidden] {
+  display: none;
 }
 .dashboard-kpi-info-card span {
   font-size: 10.5px;
