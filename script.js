@@ -1822,6 +1822,16 @@
     return best.value;
   }
 
+  function normalizeSpkProductName(value) {
+    const productAliases = {
+      joliblisswildberry: "Jolibliss Wild Strawberry",
+    };
+    const cleanValue = String(value || "")
+      .trim()
+      .replace(/\s+/g, " ");
+    return productAliases[normalizedFuzzyText(cleanValue)] || cleanValue;
+  }
+
   function isMasterValue(category, value) {
     return Boolean(canonicalMasterValue(category, value));
   }
@@ -6901,9 +6911,9 @@
           const batchNo = String(row[indexes["NO BATCH"]] || "").trim();
           const merkText = String(row[indexes.MERK] || "").trim();
           const varianText = String(row[indexes.VARIAN] || "").trim();
-          const produkText = `${merkText} ${varianText}`
-            .trim()
-            .replace(/\s+/g, " ");
+          const produkText = normalizeSpkProductName(
+            `${merkText} ${varianText}`,
+          );
           // Pada merged header, SheetJS menyimpan nilai di sel pertama.
           // indexOf mengambil kolom pertama/paling kiri tersebut.
           const botolText = String(row[indexes["BOTOL (MILL)"]] || "").trim();
