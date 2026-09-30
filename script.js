@@ -135,8 +135,34 @@
   // agar input cepat berulang tidak saling berebut LockService di Apps Script.
   let writeQueue = Promise.resolve();
 
+  function isWriteLockBusyError(error) {
+    return /server sedang menerima input lain/i.test(
+      String(error?.message || error || ""),
+    );
+  }
+
+  async function runWriteWithRetry(task) {
+    const maximumAttempts = 3;
+    for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+      try {
+        return await task();
+      } catch (error) {
+        if (!isWriteLockBusyError(error) || attempt === maximumAttempts) {
+          throw error;
+        }
+        // Setiap request sudah menunggu lock di server. Jeda singkat dengan
+        // variasi kecil mencegah beberapa browser mencoba ulang bersamaan.
+        const retryDelay = attempt * 500 + Math.floor(Math.random() * 400);
+        await new Promise((resolve) => setTimeout(resolve, retryDelay));
+      }
+    }
+  }
+
   function enqueueWrite(task) {
-    const run = writeQueue.then(task, task);
+    const run = writeQueue.then(
+      () => runWriteWithRetry(task),
+      () => runWriteWithRetry(task),
+    );
     writeQueue = run.catch(() => {});
     return run;
   }
