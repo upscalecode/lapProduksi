@@ -1215,6 +1215,36 @@ button {
   margin: 0;
   cursor: pointer;
 }
+
+/* Tabel Daftar SPK: header seragam di tengah, identitas SPK tetap mudah dibaca di kiri. */
+.spk-list-panel .data-table thead th {
+  text-align: center;
+}
+
+.spk-list-panel #spkTableBody td {
+  text-align: center;
+}
+
+/* Jenis Pecah selalu sama dengan Botol pada baris pengerjaan. */
+.work-entry-table thead th:nth-child(9),
+.work-entry-table .f-tbody td:nth-child(9) {
+  display: none;
+}
+
+.work-entry-table thead th {
+  text-align: center;
+}
+
+.work-entry-table thead th:nth-child(-n + 5),
+.work-entry-table .f-tbody td:nth-child(-n + 5) {
+  text-align: left;
+}
+
+.work-entry-table thead th:nth-child(n + 6),
+.work-entry-table .f-tbody td:nth-child(n + 6) {
+  text-align: center;
+}
+
 .spk-footer-actions {
   display: flex;
   align-items: center;

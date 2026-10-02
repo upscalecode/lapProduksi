@@ -3069,7 +3069,9 @@
     const canEdit = !syncState && canEditEntry(entry);
     const canDelete = !syncState && canDeleteEntry(entry);
 
-    let idCell = `<span class="id-badge">${esc(entry.reportId)}</span>`;
+    // Prefix FILL/PRESS tetap tersimpan pada reportId untuk kebutuhan backend,
+    // tetapi daftar data tersimpan cukup menampilkan No Batch-nya.
+    let idCell = `<span class="id-badge">${esc(entryBatchNo(entry) || entry.reportId)}</span>`;
     if (isPending) {
       idCell =
         '<span class="sync-badge pending"><span class="sync-spinner"></span>Menyimpan…</span>';
@@ -12031,13 +12033,31 @@
       closePopup();
       const state = stateFor(table);
       const source = table.__excelData;
+      // Nilai pada dropdown mengikuti filter kolom lain yang sudah aktif.
+      // Contoh: setelah Operator dipilih, Produk/Botol hanya menampilkan
+      // kombinasi yang memang dikerjakan operator tersebut.
+      const sourceRows = source
+        ? source.rows.filter((row) =>
+            Array.from(state.filters.entries()).every(
+              ([filterIndex, selected]) =>
+                filterIndex === index ||
+                selected.has(
+                  String(source.columns[filterIndex]?.(row) ?? "").trim(),
+                ),
+            ),
+          )
+        : Array.from(table.tBodies[0]?.rows || []).filter((row) =>
+            Array.from(state.filters.entries()).every(
+              ([filterIndex, selected]) =>
+                filterIndex === index ||
+                selected.has(cellText(row.cells[filterIndex])),
+            ),
+          );
       const values = (source
-        ? source.rows.map((row) =>
+        ? sourceRows.map((row) =>
             String(source.columns[index]?.(row) ?? "").trim(),
           )
-        : Array.from(table.tBodies[0]?.rows || []).map((row) =>
-            cellText(row.cells[index]),
-          ))
+        : sourceRows.map((row) => cellText(row.cells[index])))
         .filter((value, position, list) => list.indexOf(value) === position)
         .sort((a, b) =>
           a.localeCompare(b, "id", { numeric: true, sensitivity: "base" }),
