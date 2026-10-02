@@ -1423,6 +1423,119 @@ button {
   flex-wrap: wrap;
 }
 
+/* Filter header tabel bergaya Excel */
+.excel-filter-header {
+  position: relative;
+  padding-right: 30px !important;
+}
+
+.excel-filter-btn {
+  position: absolute;
+  top: 50%;
+  right: 5px;
+  width: 21px;
+  height: 21px;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #718096;
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.excel-filter-btn:hover,
+.excel-filter-btn.is-sorted {
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.excel-filter-btn.is-filtered {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.excel-filter-popup {
+  position: fixed;
+  z-index: 4000;
+  width: min(290px, calc(100vw - 16px));
+  max-height: min(430px, calc(100vh - 16px));
+  padding: 10px;
+  overflow: hidden;
+  border: 1px solid #cbd5e1;
+  border-radius: 9px;
+  background: #fff;
+  box-shadow: 0 16px 38px rgba(15, 23, 42, 0.24);
+  color: #0f172a;
+  text-align: left;
+  font-size: 12px;
+}
+
+.excel-filter-sort {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.excel-filter-sort button {
+  padding: 7px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #334155;
+  cursor: pointer;
+}
+
+.excel-filter-search {
+  width: 100%;
+  min-height: 34px;
+  margin-bottom: 7px;
+  padding: 6px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+}
+
+.excel-filter-all,
+.excel-filter-values label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 3px;
+  cursor: pointer;
+}
+
+.excel-filter-all {
+  border-bottom: 1px solid #e2e8f0;
+  font-weight: 700;
+}
+
+.excel-filter-values {
+  max-height: 220px;
+  overflow: auto;
+  margin-bottom: 8px;
+}
+
+.excel-filter-values label:hover {
+  background: #f1f5f9;
+}
+
+.excel-filter-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.excel-filter-footer .btn {
+  min-height: 32px;
+  padding: 6px 10px;
+  font-size: 11px;
+}
+
 .page-btn {
   min-width: 34px;
   height: 34px;

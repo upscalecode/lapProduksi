@@ -123,6 +123,32 @@
   let fillingDowntimeDataReady = false;
   let fillingDowntimeDismissed = false;
 
+  function applyExcelDataFilter(table, rows, columns, rerender) {
+    if (!table) return rows;
+    const state = table.__excelFilterState;
+    table.__excelData = { rows, columns, rerender };
+    if (!state) return rows;
+    let result = rows.filter((row) =>
+      Array.from(state.filters.entries()).every(([index, selected]) =>
+        selected.has(String(columns[index]?.(row) ?? "").trim()),
+      ),
+    );
+    if (state.sort) {
+      const { index, direction } = state.sort;
+      const value = columns[index] || (() => "");
+      result = result.slice().sort((a, b) => {
+        const left = String(value(a) ?? "").trim();
+        const right = String(value(b) ?? "").trim();
+        const compared = left.localeCompare(right, "id", {
+          numeric: true,
+          sensitivity: "base",
+        });
+        return direction === "desc" ? -compared : compared;
+      });
+    }
+    return result;
+  }
+
   function maybeOpenFillingDowntimeModal() {
     if (
       fillingDowntimeAutoOpened ||
@@ -2722,13 +2748,30 @@
     const query = String(state.pressBalance.search || "")
       .trim()
       .toLowerCase();
-    const rows = query
+    const rowsBeforeExcelFilter = query
       ? allRows.filter((row) =>
           String(row.produk || "")
             .toLowerCase()
             .includes(query),
         )
       : allRows;
+    const rows = applyExcelDataFilter(
+      tbody.closest("table"),
+      rowsBeforeExcelFilter,
+      [
+        () => "",
+        (r) => r.batchNo,
+        (r) => r.produk,
+        (r) => r.botol,
+        (r) => r.qtyBotolPerKardus.join(" / "),
+        (r) => r.qtyFilling,
+        (r) => r.qtyPressTerpakai,
+        (r) => r.sisaKardus,
+        (r) => r.remaining,
+        (r) => r.source,
+      ],
+      renderPressBalance,
+    );
 
     const totalPages = Math.max(
       1,
@@ -3116,7 +3159,26 @@
     const saveBtn = qs(".f-save-btn", section);
     if (!tbody) return;
 
-    const rows = combinedWorkEntries(line);
+    const table = tbody.closest("table");
+    const rows = applyExcelDataFilter(
+      table,
+      combinedWorkEntries(line),
+      [
+        (e) => entryBatchNo(e) || e.reportId,
+        (e) => e.tanggal,
+        (e) => e.operator,
+        (e) => e.produk,
+        (e) => e.botol,
+        (e) => e.qtyKardus,
+        (e) => e.qtyBotolPerKardus,
+        (e) => e.totalQty,
+        (e) => e.botolPecahJenis,
+        (e) => e.qtyBotolPecah,
+        (e) => e.qtyKardusBasah,
+        (e) => e.updateCount,
+      ],
+      () => renderPreview(line),
+    );
     const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PAGE_SIZE));
     state.pages[line] = Math.min(Math.max(1, state.pages[line]), totalPages);
     const page = state.pages[line];
@@ -6576,7 +6638,7 @@
   function renderFillingSpkQueue() {
     const tbody = el("fillingSpkBody");
     if (!tbody) return;
-    const rows = (state.spkEntries || [])
+    const sourceRows = (state.spkEntries || [])
       .map((item) => ({
         ...item,
         usedQty: spkFillingUsedQty(item.batchNo),
@@ -6588,6 +6650,24 @@
           String(a.tanggal).localeCompare(String(b.tanggal)) ||
           compareSpkBatchNo(a.batchNo, b.batchNo),
       );
+    const rows = applyExcelDataFilter(
+      tbody.closest("table"),
+      sourceRows,
+      [
+        () => "",
+        (r) => r.batchNo,
+        (r) => r.produk,
+        (r) => r.botol,
+        (r) => {
+          const perDus = Number(r.qtyPerDus) || 0;
+          return perDus > 0 ? r.remainingQty / perDus : r.produksiDus;
+        },
+        (r) => r.qtyPerDus,
+        (r) => r.qty,
+        (r) => r.remainingQty,
+      ],
+      renderFillingSpkQueue,
+    );
     const pageSize = CONFIG.FILLING_SPK_PAGE_SIZE;
     const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
     state.spk.fillingPage = Math.min(
@@ -6790,7 +6870,7 @@
     const query = String(state.spk.query || "")
       .trim()
       .toLowerCase();
-    const rows = [...saved, ...preview].filter(
+    const rowsBeforeExcelFilter = [...saved, ...preview].filter(
       (item) =>
         !query ||
         String(item.batchNo || "")
@@ -6799,6 +6879,25 @@
         String(item.produk || "")
           .toLowerCase()
           .includes(query),
+    );
+    const rows = applyExcelDataFilter(
+      tbody.closest("table"),
+      rowsBeforeExcelFilter,
+      [
+        () => "",
+        (r) => r.batchNo,
+        (r) => r.tanggal,
+        (r) => r.produk,
+        (r) => r.botol,
+        (r) => {
+          const perDus = Number(r.qtyPerDus) || 0;
+          return perDus > 0 ? spkRemainingQty(r) / perDus : r.produksiDus;
+        },
+        (r) => r.qtyPerDus,
+        (r) => r.qty,
+        (r) => (r.preview ? "Preview" : "Tersimpan"),
+      ],
+      renderSpkToday,
     );
     const today = todayStr();
     const todayRowCount = [
@@ -7999,7 +8098,7 @@
 
   function renderLaporanRows() {
     if (!state.lastLaporan) return;
-    const rows = state.lastLaporan.rows;
+    const sourceRows = state.lastLaporan.rows;
     const tbody = el("lap-tbody");
     if (!tbody) return;
 
@@ -8015,6 +8114,24 @@
       `;
     }
 
+    const rows = applyExcelDataFilter(
+      table,
+      sourceRows,
+      [
+        (e) => entryBatchNo(e) || e.reportId,
+        (e) => laporanLineLabel(e.tab),
+        (e) => e.tanggal,
+        (e) => e.operator,
+        (e) => e.produk,
+        (e) => e.botol,
+        (e) => laporanQtyPerCartonDisplay(e),
+        (e) => e.qtyKardus,
+        (e) => e.totalQty,
+        (e) => laporanBrokenFilling(e),
+        (e) => laporanBrokenPress(e),
+      ],
+      renderLaporanRows,
+    );
     const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PAGE_SIZE));
     state.pages.laporan = Math.min(
       Math.max(1, state.pages.laporan),
@@ -10414,7 +10531,23 @@
   function renderSpkReport() {
     const tbody = el("lap-spk-tbody");
     if (!tbody) return;
-    const rows = spkReportRows();
+    const rows = applyExcelDataFilter(
+      tbody.closest("table"),
+      spkReportRows(),
+      [
+        (r) => r.batchNo,
+        (r) => r.tanggal,
+        (r) => r.produk,
+        (r) => r.botol,
+        (r) => r.produksiDus,
+        (r) => r.qtyPerDus,
+        (r) => r.qty,
+        (r) => r.createdBy,
+        (r) => r.createdAt,
+        (r) => r.updateCount,
+      ],
+      renderSpkReport,
+    );
     const totalPages = Math.max(1, Math.ceil(rows.length / 20));
     state.spk.reportPage = Math.min(
       Math.max(1, state.spk.reportPage || 1),
@@ -11795,6 +11928,278 @@
     }
   }
 
+  function initExcelTableFilters() {
+    if (document.body.dataset.excelFiltersReady === "1") return;
+    document.body.dataset.excelFiltersReady = "1";
+
+    const tableStates = new WeakMap();
+    let filtersVisible = true;
+    let activePopup = null;
+    let applying = false;
+
+    // Tabel operasional ini memakai kontrol pencarian/seleksi sendiri dan
+    // sengaja tidak menerima filter header Excel.
+    document
+      .querySelectorAll(
+        "#spkTableBody, #fillingSpkBody, .press-balance-tbody",
+      )
+      .forEach((body) => {
+        const table = body.closest("table");
+        if (table) table.dataset.excelFilterDisabled = "true";
+      });
+
+    const cellText = (cell) =>
+      String(cell?.textContent || "")
+        .replace(/\s+/g, " ")
+        .trim();
+
+    function stateFor(table) {
+      if (!tableStates.has(table)) {
+        const state = { filters: new Map(), sort: null };
+        tableStates.set(table, state);
+        table.__excelFilterState = state;
+      }
+      return tableStates.get(table);
+    }
+
+    function closePopup() {
+      activePopup?.remove();
+      activePopup = null;
+    }
+
+    function refreshButtons(table) {
+      const state = stateFor(table);
+      table.querySelectorAll("thead .excel-filter-btn").forEach((button) => {
+        const index = Number(button.dataset.columnIndex);
+        button.classList.toggle("is-filtered", state.filters.has(index));
+        button.classList.toggle(
+          "is-sorted",
+          Boolean(state.sort && state.sort.index === index),
+        );
+        button.hidden = !filtersVisible;
+      });
+    }
+
+    function applyTable(table) {
+      if (!table?.tBodies?.length) return;
+      // Tabel yang sudah terhubung ke sumber data difilter sebelum pagination
+      // melalui applyExcelDataFilter(). Jangan filter ulang dari teks DOM,
+      // karena angka tampilan seperti "1.000" berbeda dari nilai sumber 1000.
+      if (table.__excelData) {
+        refreshButtons(table);
+        return;
+      }
+      const state = stateFor(table);
+      const tbody = table.tBodies[0];
+      const rows = Array.from(tbody.rows);
+      applying = true;
+      try {
+        rows.forEach((row) => {
+          const visible = Array.from(state.filters.entries()).every(
+            ([index, selected]) => selected.has(cellText(row.cells[index])),
+          );
+          row.hidden = !visible;
+        });
+
+        if (state.sort) {
+          const { index, direction } = state.sort;
+          const sortedRows = rows.slice().sort((a, b) => {
+              const left = cellText(a.cells[index]);
+              const right = cellText(b.cells[index]);
+              const leftNumber = Number(left.replace(/[^0-9,.-]/g, "").replace(/\./g, "").replace(",", "."));
+              const rightNumber = Number(right.replace(/[^0-9,.-]/g, "").replace(/\./g, "").replace(",", "."));
+              const compared =
+                left && right && isFinite(leftNumber) && isFinite(rightNumber)
+                  ? leftNumber - rightNumber
+                  : left.localeCompare(right, "id", {
+                      numeric: true,
+                      sensitivity: "base",
+                    });
+              return direction === "desc" ? -compared : compared;
+            });
+          if (sortedRows.some((row, rowIndex) => row !== rows[rowIndex])) {
+            sortedRows.forEach((row) => tbody.appendChild(row));
+          }
+        }
+      } finally {
+        applying = false;
+      }
+      refreshButtons(table);
+    }
+
+    function openPopup(table, index, button) {
+      closePopup();
+      const state = stateFor(table);
+      const source = table.__excelData;
+      const values = (source
+        ? source.rows.map((row) =>
+            String(source.columns[index]?.(row) ?? "").trim(),
+          )
+        : Array.from(table.tBodies[0]?.rows || []).map((row) =>
+            cellText(row.cells[index]),
+          ))
+        .filter((value, position, list) => list.indexOf(value) === position)
+        .sort((a, b) =>
+          a.localeCompare(b, "id", { numeric: true, sensitivity: "base" }),
+        );
+      const selected = state.filters.get(index) || new Set(values);
+      const popup = document.createElement("div");
+      popup.className = "excel-filter-popup";
+      popup.innerHTML = `
+        <div class="excel-filter-sort">
+          <button type="button" data-sort="asc"><i class="fa-solid fa-arrow-down-a-z"></i> Urut Naik</button>
+          <button type="button" data-sort="desc"><i class="fa-solid fa-arrow-up-z-a"></i> Urut Turun</button>
+        </div>
+        <input type="search" class="excel-filter-search" placeholder="Cari nilai..." aria-label="Cari nilai filter">
+        <label class="excel-filter-all"><input type="checkbox" data-select-all> Pilih Semua</label>
+        <div class="excel-filter-values"></div>
+        <div class="excel-filter-footer">
+          <button type="button" class="btn btn-ghost" data-clear>Hapus Filter</button>
+          <button type="button" class="btn btn-primary" data-apply>Terapkan</button>
+        </div>`;
+      const valuesBox = popup.querySelector(".excel-filter-values");
+      valuesBox.innerHTML = values
+        .map(
+          (value, valueIndex) =>
+            `<label data-filter-value="${esc(value.toLowerCase())}"><input type="checkbox" value="${esc(value)}" ${selected.has(value) ? "checked" : ""}> <span>${esc(value || "(Kosong)")}</span></label>`,
+        )
+        .join("");
+      const selectAll = popup.querySelector("[data-select-all]");
+      const syncSelectAll = () => {
+        const boxes = Array.from(valuesBox.querySelectorAll("input"));
+        const checked = boxes.filter((item) => item.checked).length;
+        selectAll.checked = Boolean(boxes.length) && checked === boxes.length;
+        selectAll.indeterminate = checked > 0 && checked < boxes.length;
+      };
+      syncSelectAll();
+      selectAll.addEventListener("change", () => {
+        valuesBox.querySelectorAll("label:not([hidden]) input").forEach((item) => {
+          item.checked = selectAll.checked;
+        });
+        syncSelectAll();
+      });
+      valuesBox.addEventListener("change", syncSelectAll);
+      popup.querySelector(".excel-filter-search").addEventListener("input", (event) => {
+        const query = event.target.value.trim().toLowerCase();
+        valuesBox.querySelectorAll("label").forEach((label) => {
+          label.hidden = !String(label.dataset.filterValue || "").includes(query);
+        });
+      });
+      popup.querySelectorAll("[data-sort]").forEach((sortButton) => {
+        sortButton.addEventListener("click", () => {
+          state.sort = { index, direction: sortButton.dataset.sort };
+          if (table.__excelData?.rerender) table.__excelData.rerender();
+          else applyTable(table);
+          closePopup();
+        });
+      });
+      popup.querySelector("[data-clear]").addEventListener("click", () => {
+        state.filters.delete(index);
+        if (table.__excelData?.rerender) table.__excelData.rerender();
+        else applyTable(table);
+        closePopup();
+      });
+      popup.querySelector("[data-apply]").addEventListener("click", () => {
+        const checkedValues = new Set(
+          Array.from(valuesBox.querySelectorAll("input:checked")).map(
+            (item) => item.value,
+          ),
+        );
+        if (checkedValues.size === values.length) state.filters.delete(index);
+        else state.filters.set(index, checkedValues);
+        if (table.__excelData?.rerender) table.__excelData.rerender();
+        else applyTable(table);
+        closePopup();
+      });
+      document.body.appendChild(popup);
+      const rect = button.getBoundingClientRect();
+      const left = Math.min(
+        Math.max(8, rect.right - popup.offsetWidth),
+        window.innerWidth - popup.offsetWidth - 8,
+      );
+      popup.style.left = `${left}px`;
+      popup.style.top = `${Math.min(rect.bottom + 5, window.innerHeight - popup.offsetHeight - 8)}px`;
+      activePopup = popup;
+    }
+
+    function enhanceTable(table) {
+      if (!(table instanceof HTMLTableElement) || !table.tHead) return;
+      if (table.dataset.excelFilterDisabled === "true") return;
+      const headerRow = table.tHead.rows[table.tHead.rows.length - 1];
+      if (!headerRow) return;
+      Array.from(headerRow.cells).forEach((header, index) => {
+        if (header.querySelector(".excel-filter-btn")) return;
+        const title = cellText(header).toLowerCase();
+        if (
+          header.colSpan > 1 ||
+          !title ||
+          /^(aksi|foto|pilih|action)$/.test(title) ||
+          header.querySelector('input[type="checkbox"]')
+        )
+          return;
+        header.classList.add("excel-filter-header");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "excel-filter-btn";
+        button.dataset.columnIndex = String(index);
+        button.title = `Filter ${cellText(header)}`;
+        button.setAttribute("aria-label", button.title);
+        button.innerHTML = '<i class="fa-solid fa-filter"></i>';
+        button.addEventListener("click", (event) => {
+          event.stopPropagation();
+          openPopup(table, index, button);
+        });
+        header.appendChild(button);
+      });
+      applyTable(table);
+    }
+
+    const enhanceAll = (root = document) => {
+      if (root instanceof HTMLTableElement) enhanceTable(root);
+      root.querySelectorAll?.("table").forEach(enhanceTable);
+    };
+    enhanceAll();
+
+    const observer = new MutationObserver((mutations) => {
+      if (applying) return;
+      mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => {
+          if (!(node instanceof Element)) return;
+          enhanceAll(node);
+          const table = node.closest("table");
+          if (table) applyTable(table);
+        });
+      });
+    });
+    observer.observe(document.getElementById("appScreen") || document.body, {
+      childList: true,
+      subtree: true,
+    });
+
+    document.addEventListener("click", (event) => {
+      if (
+        activePopup &&
+        !activePopup.contains(event.target) &&
+        !event.target.closest?.(".excel-filter-btn")
+      )
+        closePopup();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.ctrlKey && event.shiftKey && event.key.toLowerCase() === "l") {
+        event.preventDefault();
+        filtersVisible = !filtersVisible;
+        closePopup();
+        document.querySelectorAll("table").forEach(refreshButtons);
+        toast(
+          filtersVisible
+            ? "Filter header tabel ditampilkan."
+            : "Filter header tabel disembunyikan.",
+        );
+      }
+      if (event.key === "Escape") closePopup();
+    });
+  }
+
   async function initAppPage() {
     if (!state.token) {
       window.location.replace("login.html");
@@ -11825,6 +12230,7 @@
     initInputDataCleanup();
     initSettingCards();
     initMasterData();
+    initExcelTableFilters();
 
     // Tampilkan aplikasi langsung memakai profil + master cache terakhir.
     // Validasi server tetap berjalan segera setelahnya.
