@@ -2867,6 +2867,7 @@ function buildPressAllocationModel_(entries, adjustments) {
       if (
         !event.targetBatchNo &&
         event.qtyBotolPerKardus > 0 &&
+        event.qtyBotolPerKardus !== 1 &&
         lot.qtyBotolPerKardus !== event.qtyBotolPerKardus
       )
         continue;
@@ -2984,6 +2985,7 @@ function decoratePressRemainders_(remainders, entries, adjustments) {
       ? lot.qtyBotolPerKardus
       : number_(item.qtyBotolPerKardus);
     return Object.assign({}, item, {
+      batchNo: lot ? lot.batchNo : String(item.batchNo || ""),
       qtyBotolPerKardus: perKardus,
     });
   });

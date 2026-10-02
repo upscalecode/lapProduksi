@@ -2226,6 +2226,13 @@
     );
   }
 
+  function pressQtyUnitMatchesLot(pressPerKardus, lotPerKardus) {
+    const pressUnit = Number(pressPerKardus) || 0;
+    // Botol/Kardus = 1 berarti Qty Pengerjaan berupa PCS, sehingga saldo
+    // mengikuti Produk + Botol tanpa wajib sama dengan ukuran kardus Filling.
+    return pressUnit === 1 || pressUnit === Number(lotPerKardus);
+  }
+
   function validatePressBatchAgainstSavedFilling(previewRows) {
     const pressRows = (previewRows || []).filter(
       (item) => item.tab === "press",
@@ -2253,6 +2260,7 @@
     );
 
     for (const press of allPress) {
+      const pressBatchNo = entryBatchNo(press);
       let needed = Math.max(
         0,
         Number(press.totalQty) ||
@@ -2269,16 +2277,25 @@
           balanceKey(press.produk, press.botol)
         )
           continue;
-        if (
-          Number(filling.qtyBotolPerKardus) !== Number(press.qtyBotolPerKardus)
-        )
+        const fillingBatchNo = String(filling.batchNo || "").trim();
+        if (pressBatchNo && fillingBatchNo) {
+          // Backend memakai No Batch sebagai target utama dan tidak memaksa
+          // ukuran kardus sama apabila kedua sisi mempunyai batch yang jelas.
+          if (pressBatchNo !== fillingBatchNo) continue;
+        } else if (
+          !pressQtyUnitMatchesLot(
+            press.qtyBotolPerKardus,
+            filling.qtyBotolPerKardus,
+          )
+        ) {
           continue;
+        }
         const used = Math.min(needed, filling.remaining);
         filling.remaining -= used;
         needed -= used;
       }
       if (needed > 0) {
-        return `Preview Press melebihi saldo Filling tersimpan untuk ${press.produk} / ${press.botol}. Kekurangan ${needed.toLocaleString("id-ID")} botol. Simpan Filling terlebih dahulu atau kurangi Qty Press.`;
+        return `Preview Press melebihi saldo Filling tersimpan untuk ${press.produk} / ${press.botol}${pressBatchNo ? ` / Batch ${pressBatchNo}` : ""}. Kekurangan ${needed.toLocaleString("id-ID")} botol. Pastikan saldo Sisa Press sudah diperbarui atau kurangi Qty Press.`;
       }
     }
     return "";
@@ -2546,7 +2563,7 @@
             balanceKey(lot.produk, lot.botol) === botolKey &&
             (pressBatchNo
               ? lot.batchNo === pressBatchNo
-              : Number(lot.qtyBotolPerKardus) === perKardus) &&
+              : pressQtyUnitMatchesLot(perKardus, lot.qtyBotolPerKardus)) &&
             (!lot.tanggalAsal || lot.tanggalAsal <= pressDate),
         )
         .sort(
@@ -2662,7 +2679,7 @@
           balanceKey(row.produk, row.botol) === balanceKey(produk, botol) &&
           (batchNo
             ? String(row.batchNo || "") === String(batchNo)
-            : Number(row.qtyBotolPerKardus[0]) === Number(perKardus)) &&
+            : pressQtyUnitMatchesLot(perKardus, row.qtyBotolPerKardus[0])) &&
           (!row.tanggalAsal || row.tanggalAsal <= pressDate),
       )
       .reduce((sum, row) => sum + (Number(row.remaining) || 0), 0);
@@ -2927,21 +2944,25 @@
         balanceKey(row.produk, row.botol) === balanceKey(produk, botol) &&
         (batchNo
           ? String(row.batchNo || "") === String(batchNo)
-          : Number(row.qtyBotolPerKardus[0]) === perKardus) &&
+          : pressQtyUnitMatchesLot(perKardus, row.qtyBotolPerKardus[0])) &&
         (!row.tanggalAsal || row.tanggalAsal <= pressDate),
     );
     const oldest = lots.length ? lots[0].tanggalAsal : "";
     const availableCartons = perKardus > 0 ? available / perKardus : 0;
+    const availabilityDetail =
+      perKardus === 1
+        ? `${available.toLocaleString("id-ID")} pcs`
+        : `${available.toLocaleString("id-ID")} botol (${availableCartons.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kardus × ${perKardus.toLocaleString("id-ID")} botol)`;
 
     hint.dataset.state = available > 0 ? "ok" : "empty";
     hint.textContent =
       available > 0
-        ? `Sisa Filling untuk ${produk} / ${botol}: ${available.toLocaleString("id-ID")} botol (${availableCartons.toLocaleString("id-ID", { maximumFractionDigits: 2 })} kardus × ${perKardus.toLocaleString("id-ID")} botol)` +
+        ? `Sisa Filling untuk ${produk} / ${botol}: ${availabilityDetail}` +
           (oldest && oldest < todayStr()
             ? ` · termasuk tinggalan sejak ${oldest}`
             : "") +
           "."
-        : `Press tidak dapat ditambahkan. Tidak ada sisa Filling untuk ${produk} / ${botol} (${perKardus.toLocaleString("id-ID")} botol/kardus) pada tanggal ${pressDate}.`;
+        : `Press tidak dapat ditambahkan. Tidak ada sisa Filling untuk ${produk} / ${botol}${perKardus === 1 ? " dalam satuan PCS" : ` (${perKardus.toLocaleString("id-ID")} botol/kardus)`} pada tanggal ${pressDate}.`;
   }
 
   function validatePressPayload(payload, editingId = "", editingSource = "") {
