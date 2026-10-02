@@ -1602,9 +1602,24 @@ body[data-page="login"] .login-screen {
 }
 .press-balance-actions {
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+  gap: 4px;
+  flex-wrap: nowrap;
   align-items: center;
+}
+
+.press-balance-actions .btn {
+  min-height: 0;
+  padding: 4px 7px;
+  border-radius: 6px;
+  font-size: 10px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.press-balance-panel .data-table th:last-child,
+.press-balance-panel .data-table td:last-child {
+  width: 132px;
+  min-width: 132px;
 }
 .press-balance-pagination {
   margin-left: auto;

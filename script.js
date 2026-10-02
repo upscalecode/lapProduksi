@@ -2351,18 +2351,23 @@
       .press-close-error{color:#b91c1c!important;margin:7px 0 0!important;min-height:18px}.press-close-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
       .press-balance-actions{
         display:flex;
-        gap:8px;
+        gap:4px;
         flex-wrap:nowrap;
         align-items:center;
         white-space:nowrap
       }
       .press-balance-actions .btn{
-        flex:0 0 auto
+        flex:0 0 auto;
+        min-height:0;
+        padding:4px 7px;
+        border-radius:6px;
+        font-size:10px;
+        line-height:1.15
       }
       .press-balance-panel .data-table th:last-child,
       .press-balance-panel .data-table td:last-child{
-        min-width:220px;
-        width:220px;
+        min-width:132px;
+        width:132px;
         white-space:nowrap
       }
       .press-product-name{
