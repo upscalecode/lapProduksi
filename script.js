@@ -50,7 +50,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbzpeYyhX2Ji2NOzsfQlzL27hR35-QpNciv1OpOhPUzPBZIGIFCGQTtzLXkoJ6WHFjrPyg/exec",
+      "https://script.google.com/macros/s/AKfycbwdOg8sc1qFHGL_VSKCBX7lTeGbiZhuJkHfgA-Jqx08dag7OGdbpdgVYzwqgmLDubEelw/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -376,15 +376,17 @@
   }
 
   function viewPage(view) {
-    return {
-      dashboard: "index.html",
-      spk: "spk.html",
-      filling: "filling.html",
-      press: "press.html",
-      apd: "apd.html",
-      laporan: "laporan.html",
-      master: "setting.html",
-    }[view] || "index.html";
+    return (
+      {
+        dashboard: "index.html",
+        spk: "spk.html",
+        filling: "filling.html",
+        press: "press.html",
+        apd: "apd.html",
+        laporan: "laporan.html",
+        master: "setting.html",
+      }[view] || "index.html"
+    );
   }
 
   function applyAccessControl() {
@@ -7880,7 +7882,11 @@
     const groups = new Map();
     rows.forEach((entry) => {
       const key = [entry.operator, entry.produk, entry.botol]
-        .map((value) => String(value || "").trim().toLocaleLowerCase("id"))
+        .map((value) =>
+          String(value || "")
+            .trim()
+            .toLocaleLowerCase("id"),
+        )
         .join("||");
       if (!groups.has(key)) {
         groups.set(key, {
@@ -7917,8 +7923,7 @@
         group._pressQty += Number(entry.totalQty) || 0;
         group._pressBroken += Number(entry.qtyBotolPecah) || 0;
       }
-      group._allPcs =
-        group._allPcs && Number(entry.qtyBotolPerKardus) === 1;
+      group._allPcs = group._allPcs && Number(entry.qtyBotolPerKardus) === 1;
       if (Number(entry.qtyBotolPerKardus) > 0) {
         group._qtyPerCartonValues.add(Number(entry.qtyBotolPerKardus));
       }
@@ -10738,8 +10743,9 @@
         Object.entries(exactFilters).every(
           ([field, value]) =>
             !value ||
-            String(entry[field] || "").trim().toLocaleLowerCase("id") ===
-              value.trim().toLocaleLowerCase("id"),
+            String(entry[field] || "")
+              .trim()
+              .toLocaleLowerCase("id") === value.trim().toLocaleLowerCase("id"),
         ),
       );
       rows = rows.filter((entry) => matchesLaporanSearch(entry, searchQuery));
@@ -11701,7 +11707,10 @@
         await writeQueue;
       }
     } catch (error) {
-      console.warn("Autosave gagal; data tetap tersimpan di preview lokal:", error);
+      console.warn(
+        "Autosave gagal; data tetap tersimpan di preview lokal:",
+        error,
+      );
     } finally {
       persistPreview();
       lastAutosaveAt = Date.now();
