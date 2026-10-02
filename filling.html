@@ -25,7 +25,7 @@
     ></script>
     <link
       rel="stylesheet"
-      href="style.css?v=20261002-v90-spk-pagination-actions"
+      href="style.css?v=20261002-v91-spk-pagination-order"
     />
 
     <style>
@@ -139,7 +139,7 @@
           </div>
         </header>
 
-                                                                                                                                                                                                                                                                                                                                                                                        <nav class="tabbar" id="mainTabbar">
+                                                                                                                                                                                                                                                                                                                                                                                                        <nav class="tabbar" id="mainTabbar">
           <button type="button" class="tab-btn" data-view="dashboard">DASHBOARD</button>
           <button type="button" class="tab-btn" data-view="spk">SPK</button>
           <button type="button" class="tab-btn active" data-view="filling">FILLING</button>
@@ -792,6 +792,11 @@
               <div class="table-footer">
                 <p class="table-summary" id="spkSummary">0 SPK hari ini</p>
                 <div class="spk-footer-actions">
+                  <div
+                    id="spkPagination"
+                    class="pagination"
+                    aria-label="Navigasi halaman SPK"
+                  ></div>
                   <button
                     type="button"
                     class="btn btn-danger"
@@ -801,11 +806,6 @@
                   >
                     <i class="fa-solid fa-trash"></i> Hapus Massal
                   </button>
-                  <div
-                    id="spkPagination"
-                    class="pagination"
-                    aria-label="Navigasi halaman SPK"
-                  ></div>
                   <button
                     type="button"
                     class="btn btn-primary"
@@ -2682,12 +2682,14 @@
       });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="script.js?v=20261002-v189-server-press-validation"></script>
+    <script src="script.js?v=20261002-v190-spk-batch-order"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>
   </body>
 </html>
+
+
 
 
 

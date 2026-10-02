@@ -2487,6 +2487,27 @@
     return match ? String(match[1] || "").trim() : "";
   }
 
+  function compareSpkBatchNo(a, b) {
+    const left = String(a || "").trim();
+    const right = String(b || "").trim();
+    const leftMatch = /^(\d+)-(\d{2})(\d{2})(\d{4})$/.exec(left);
+    const rightMatch = /^(\d+)-(\d{2})(\d{2})(\d{4})$/.exec(right);
+
+    if (leftMatch && rightMatch) {
+      const leftDate = `${leftMatch[4]}${leftMatch[3]}${leftMatch[2]}`;
+      const rightDate = `${rightMatch[4]}${rightMatch[3]}${rightMatch[2]}`;
+      return (
+        leftDate.localeCompare(rightDate) ||
+        Number(leftMatch[1]) - Number(rightMatch[1])
+      );
+    }
+
+    return left.localeCompare(right, "id", {
+      numeric: true,
+      sensitivity: "base",
+    });
+  }
+
   function getPressBalanceRows(options = {}) {
     const excludePreviewId = options.excludePreviewId || "";
     const lots = [];
@@ -2655,6 +2676,7 @@
           String(a.tanggalAsal || "").localeCompare(
             String(b.tanggalAsal || ""),
           ) ||
+          compareSpkBatchNo(a.batchNo, b.batchNo) ||
           a.produk.localeCompare(b.produk, "id") ||
           a.botol.localeCompare(b.botol, "id"),
       );
@@ -6564,7 +6586,7 @@
       .sort(
         (a, b) =>
           String(a.tanggal).localeCompare(String(b.tanggal)) ||
-          String(a.batchNo).localeCompare(String(b.batchNo)),
+          compareSpkBatchNo(a.batchNo, b.batchNo),
       );
     const pageSize = CONFIG.FILLING_SPK_PAGE_SIZE;
     const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
