@@ -2,6 +2,16 @@
    Laporan Produksi — Design tokens
    Palette: steel & safety-amber, industrial line-report feel
    =========================================================== */
+@view-transition {
+  navigation: auto;
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.12s;
+  animation-timing-function: ease-out;
+}
+
 .field {
   position: relative;
 }
@@ -551,6 +561,7 @@ button {
 }
 .tab-btn {
   appearance: none;
+  text-decoration: none;
   border: none;
   background: transparent;
   padding: 9px 18px;
@@ -569,6 +580,153 @@ button {
 .tab-btn:hover:not(.active) {
   background: #e9e6e6;
   color: var(--ink);
+}
+
+.laporan-filter-dropdown {
+  position: relative;
+  align-self: end;
+}
+
+.laporan-filter-dropdown > summary,
+.laporan-filter-dropdown > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  list-style: none;
+  white-space: nowrap;
+}
+
+.laporan-filter-dropdown > summary.laporan-filter-icon,
+.laporan-filter-dropdown > button.laporan-filter-icon {
+  position: relative;
+  justify-content: center;
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  padding: 0;
+}
+
+.laporan-filter-icon::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  z-index: 100;
+  bottom: calc(100% + 8px);
+  left: 0;
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: var(--ink);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.laporan-filter-icon:hover::after,
+.laporan-filter-icon:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.laporan-filter-icon.active {
+  background: var(--ink);
+  color: #fff;
+}
+
+.laporan-filter-dropdown > summary::-webkit-details-marker {
+  display: none;
+}
+
+.laporan-filter-chevron {
+  font-size: 11px;
+  transition: transform 0.18s ease;
+}
+
+.laporan-filter-dropdown[open] .laporan-filter-chevron {
+  transform: rotate(180deg);
+}
+
+.laporan-filter-dropdown-menu {
+  position: absolute;
+  z-index: 80;
+  top: calc(100% + 8px);
+  right: 0;
+  width: min(280px, calc(100vw - 32px));
+  padding: 14px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16);
+}
+
+.laporan-filter-dropdown-menu select {
+  width: 100%;
+}
+
+/* Laporan produksi harus menampilkan seluruh kolom tanpa scroll horizontal. */
+#lap-result .table-wrap {
+  overflow-x: hidden;
+}
+
+.laporan-result-table {
+  width: 100%;
+  min-width: 0 !important;
+  table-layout: fixed;
+}
+
+.laporan-result-table th,
+.laporan-result-table td {
+  min-width: 0 !important;
+  padding: 6px 4px;
+  font-size: clamp(8px, 0.72vw, 11px);
+  white-space: normal !important;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.laporan-result-table th {
+  line-height: 1.2;
+  text-align: center;
+  vertical-align: middle;
+}
+
+#lap-result .laporan-result-table thead th {
+  text-align: center !important;
+  vertical-align: middle;
+}
+
+.laporan-result-table td {
+  line-height: 1.25;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.laporan-result-table tbody td:nth-child(1),
+.laporan-result-table tbody td:nth-child(4),
+.laporan-result-table tbody td:nth-child(5) {
+  text-align: left;
+}
+
+.laporan-result-table .id-badge,
+.laporan-result-table .dashboard-kpi-percent {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+#lap-spk-tbody td {
+  text-align: center !important;
+  vertical-align: middle;
+}
+
+#lap-spk-tbody td:nth-child(1),
+#lap-spk-tbody td:nth-child(3),
+#lap-spk-tbody td:nth-child(4) {
+  text-align: left !important;
 }
 
 /* ---------- layout ---------- */
@@ -809,6 +967,28 @@ button {
 @media (min-width: 701px) {
   .report-stats[data-stat-count="5"] {
     grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+  .report-stats[data-stat-count="7"] {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 7px;
+  }
+  .report-stats[data-stat-count="6"] {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 7px;
+  }
+  .report-stats[data-stat-count="7"] .stat,
+  .report-stats[data-stat-count="6"] .stat {
+    min-width: 0;
+    padding: 9px 6px;
+  }
+  .report-stats[data-stat-count="7"] .stat-value,
+  .report-stats[data-stat-count="6"] .stat-value {
+    font-size: clamp(16px, 1.55vw, 22px);
+  }
+  .report-stats[data-stat-count="7"] .stat-label,
+  .report-stats[data-stat-count="6"] .stat-label {
+    font-size: 9px;
+    line-height: 1.25;
   }
 }
 .stat {

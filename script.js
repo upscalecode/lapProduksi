@@ -26,6 +26,11 @@
 (function () {
   "use strict";
 
+  let suppressNavigationLoading =
+    sessionStorage.getItem("lapInternalNavigation") === "1";
+  sessionStorage.removeItem("lapInternalNavigation");
+  let allAppViewsLoaded = false;
+
   const CONFIG = {
     URL_KEY: "ppr_apps_script_url_v4",
     URL_OVERRIDE_KEY: "ppr_apps_script_url_override_v1",
@@ -41,6 +46,7 @@
     PRESS_BALANCE_PAGE_SIZE: 10,
     DASHBOARD_PRIORITY_PAGE_SIZE: 6,
     DASHBOARD_PRESS_KPI_PAGE_SIZE: 7,
+    AUTOSAVE_INTERVAL_MS: 15 * 60 * 1000,
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
@@ -369,6 +375,18 @@
     return "";
   }
 
+  function viewPage(view) {
+    return {
+      dashboard: "index.html",
+      spk: "spk.html",
+      filling: "filling.html",
+      press: "press.html",
+      apd: "apd.html",
+      laporan: "laporan.html",
+      master: "setting.html",
+    }[view] || "index.html";
+  }
+
   function applyAccessControl() {
     const accessMap = {
       dashboard: can("accessDashboard"),
@@ -476,6 +494,11 @@
     const active = qs(".tab-btn.active");
     if (active && !accessMap[active.dataset.view]) {
       const fallback = firstAllowedView();
+      const activePage = document.body.dataset.activeView;
+      if (activePage && fallback && activePage !== fallback) {
+        window.location.replace(viewPage(fallback));
+        return;
+      }
       qsa(".tab-btn").forEach((btn) => {
         btn.classList.toggle("active", btn.dataset.view === fallback);
       });
@@ -817,7 +840,7 @@
     });
     if (withToken && state.token) query.set("token", state.token);
 
-    setConnection("loading", "Loading…");
+    if (!suppressNavigationLoading) setConnection("loading", "Loading…");
     try {
       const response = await fetchWithTimeout(`${base}?${query.toString()}`, {
         method: "GET",
@@ -1302,7 +1325,7 @@
     qsa("[id]", clone).forEach((node) => node.removeAttribute("id"));
     clone.id = "view-press";
     clone.dataset.line = "press";
-    clone.hidden = true;
+    clone.hidden = oldPress.hidden;
     qs(".filling-spk-panel", clone)?.remove();
     qsa("[data-line]", clone).forEach((node) => {
       node.dataset.line = "press";
@@ -7393,6 +7416,7 @@
   }
 
   function initDashboard() {
+    if (!el("view-dashboard")) return;
     /* =====================================================
      FILTER CHART DASHBOARD
      ===================================================== */
@@ -7605,9 +7629,14 @@
   function initTabs() {
     const tabbar = el("mainTabbar");
     if (!tabbar) return;
+    let handlingTabHistory = false;
     tabbar.addEventListener("click", (event) => {
       const btn = event.target.closest(".tab-btn");
       if (!btn || !state.currentUser) return;
+      if (btn.classList.contains("active")) {
+        event.preventDefault();
+        return;
+      }
       const view = btn.dataset.view;
       const permissionMap = {
         dashboard: "accessDashboard",
@@ -7628,7 +7657,18 @@
             ? can("accessMaster") || can("accessKpiSettings")
             : can(permisson))
       ) {
+        event.preventDefault();
         return;
+      }
+
+      if (btn.matches("a[href]")) {
+        event.preventDefault();
+        if (btn.classList.contains("active")) return;
+        if (!allAppViewsLoaded) {
+          sessionStorage.setItem("lapInternalNavigation", "1");
+          window.location.href = btn.href;
+          return;
+        }
       }
       // const allowed = view === "dashboard" ? can("accessDashboard")
       //   : view === "filling" ? can("accessFilling")
@@ -7650,7 +7690,83 @@
         window.refreshLaporanAutoPreview?.();
         window.refreshKpiLaporanAutoPreview?.();
       }
+      if (!handlingTabHistory) {
+        try {
+          history.pushState({ appTab: true, view }, "", `#${view}`);
+        } catch (error) {
+          console.debug("Riwayat tab tidak dapat diperbarui:", error);
+        }
+      }
     });
+
+    const initialView = qs(".tab-btn.active", tabbar)?.dataset.view;
+    if (initialView) {
+      try {
+        history.replaceState(
+          { appTab: true, view: initialView },
+          "",
+          `#${initialView}`,
+        );
+      } catch (_) {}
+    }
+
+    window.addEventListener("popstate", (event) => {
+      const view =
+        event.state?.appTab && event.state?.view
+          ? event.state.view
+          : window.location.hash.replace(/^#/, "");
+      const target = qs(`.tab-btn[data-view="${view}"]`, tabbar);
+      if (!target || target.classList.contains("active")) return;
+      handlingTabHistory = true;
+      target.click();
+      handlingTabHistory = false;
+    });
+
+    // Tombol samping mouse harus mengikuti urutan tab aplikasi, bukan membuka
+    // dokumen lama dari browser history. Button 3 = Previous, button 4 = Next.
+    let pendingMouseTabDirection = 0;
+    const mouseTabDirection = (event) =>
+      event.button === 3 ? -1 : event.button === 4 ? 1 : 0;
+    const preventMouseHistory = (event) => {
+      const direction = mouseTabDirection(event);
+      if (!direction) return;
+      event.preventDefault();
+      event.stopPropagation();
+      pendingMouseTabDirection = direction;
+    };
+    window.addEventListener("mousedown", preventMouseHistory, {
+      capture: true,
+      passive: false,
+    });
+    window.addEventListener(
+      "mouseup",
+      (event) => {
+        const direction = mouseTabDirection(event) || pendingMouseTabDirection;
+        if (!direction) return;
+        event.preventDefault();
+        event.stopPropagation();
+        pendingMouseTabDirection = 0;
+
+        const tabs = qsa(".tab-btn", tabbar).filter((node) => !node.hidden);
+        const currentIndex = tabs.findIndex((node) =>
+          node.classList.contains("active"),
+        );
+        if (currentIndex < 0) return;
+        const targetIndex = currentIndex + direction;
+        if (targetIndex < 0 || targetIndex >= tabs.length) return;
+        tabs[targetIndex].click();
+      },
+      { capture: true, passive: false },
+    );
+    window.addEventListener(
+      "auxclick",
+      (event) => {
+        if (!mouseTabDirection(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+      },
+      { capture: true, passive: false },
+    );
   }
 
   /* ------------------------- LAPORAN ------------------------- */
@@ -7685,6 +7801,153 @@
     return `<td><span class="dashboard-kpi-percent ${esc(column.tone)}">${kpiReportDisplay(entry[column.key])}</span></td>`;
   }
 
+  function laporanLineLabel(line) {
+    return line === "combined" ? "Filling + Press" : LINE_LABEL[line] || line;
+  }
+
+  function updateUniqueLaporanFilter(id, rows, field, placeholder) {
+    const select = el(id);
+    if (!select) return;
+    const current = select.value;
+    const uniqueValues = new Map();
+    rows.forEach((entry) => {
+      const value = String(entry?.[field] || "").trim();
+      const key = value.toLocaleLowerCase("id");
+      if (value && !uniqueValues.has(key)) uniqueValues.set(key, value);
+    });
+    const values = [...uniqueValues.values()].sort((a, b) =>
+      a.localeCompare(b, "id", { sensitivity: "base" }),
+    );
+    select.innerHTML =
+      `<option value="">${esc(placeholder)}</option>` +
+      values
+        .map((value) => `<option value="${esc(value)}">${esc(value)}</option>`)
+        .join("");
+    select.value = values.includes(current) ? current : "";
+    if (id === "lap-operator-filter") updateLaporanEmployeeFilterLabel();
+  }
+
+  function updateLaporanEmployeeFilterLabel() {
+    const select = el("lap-operator-filter");
+    const summary = el("lap-employee-filter-summary");
+    if (!select || !summary) return;
+    const label = select.value
+      ? `Filter Advance: ${select.value}`
+      : "Filter Advance";
+    summary.setAttribute("aria-label", label);
+    summary.dataset.tooltip = label;
+  }
+
+  function syncLaporanKeywordVisibility() {
+    const toggle = el("lap-employee-filter-summary");
+    const employeeWrap = el("lap-employee-filter-field");
+    const keywordWrap = el("lap-keyword-filter");
+    const keywordInput = el("lap-search");
+    const advancedActive = toggle?.getAttribute("aria-pressed") === "true";
+    toggle?.classList.toggle("active", advancedActive);
+    if (employeeWrap) employeeWrap.hidden = !advancedActive;
+    if (keywordWrap) keywordWrap.hidden = advancedActive;
+    if (advancedActive && keywordInput) keywordInput.value = "";
+  }
+
+  function aggregateLaporanRows(rows) {
+    const groups = new Map();
+    rows.forEach((entry) => {
+      const key = [entry.operator, entry.produk, entry.botol]
+        .map((value) => String(value || "").trim().toLocaleLowerCase("id"))
+        .join("||");
+      if (!groups.has(key)) {
+        groups.set(key, {
+          ...entry,
+          qtyKardus: 0,
+          totalQty: 0,
+          qtyBotolPecah: 0,
+          qtyKardusBasah: 0,
+          _dates: new Set(),
+          _batches: new Set(),
+          _apdValues: [],
+          _resultValues: [],
+          _lines: new Set(),
+          _fillingKardus: 0,
+          _fillingWet: 0,
+          _fillingBroken: 0,
+          _pressQty: 0,
+          _pressBroken: 0,
+          _qtyPerCartonValues: new Set(),
+          _allPcs: true,
+        });
+      }
+      const group = groups.get(key);
+      group.qtyKardus += Number(entry.qtyKardus) || 0;
+      group.totalQty += Number(entry.totalQty) || 0;
+      group.qtyBotolPecah += Number(entry.qtyBotolPecah) || 0;
+      group.qtyKardusBasah += Number(entry.qtyKardusBasah) || 0;
+      group._lines.add(entry.tab);
+      if (entry.tab === "filling") {
+        group._fillingKardus += Number(entry.qtyKardus) || 0;
+        group._fillingWet += Number(entry.qtyKardusBasah) || 0;
+        group._fillingBroken += Number(entry.qtyBotolPecah) || 0;
+      } else if (entry.tab === "press") {
+        group._pressQty += Number(entry.totalQty) || 0;
+        group._pressBroken += Number(entry.qtyBotolPecah) || 0;
+      }
+      group._allPcs =
+        group._allPcs && Number(entry.qtyBotolPerKardus) === 1;
+      if (Number(entry.qtyBotolPerKardus) > 0) {
+        group._qtyPerCartonValues.add(Number(entry.qtyBotolPerKardus));
+      }
+      if (entry.tanggal) group._dates.add(String(entry.tanggal));
+      const batch = entryBatchNo(entry);
+      if (batch) group._batches.add(String(batch));
+      if (Number.isFinite(Number(entry._kpiApd))) {
+        group._apdValues.push(Number(entry._kpiApd));
+      }
+      if (Number.isFinite(Number(entry._kpiResult))) {
+        group._resultValues.push(Number(entry._kpiResult));
+      }
+    });
+
+    return [...groups.values()].map((group) => {
+      const dates = [...group._dates].sort();
+      const batches = [...group._batches];
+      const lines = [...group._lines];
+      const isFilling = lines.length === 1 && lines[0] === "filling";
+      const isPress = lines.length === 1 && lines[0] === "press";
+      group.tab = lines.length === 1 ? lines[0] : "combined";
+      group.tanggal =
+        dates.length <= 1 ? dates[0] || "—" : `${dates[0]} – ${dates.at(-1)}`;
+      group.batchNo =
+        batches.length <= 1 ? batches[0] || "—" : `${batches.length} batch`;
+      group.reportId = group.batchNo;
+      const qtyPerCartonValues = [...group._qtyPerCartonValues];
+      group.qtyBotolPerKardus =
+        qtyPerCartonValues.length === 1 ? qtyPerCartonValues[0] : null;
+      group._kpiResult = averageKpiValues(group._resultValues);
+      group._kpiWetCarton = isPress
+        ? null
+        : kpiFillingSpillPercent(group._fillingWet, group._fillingKardus);
+      group._kpiBroken = isFilling
+        ? null
+        : kpiVariantDefectPercent(group._pressBroken, group._pressQty);
+      group._kpiApd = averageKpiValues(group._apdValues);
+      group.qtyBotolPecahFilling = group._fillingBroken;
+      group.qtyBotolPecahPress = group._pressBroken;
+      delete group._dates;
+      delete group._batches;
+      delete group._apdValues;
+      delete group._resultValues;
+      delete group._lines;
+      delete group._fillingKardus;
+      delete group._fillingWet;
+      delete group._fillingBroken;
+      delete group._pressQty;
+      delete group._pressBroken;
+      delete group._qtyPerCartonValues;
+      delete group._allPcs;
+      return group;
+    });
+  }
+
   function renderLaporanRows() {
     if (!state.lastLaporan) return;
     const rows = state.lastLaporan.rows;
@@ -7692,11 +7955,13 @@
     if (!tbody) return;
 
     const metricColumns = laporanMetricColumns(state.lastLaporan.line);
+    const showFillingBroken = state.lastLaporan.line !== "press";
+    const showPressBroken = state.lastLaporan.line !== "filling";
     const table = tbody.closest("table");
     const headerRow = table?.querySelector("thead tr");
     if (headerRow) {
       headerRow.innerHTML = `
-        <th>No Batch</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Kardus</th><th>Total Qty</th><th>Qty Pecah</th>
+        <th>No Batch</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Qty Botol (Kardus)</th><th>Pengerjaan</th><th>Total Qty</th>${showFillingBroken ? "<th>Botol Pecah Filling</th>" : ""}${showPressBroken ? "<th>Botol Pecah Press</th>" : ""}
         ${metricColumns.map((column) => `<th>${esc(column.label)}</th>`).join("")}
       `;
     }
@@ -7715,14 +7980,16 @@
         (e) => `
       <tr>
         <td><span class="id-badge">${esc(entryBatchNo(e) || e.reportId)}</span></td>
-        <td>${esc(LINE_LABEL[e.tab] || e.tab)}</td>
+        <td>${esc(laporanLineLabel(e.tab))}</td>
         <td>${esc(e.tanggal)}</td>
         <td>${esc(e.operator)}</td>
         <td>${esc(e.produk)}</td>
         <td>${esc(e.botol)}</td>
+        <td>${esc(laporanQtyPerCartonDisplay(e))}</td>
         <td>${(Number(e.qtyKardus) || 0).toLocaleString("id-ID")} ${laporanQtyUnit(e)}</td>
         <td><strong>${Number(e.totalQty) || 0}</strong></td>
-        <td>${Number(e.qtyBotolPecah) || 0}</td>
+        ${showFillingBroken ? `<td>${laporanBrokenFilling(e).toLocaleString("id-ID")}</td>` : ""}
+        ${showPressBroken ? `<td>${laporanBrokenPress(e).toLocaleString("id-ID")}</td>` : ""}
         ${metricColumns.map((column) => laporanMetricCellHtml(e, column)).join("")}
       </tr>`,
       )
@@ -7740,6 +8007,23 @@
 
   function laporanQtyUnit(entry) {
     return Number(entry.qtyBotolPerKardus) === 1 ? "Pcs" : "Kardus";
+  }
+
+  function laporanQtyPerCartonDisplay(entry) {
+    const value = Number(entry.qtyBotolPerKardus);
+    return value > 0 ? value.toLocaleString("id-ID") : "Beragam";
+  }
+
+  function laporanBrokenFilling(entry) {
+    return entry.tab === "filling"
+      ? Number(entry.qtyBotolPecah) || 0
+      : Number(entry.qtyBotolPecahFilling) || 0;
+  }
+
+  function laporanBrokenPress(entry) {
+    return entry.tab === "press"
+      ? Number(entry.qtyBotolPecah) || 0
+      : Number(entry.qtyBotolPecahPress) || 0;
   }
 
   function laporanQtyTotals(rows) {
@@ -7784,6 +8068,8 @@
       0,
     );
     const reportLine = String(state.lastLaporan.line || "all").toLowerCase();
+    const showFillingBroken = reportLine !== "press";
+    const showPressBroken = reportLine !== "filling";
     const fourthStatTotal =
       reportLine === "filling" ? totalKardusBasah : totalPecah;
     const fourthStatLabel =
@@ -7799,14 +8085,16 @@
         (e) => `
       <tr>
         <td class="mono">${esc(entryBatchNo(e) || e.reportId)}</td>
-        <td>${esc(LINE_LABEL[e.tab] || e.tab)}</td>
+        <td>${esc(laporanLineLabel(e.tab))}</td>
         <td>${esc(e.tanggal)}</td>
         <td>${esc(e.operator)}</td>
         <td class="wrap">${esc(e.produk)}</td>
         <td class="wrap">${esc(e.botol)}</td>
+        <td class="num">${esc(laporanQtyPerCartonDisplay(e))}</td>
         <td class="num">${(Number(e.qtyKardus) || 0).toLocaleString("id-ID")} ${laporanQtyUnit(e)}</td>
         <td class="num">${(Number(e.totalQty) || 0).toLocaleString("id-ID")}</td>
-        <td class="num">${(Number(e.qtyBotolPecah) || 0).toLocaleString("id-ID")}</td>
+        ${showFillingBroken ? `<td class="num">${laporanBrokenFilling(e).toLocaleString("id-ID")}</td>` : ""}
+        ${showPressBroken ? `<td class="num">${laporanBrokenPress(e).toLocaleString("id-ID")}</td>` : ""}
         ${metricColumns.map((column) => `<td class="num">${esc(kpiReportDisplay(e[column.key]))}</td>`).join("")}
       </tr>`,
       )
@@ -7880,7 +8168,7 @@
     <table>
       <thead>
         <tr>
-          <th>No Batch</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Qty (Kardus / Pcs)</th><th>Total Qty</th><th>Qty Pecah</th>${metricColumns.map((column) => `<th>${esc(column.label)}</th>`).join("")}
+          <th>No Batch</th><th>Line</th><th>Tanggal</th><th>Operator</th><th>Produk</th><th>Botol</th><th>Qty Botol (Kardus)</th><th>Pengerjaan</th><th>Total Qty</th>${showFillingBroken ? "<th>Botol Pecah Filling</th>" : ""}${showPressBroken ? "<th>Botol Pecah Press</th>" : ""}${metricColumns.map((column) => `<th>${esc(column.label)}</th>`).join("")}
         </tr>
       </thead>
       <tbody>${bodyRows}</tbody>
@@ -10385,6 +10673,10 @@
     if (!generate) return;
 
     let previewTimer = null;
+    // Browser dapat memulihkan nilai <select> setelah refresh. Laporan harus
+    // selalu dimulai dalam mode per pengerjaan sampai pengguna memilih sendiri.
+    if (el("lap-operator-filter")) el("lap-operator-filter").value = "";
+    updateLaporanEmployeeFilterLabel();
 
     function updatePeriodInputs() {
       const mode = el("lap-period-mode")?.value || "";
@@ -10405,9 +10697,26 @@
 
       // Laporan hanya memakai data yang sudah benar-benar dikonfirmasi Spreadsheet.
       let rows = state.reportEntries.filter((e) => !e._syncState);
-      rows = rows.filter((entry) => matchesLaporanSearch(entry, searchQuery));
       if (line !== "all") rows = rows.filter((e) => e.tab === line);
       rows = rows.filter((e) => dashboardDateInPeriod(e.tanggal, period));
+      updateUniqueLaporanFilter(
+        "lap-operator-filter",
+        rows,
+        "operator",
+        "Semua Karyawan",
+      );
+      const exactFilters = {
+        operator: String(el("lap-operator-filter")?.value || "").trim(),
+      };
+      rows = rows.filter((entry) =>
+        Object.entries(exactFilters).every(
+          ([field, value]) =>
+            !value ||
+            String(entry[field] || "").trim().toLocaleLowerCase("id") ===
+              value.trim().toLocaleLowerCase("id"),
+        ),
+      );
+      rows = rows.filter((entry) => matchesLaporanSearch(entry, searchQuery));
       rows.sort((a, b) => String(a.tanggal).localeCompare(String(b.tanggal)));
 
       if (!rows.length) return { rows: [], period, line };
@@ -10461,6 +10770,11 @@
         };
       });
 
+      // Tampilan awal tetap satu baris per pengerjaan. Agregasi baru digunakan
+      // ketika pengguna secara khusus memilih Nama Karyawan.
+      const hasEmployeeFilter = exactFilters.operator.length > 0;
+      if (hasEmployeeFilter) rows = aggregateLaporanRows(rows);
+
       return { rows, period, line };
     }
 
@@ -10503,41 +10817,38 @@
         .reduce((sum, e) => sum + (Number(e.totalQty) || 0), 0)
         .toLocaleString("id-ID");
 
-      // Kartu ringkasan ke-4 mengikuti line yang dipilih:
-      // Filling = Total Kardus Basah, Press = Total Botol Pecah.
-      // Pada Semua Line kartu ke-4 disembunyikan agar tidak menampilkan total
-      // Botol Pecah yang hanya relevan untuk line Press.
-      // ID value lama dipertahankan agar fitur lain tidak terganggu.
-      const fourthStatValue = el("lap-total-pecah");
-      const fourthStatLabel = el("lap-total-fourth-label");
-      const fourthStatCard =
-        el("lap-total-fourth-stat") || fourthStatValue?.closest(".stat");
-      const reportStats = fourthStatCard?.closest(".report-stats");
+      const qualityTotals = rows.reduce(
+        (totals, entry) => {
+          totals.fillingBroken +=
+            entry.tab === "filling"
+              ? Number(entry.qtyBotolPecah) || 0
+              : Number(entry.qtyBotolPecahFilling) || 0;
+          totals.pressBroken +=
+            entry.tab === "press"
+              ? Number(entry.qtyBotolPecah) || 0
+              : Number(entry.qtyBotolPecahPress) || 0;
+          totals.wetCarton += Number(entry.qtyKardusBasah) || 0;
+          return totals;
+        },
+        { fillingBroken: 0, pressBroken: 0, wetCarton: 0 },
+      );
+      el("lap-total-pecah-filling").textContent =
+        qualityTotals.fillingBroken.toLocaleString("id-ID");
+      el("lap-total-pecah-press").textContent =
+        qualityTotals.pressBroken.toLocaleString("id-ID");
+      el("lap-total-kardus-basah").textContent =
+        qualityTotals.wetCarton.toLocaleString("id-ID");
 
-      if (fourthStatCard) fourthStatCard.hidden = line === "all";
-      if (reportStats)
-        reportStats.dataset.statCount = line === "all" ? "4" : "5";
-
-      if (line === "filling") {
-        const totalKardusBasah = rows.reduce(
-          (sum, e) => sum + (Number(e.qtyKardusBasah) || 0),
-          0,
-        );
-        if (fourthStatValue)
-          fourthStatValue.textContent =
-            totalKardusBasah.toLocaleString("id-ID");
-        if (fourthStatLabel) fourthStatLabel.textContent = "Total Kardus Basah";
-      } else if (line === "press") {
-        const totalPecah = rows.reduce(
-          (sum, e) => sum + (Number(e.qtyBotolPecah) || 0),
-          0,
-        );
-        if (fourthStatValue)
-          fourthStatValue.textContent = totalPecah.toLocaleString("id-ID");
-        if (fourthStatLabel) fourthStatLabel.textContent = "Total Botol Pecah";
-      } else {
-        if (fourthStatValue) fourthStatValue.textContent = "0";
-        if (fourthStatLabel) fourthStatLabel.textContent = "Total Botol Pecah";
+      const fillingDamageCard = el("lap-stat-pecah-filling");
+      const pressDamageCard = el("lap-stat-pecah-press");
+      const wetCartonCard = el("lap-stat-kardus-basah");
+      const reportStats = fillingDamageCard?.closest(".report-stats");
+      if (fillingDamageCard) fillingDamageCard.hidden = line === "press";
+      if (pressDamageCard) pressDamageCard.hidden = line === "filling";
+      if (wetCartonCard) wetCartonCard.hidden = line === "press";
+      if (reportStats) {
+        reportStats.dataset.statCount =
+          line === "press" ? "5" : line === "filling" ? "6" : "7";
       }
 
       renderLaporanRows();
@@ -10573,6 +10884,23 @@
     el("lap-line")?.addEventListener("change", () => scheduleAutoPreview(0));
     el("lap-search")?.addEventListener("input", () => scheduleAutoPreview(180));
     el("lap-search")?.addEventListener("change", () => scheduleAutoPreview(0));
+    el("lap-operator-filter")?.addEventListener("change", () => {
+      updateLaporanEmployeeFilterLabel();
+      syncLaporanKeywordVisibility();
+      scheduleAutoPreview(0);
+    });
+    el("lap-employee-filter-summary")?.addEventListener("click", () => {
+      const toggle = el("lap-employee-filter-summary");
+      const opening = toggle?.getAttribute("aria-pressed") !== "true";
+      if (toggle) toggle.setAttribute("aria-pressed", String(opening));
+      if (!opening && el("lap-operator-filter")) {
+        el("lap-operator-filter").value = "";
+        updateLaporanEmployeeFilterLabel();
+      }
+      syncLaporanKeywordVisibility();
+      scheduleAutoPreview(0);
+    });
+    syncLaporanKeywordVisibility();
     ["lap-date", "lap-month", "lap-year", "lap-start", "lap-end"].forEach(
       (id) => {
         el(id)?.addEventListener("input", () => scheduleAutoPreview(120));
@@ -10604,6 +10932,8 @@
         );
       }
       const metricColumns = laporanMetricColumns(state.lastLaporan.line);
+      const showFillingBroken = state.lastLaporan.line !== "press";
+      const showPressBroken = state.lastLaporan.line !== "filling";
       const csv = toCSV(
         [
           "ID Laporan",
@@ -10613,24 +10943,28 @@
           "Operator",
           "Produk",
           "Botol",
+          "Qty Botol (Kardus)",
           "Qty Pengerjaan",
           "Satuan",
           "Total Qty",
-          "Qty Pecah",
+          ...(showFillingBroken ? ["Botol Pecah Filling"] : []),
+          ...(showPressBroken ? ["Botol Pecah Press"] : []),
           ...metricColumns.map((column) => column.label),
         ],
         state.lastLaporan.rows.map((e) => [
           state.lastLaporan.id,
           e.reportId,
-          LINE_LABEL[e.tab],
+          laporanLineLabel(e.tab),
           e.tanggal,
           e.operator,
           e.produk,
           e.botol,
+          laporanQtyPerCartonDisplay(e),
           e.qtyKardus,
           laporanQtyUnit(e),
           e.totalQty,
-          e.qtyBotolPecah,
+          ...(showFillingBroken ? [laporanBrokenFilling(e)] : []),
+          ...(showPressBroken ? [laporanBrokenPress(e)] : []),
           ...metricColumns.map((column) => kpiReportDisplay(e[column.key])),
         ]),
       );
@@ -11284,6 +11618,130 @@
     });
   }
 
+  let autosaveRunning = false;
+  let lastAutosaveAt = Date.now();
+
+  async function runAutosave() {
+    if (autosaveRunning || !state.currentUser) return;
+    autosaveRunning = true;
+
+    try {
+      // Cadangan lokal selalu diperbarui, termasuk ketika perangkat sedang
+      // offline. Form yang belum masuk Preview juga tetap dapat dipulihkan.
+      persistPreview();
+      saveFormDraft("filling", qs("#fillingFormPopup .form-panel"));
+      saveFormDraft("press", qs("#pressFormPopup .form-panel"));
+
+      if (navigator.onLine === false) return;
+
+      const spkButton = el("spkSaveButton");
+      const fillingButton = qs("#view-filling .f-save-btn");
+      const apdButton = el("apdSaveBtn");
+
+      if (
+        canLevel("spk", "write") &&
+        state.preview.spk?.length &&
+        !spkButton?.disabled
+      ) {
+        spkButton?.click();
+      }
+      if (
+        canLevel("filling", "write") &&
+        state.preview.filling?.length &&
+        !fillingButton?.disabled
+      ) {
+        fillingButton?.click();
+      }
+      if (
+        canLevel("apd", "write") &&
+        state.preview.apd?.length &&
+        !apdButton?.disabled
+      ) {
+        apdButton?.click();
+      }
+
+      // Tunggu SPK/Filling/APD selesai. Press bergantung pada saldo Filling
+      // tersimpan sehingga tidak boleh dimulai dalam waktu yang bersamaan.
+      await writeQueue;
+
+      const pressButton = qs("#view-press .f-save-btn");
+      if (
+        state.preview.press?.length &&
+        !state.preview.filling?.length &&
+        canLevel("press", "write") &&
+        !pressButton?.disabled
+      ) {
+        pressButton?.click();
+        await writeQueue;
+      }
+    } catch (error) {
+      console.warn("Autosave gagal; data tetap tersimpan di preview lokal:", error);
+    } finally {
+      persistPreview();
+      lastAutosaveAt = Date.now();
+      autosaveRunning = false;
+    }
+  }
+
+  function initAutosave() {
+    window.setInterval(runAutosave, CONFIG.AUTOSAVE_INTERVAL_MS);
+    document.addEventListener("visibilitychange", () => {
+      // Jika interval terlewat karena tab browser ditidurkan, jalankan saat
+      // pengguna kembali tanpa menunggu 15 menit berikutnya.
+      if (
+        document.visibilityState === "visible" &&
+        Date.now() - lastAutosaveAt >= CONFIG.AUTOSAVE_INTERVAL_MS
+      ) {
+        runAutosave();
+      }
+    });
+  }
+
+  async function preloadAppViews() {
+    const content = qs(".content");
+    if (!content) return false;
+
+    const pages = {
+      dashboard: "index.html",
+      spk: "spk.html",
+      filling: "filling.html",
+      press: "press.html",
+      apd: "apd.html",
+      laporan: "laporan.html",
+      master: "setting.html",
+    };
+    const missing = Object.entries(pages).filter(
+      ([view]) => !el("view-" + view),
+    );
+    if (!missing.length) {
+      allAppViewsLoaded = true;
+      return true;
+    }
+
+    try {
+      const loaded = await Promise.all(
+        missing.map(async ([view, url]) => {
+          const response = await fetch(url, { cache: "force-cache" });
+          if (!response.ok) throw new Error(`Gagal memuat ${url}`);
+          const documentPage = new DOMParser().parseFromString(
+            await response.text(),
+            "text/html",
+          );
+          const section = documentPage.getElementById("view-" + view);
+          if (!section) throw new Error(`View ${view} tidak ditemukan`);
+          section.hidden = true;
+          return section;
+        }),
+      );
+      loaded.forEach((section) => content.appendChild(section));
+      allAppViewsLoaded = true;
+      return true;
+    } catch (error) {
+      console.warn("Mode tab instan tidak tersedia:", error);
+      return false;
+    }
+  }
+
   async function initAppPage() {
     if (!state.token) {
       window.location.replace("login.html");
@@ -11294,6 +11752,7 @@
     // Reset Password, dan Hapus tetap aktif meski modul lain gagal inisialisasi.
     initUserManagement();
     initLogout();
+    initAutosave();
 
     buildPressView();
     buildFillingPopup();
@@ -11345,7 +11804,10 @@
           el("spkOpenButton").hidden = !canLevel("spk", "write");
         renderDashboard();
         el("appScreen").hidden = false;
-        setConnection("loading", "Menyegarkan data…");
+        setConnection(
+          suppressNavigationLoading ? "online" : "loading",
+          suppressNavigationLoading ? "Aktif" : "Menyegarkan data…",
+        );
       }
     } catch (_) {}
 
@@ -11562,12 +12024,17 @@
       applyResponsiveMode();
     }
 
-    document.addEventListener("DOMContentLoaded", () => {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", initDashboardSlider, {
+        once: true,
+      });
+    } else {
       initDashboardSlider();
-    });
+    }
     try {
       // Profil, master, dan data awal dimuat bersama dalam satu request.
       await loadAppData(true);
+      suppressNavigationLoading = false;
       if (state.currentUser) {
         localStorage.setItem(
           CONFIG.USER_KEY,
@@ -11601,5 +12068,8 @@
   }
 
   if (pageType === "login") initLoginPage();
-  else initAppPage();
+  else
+    preloadAppViews().finally(() => {
+      initAppPage();
+    });
 })();

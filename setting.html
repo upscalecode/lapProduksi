@@ -89,7 +89,7 @@
       }
     </style>
   </head>
-  <body data-page="app" data-active-view="dashboard">
+  <body data-page="app" data-active-view="master">
     <div id="startupError" class="panel" role="alert" hidden>
       <p>Data awal belum berhasil dimuat.</p>
       <p id="startupErrorMessage" class="hint-text"></p>
@@ -140,18 +140,18 @@
         </header>
 
                                                                                                                                                                                                                                                                                                                                                 <nav class="tabbar" id="mainTabbar">
-          <button type="button" class="tab-btn active" data-view="dashboard">DASHBOARD</button>
+          <button type="button" class="tab-btn" data-view="dashboard">DASHBOARD</button>
           <button type="button" class="tab-btn" data-view="spk">SPK</button>
           <button type="button" class="tab-btn" data-view="filling">FILLING</button>
           <button type="button" class="tab-btn" data-view="press">PRESS</button>
           <button type="button" class="tab-btn" data-view="apd">APD</button>
           <button type="button" class="tab-btn" data-view="laporan">LAPORAN</button>
-          <button type="button" class="tab-btn" data-view="master" id="masterTabBtn" hidden>SETTING</button>
+          <button type="button" class="tab-btn active" data-view="master" id="masterTabBtn" hidden>SETTING</button>
         </nav>
       </div>
 
       <main class="content">
-        <section class="view dashboard-view" id="view-dashboard">
+        <section class="view dashboard-view" id="view-dashboard" hidden>
           <div class="dashboard-shell">
             <div class="dashboard-heading">
               <div>
@@ -1992,7 +1992,7 @@
           </div>
         </section>
 
-        <section class="view" id="view-master" hidden>
+        <section class="view" id="view-master">
           <div class="master-layout">
             <section class="panel">
               <div class="panel-head"><h2>Data Master</h2></div>
