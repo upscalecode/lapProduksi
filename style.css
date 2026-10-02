@@ -1225,6 +1225,26 @@ button {
   text-align: center;
 }
 
+.spk-status-badge {
+  display: inline-block;
+  min-width: 66px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.spk-status-badge.urgent { background: var(--danger); }
+.spk-status-badge.stock { background: #3b82f6; }
+.spk-status-badge.normal { background: #f2b630; color: #342400; }
+.spk-status-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Jenis Pecah selalu sama dengan Botol pada baris pengerjaan. */
 .work-entry-table thead th:nth-child(9),
 .work-entry-table .f-tbody td:nth-child(9) {
@@ -4297,6 +4317,41 @@ button {
   font-weight: 800;
   letter-spacing: 0.1em;
   text-transform: uppercase;
+}
+
+.damage-detail-card {
+  position: relative;
+  cursor: help;
+}
+
+.damage-detail-card::after {
+  content: attr(data-damage-tooltip);
+  position: absolute;
+  z-index: 300;
+  left: 50%;
+  bottom: calc(100% + 9px);
+  width: max-content;
+  max-width: min(310px, calc(100vw - 24px));
+  padding: 9px 11px;
+  border-radius: 7px;
+  background: #17212b;
+  color: #fff;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.25);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.45;
+  text-align: left;
+  white-space: pre-line;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, 4px);
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.damage-detail-card:hover::after,
+.damage-detail-card:focus-visible::after {
+  opacity: 1;
+  transform: translate(-50%, 0);
 }
 .delete-confirm-content h3 {
   font-size: 20px;

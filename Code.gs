@@ -124,6 +124,7 @@ const APP = {
     "Dibuat Pada",
     "Di-update Pada",
     "Jumlah Update",
+    "Status",
   ],
   APD_HEADERS: [
     "Tanggal",
@@ -3721,6 +3722,7 @@ function getSpkEntries_() {
         createdAt: isoCell_(row[8]),
         updatedAt: isoCell_(row[9]),
         updateCount: Math.max(0, Math.floor(number_(row[10]))),
+        status: String(row[11] || "normal").trim().toLowerCase(),
       };
     });
 }
@@ -3767,6 +3769,7 @@ function createSpk_(user, data) {
     now.toISOString(),
     previewUpdatedAt,
     previewUpdateCount,
+    String(data.status || "normal").trim().toLowerCase(),
   ];
   ensureSpkSheet_(spreadsheet_()).appendRow(row);
   return {
@@ -3781,6 +3784,7 @@ function createSpk_(user, data) {
     createdAt: now.toISOString(),
     updatedAt: previewUpdatedAt,
     updateCount: previewUpdateCount,
+    status: String(data.status || "normal").trim().toLowerCase(),
   };
 }
 
@@ -3891,6 +3895,7 @@ function createSpkEntriesBatch_(user, dataList) {
       createdAt: nowIso,
       updatedAt: updatedAt,
       updateCount: updateCount,
+      status: String(data.status || "normal").trim().toLowerCase(),
     };
     saved.push(item);
     return [
@@ -3905,6 +3910,7 @@ function createSpkEntriesBatch_(user, dataList) {
       item.createdAt,
       item.updatedAt,
       item.updateCount,
+      item.status || "normal",
     ];
   });
   sh.getRange(
@@ -3989,6 +3995,7 @@ function updateSpk_(user, batchNo, data) {
     createdAt: isoCell_(found.values[8]),
     updatedAt: updatedAt,
     updateCount: updateCount,
+    status: String(found.values[11] || "normal").trim().toLowerCase(),
   };
 }
 

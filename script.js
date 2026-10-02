@@ -50,7 +50,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbwdOg8sc1qFHGL_VSKCBX7lTeGbiZhuJkHfgA-Jqx08dag7OGdbpdgVYzwqgmLDubEelw/exec",
+      "https://script.google.com/macros/s/AKfycbxRskkCGPvBsVHj6HPGN54olNl-JA6pdWt2O7epx45I-JjSgTem1lMUrZb5z-HKc22eSg/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -6856,6 +6856,13 @@
     renderFillingSpkQueue();
   }
 
+  function spkStatusBadge(status, isPreview) {
+    const value = String(status || "normal").toLowerCase();
+    const label =
+      value === "urgent" ? "URGENT" : value === "stock" ? "STOCK" : "NORMAL";
+    return `<span class="spk-status-cell"><span class="spk-status-badge ${esc(value)}">${label}</span></span>`;
+  }
+
   function renderSpkToday() {
     const tbody = el("spkTableBody");
     if (!tbody) return;
@@ -6935,7 +6942,7 @@
       <td><strong>${remainingProductionDus.toLocaleString("id-ID", { maximumFractionDigits: 2 })}</strong></td>
       <td>${qtyPerDus.toLocaleString("id-ID")}</td>
       <td>${Math.max(0, Number(item.qty) || 0).toLocaleString("id-ID")}</td>
-      <td><span class="sync-badge ${item.preview ? "pending" : "saved"}">${item.preview ? "Preview" : "Tersimpan"}</span></td>
+      <td>${spkStatusBadge(item.status, item.preview)}</td>
       <td class="row-actions">
         ${item.preview || canManageSpk(item) ? `<button type="button" class="btn btn-ghost spk-edit" data-source="${item.preview ? "preview" : "saved"}" data-key="${esc(item.preview ? item.id : item.batchNo)}">Update</button>` : ""}
         ${item.preview || canManageSpk(item) ? `<button type="button" class="btn btn-danger spk-delete" data-source="${item.preview ? "preview" : "saved"}" data-key="${esc(item.preview ? item.id : item.batchNo)}">Hapus</button>` : ""}
@@ -7120,6 +7127,13 @@
             row[indexes["QTY/DUS (PCS/DUS)"]] || "",
           ).trim();
           const lineNo = headerRowIndex + rowIndex + 2;
+          const importStatus = (row || []).some((cell) =>
+            /URGENT/i.test(String(cell || "")),
+          )
+            ? "urgent"
+            : (row || []).some((cell) => /STOCK/i.test(String(cell || "")))
+              ? "stock"
+              : "normal";
           const batchKey = batchNo.toLowerCase();
           if (existingBatchNos.has(batchKey)) {
             throw new Error(`Baris ${lineNo}: NO BATCH ${batchNo} sudah ada.`);
@@ -7175,6 +7189,7 @@
             createdAt: nowIso(),
             updatedAt: "",
             updateCount: 0,
+            status: importStatus,
           });
         });
         if (!imported.length)
@@ -7536,6 +7551,7 @@
                 0,
                 Math.floor(Number(item.updateCount) || 0),
               ),
+              status: item.status || "normal",
             })),
           }),
         );
@@ -11027,6 +11043,34 @@
       const fillingDamageCard = el("lap-stat-pecah-filling");
       const pressDamageCard = el("lap-stat-pecah-press");
       const wetCartonCard = el("lap-stat-kardus-basah");
+      const buildDamageDetail = (label, valueForEntry) => {
+        const byBottle = new Map();
+        rows.forEach((entry) => {
+          const qty = Math.max(0, Number(valueForEntry(entry)) || 0);
+          if (!qty) return;
+          const bottle = String(entry.botol || "Botol tidak diketahui").trim();
+          byBottle.set(bottle, (byBottle.get(bottle) || 0) + qty);
+        });
+        const details = Array.from(byBottle.entries())
+          .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "id"))
+          .map(([bottle, qty]) => `${bottle}: ${qty.toLocaleString("id-ID")} botol`);
+        return `${label} (${period.label})\n${details.length ? details.join("\n") : "Tidak ada botol pecah."}`;
+      };
+      const setDamageTooltip = (card, detail) => {
+        if (!card) return;
+        card.classList.add("damage-detail-card");
+        card.dataset.damageTooltip = detail;
+        card.setAttribute("tabindex", "0");
+        card.setAttribute("aria-label", detail.replace(/\n/g, ". "));
+      };
+      setDamageTooltip(
+        fillingDamageCard,
+        buildDamageDetail("Detail Botol Pecah Filling", laporanBrokenFilling),
+      );
+      setDamageTooltip(
+        pressDamageCard,
+        buildDamageDetail("Detail Botol Pecah Press", laporanBrokenPress),
+      );
       const reportStats = fillingDamageCard?.closest(".report-stats");
       if (fillingDamageCard) fillingDamageCard.hidden = line === "press";
       if (pressDamageCard) pressDamageCard.hidden = line === "filling";
@@ -11942,9 +11986,7 @@
     // Tabel operasional ini memakai kontrol pencarian/seleksi sendiri dan
     // sengaja tidak menerima filter header Excel.
     document
-      .querySelectorAll(
-        "#spkTableBody, #fillingSpkBody, .press-balance-tbody",
-      )
+      .querySelectorAll("#spkTableBody, #fillingSpkBody, .press-balance-tbody")
       .forEach((body) => {
         const table = body.closest("table");
         if (table) table.dataset.excelFilterDisabled = "true";
@@ -12006,19 +12048,29 @@
         if (state.sort) {
           const { index, direction } = state.sort;
           const sortedRows = rows.slice().sort((a, b) => {
-              const left = cellText(a.cells[index]);
-              const right = cellText(b.cells[index]);
-              const leftNumber = Number(left.replace(/[^0-9,.-]/g, "").replace(/\./g, "").replace(",", "."));
-              const rightNumber = Number(right.replace(/[^0-9,.-]/g, "").replace(/\./g, "").replace(",", "."));
-              const compared =
-                left && right && isFinite(leftNumber) && isFinite(rightNumber)
-                  ? leftNumber - rightNumber
-                  : left.localeCompare(right, "id", {
-                      numeric: true,
-                      sensitivity: "base",
-                    });
-              return direction === "desc" ? -compared : compared;
-            });
+            const left = cellText(a.cells[index]);
+            const right = cellText(b.cells[index]);
+            const leftNumber = Number(
+              left
+                .replace(/[^0-9,.-]/g, "")
+                .replace(/\./g, "")
+                .replace(",", "."),
+            );
+            const rightNumber = Number(
+              right
+                .replace(/[^0-9,.-]/g, "")
+                .replace(/\./g, "")
+                .replace(",", "."),
+            );
+            const compared =
+              left && right && isFinite(leftNumber) && isFinite(rightNumber)
+                ? leftNumber - rightNumber
+                : left.localeCompare(right, "id", {
+                    numeric: true,
+                    sensitivity: "base",
+                  });
+            return direction === "desc" ? -compared : compared;
+          });
           if (sortedRows.some((row, rowIndex) => row !== rows[rowIndex])) {
             sortedRows.forEach((row) => tbody.appendChild(row));
           }
@@ -12053,11 +12105,13 @@
                 selected.has(cellText(row.cells[filterIndex])),
             ),
           );
-      const values = (source
-        ? sourceRows.map((row) =>
-            String(source.columns[index]?.(row) ?? "").trim(),
-          )
-        : sourceRows.map((row) => cellText(row.cells[index])))
+      const values = (
+        source
+          ? sourceRows.map((row) =>
+              String(source.columns[index]?.(row) ?? "").trim(),
+            )
+          : sourceRows.map((row) => cellText(row.cells[index]))
+      )
         .filter((value, position, list) => list.indexOf(value) === position)
         .sort((a, b) =>
           a.localeCompare(b, "id", { numeric: true, sensitivity: "base" }),
@@ -12093,18 +12147,24 @@
       };
       syncSelectAll();
       selectAll.addEventListener("change", () => {
-        valuesBox.querySelectorAll("label:not([hidden]) input").forEach((item) => {
-          item.checked = selectAll.checked;
-        });
+        valuesBox
+          .querySelectorAll("label:not([hidden]) input")
+          .forEach((item) => {
+            item.checked = selectAll.checked;
+          });
         syncSelectAll();
       });
       valuesBox.addEventListener("change", syncSelectAll);
-      popup.querySelector(".excel-filter-search").addEventListener("input", (event) => {
-        const query = event.target.value.trim().toLowerCase();
-        valuesBox.querySelectorAll("label").forEach((label) => {
-          label.hidden = !String(label.dataset.filterValue || "").includes(query);
+      popup
+        .querySelector(".excel-filter-search")
+        .addEventListener("input", (event) => {
+          const query = event.target.value.trim().toLowerCase();
+          valuesBox.querySelectorAll("label").forEach((label) => {
+            label.hidden = !String(label.dataset.filterValue || "").includes(
+              query,
+            );
+          });
         });
-      });
       popup.querySelectorAll("[data-sort]").forEach((sortButton) => {
         sortButton.addEventListener("click", () => {
           state.sort = { index, direction: sortButton.dataset.sort };
