@@ -1219,8 +1219,23 @@ button {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
   margin-left: auto;
+}
+
+.spk-footer-actions #spkPagination {
+  justify-content: flex-end;
+}
+
+@media (max-width: 700px) {
+  .spk-list-panel .table-footer {
+    align-items: flex-start;
+  }
+
+  .spk-footer-actions {
+    width: 100%;
+  }
 }
 
 #view-spk.spk-read-only #spkTableBody td:last-child,
