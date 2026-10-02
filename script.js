@@ -3563,14 +3563,10 @@
           return;
         }
 
-        if (line === "press") {
-          const balanceError =
-            validatePressBatchAgainstSavedFilling(previewRows);
-          if (balanceError) {
-            toast(balanceError, true);
-            return;
-          }
-        }
+        // Jangan memblokir Simpan berdasarkan snapshot saldo di browser.
+        // Snapshot dapat tertinggal sesaat setelah Filling tersimpan atau ketika
+        // hak akses user tidak memuat seluruh entry Filling. Backend membaca
+        // Spreadsheet terbaru dan menjadi satu-satunya validator saldo Press.
 
         saveBtn.disabled = true;
         saveBtn.textContent = `Menyimpan ${previewRows.length} data...`;
