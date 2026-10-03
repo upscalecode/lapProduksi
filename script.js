@@ -32,6 +32,10 @@
   let allAppViewsLoaded = false;
 
   const CONFIG = {
+    // Gunakan "apps-script" selama produksi lama masih aktif. Ubah menjadi
+    // "postgres" hanya pada environment uji/cutover backend baru.
+    API_MODE: "apps-script",
+    POSTGRES_API_URL: "http://localhost:3000/api",
     URL_KEY: "ppr_apps_script_url_v4",
     URL_OVERRIDE_KEY: "ppr_apps_script_url_override_v1",
     TOKEN_KEY: "ppr_session_token_v3",
@@ -50,7 +54,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbxRskkCGPvBsVHj6HPGN54olNl-JA6pdWt2O7epx45I-JjSgTem1lMUrZb5z-HKc22eSg/exec",
+      "https://script.google.com/macros/s/AKfycbwT3WMijS72F7bZKSersSO_jPmgPZdf6Rn-7HBszKJkye0_8TUT9Yo5ry1gF8aqP6SI/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -743,12 +747,21 @@
   }
 
   function isValidWebAppUrl(url) {
-    return /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec(?:\?.*)?$/i.test(
-      url,
-    );
+    if (CONFIG.API_MODE === "postgres") {
+      try {
+        const parsed = new URL(url);
+        return parsed.protocol === "http:" || parsed.protocol === "https:";
+      } catch (_) {
+        return false;
+      }
+    }
+    return /^https:\/\/script\.google\.com\/macros\/s\/[^/]+\/exec(?:\?.*)?$/i.test(url);
   }
 
   function getWebhookUrl() {
+    if (CONFIG.API_MODE === "postgres") {
+      return normalizeWebAppUrl(CONFIG.POSTGRES_API_URL);
+    }
     return normalizeWebAppUrl(
       localStorage.getItem(CONFIG.URL_OVERRIDE_KEY) ||
         CONFIG.WEB_APP_URL ||
@@ -778,7 +791,9 @@
     const url = getWebhookUrl();
     if (!url || !isValidWebAppUrl(url)) {
       throw new Error(
-        "URL Apps Script belum benar. Tempel URL deployment Web App /exec pada CONFIG.WEB_APP_URL.",
+        CONFIG.API_MODE === "postgres"
+          ? "URL backend PostgreSQL belum benar. Periksa CONFIG.POSTGRES_API_URL."
+          : "URL Apps Script belum benar. Tempel URL deployment Web App /exec pada CONFIG.WEB_APP_URL.",
       );
     }
     return url;
@@ -11053,7 +11068,10 @@
         });
         const details = Array.from(byBottle.entries())
           .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "id"))
-          .map(([bottle, qty]) => `${bottle}: ${qty.toLocaleString("id-ID")} botol`);
+          .map(
+            ([bottle, qty]) =>
+              `${bottle}: ${qty.toLocaleString("id-ID")} botol`,
+          );
         return `${label} (${period.label})\n${details.length ? details.join("\n") : "Tidak ada botol pecah."}`;
       };
       const setDamageTooltip = (card, detail) => {
