@@ -3,6 +3,20 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import fs from 'node:fs';
 
+test('import SPK menyamakan typo dekat dengan Master tanpa menggabungkan nama berbeda', () => {
+  const context = vm.createContext({});
+  vm.runInContext(fs.readFileSync(new URL('../Code.gs', import.meta.url), 'utf8'), context);
+  const match = (master, value) =>
+    vm.runInContext(
+      `approximateImportedMasterValue_(${JSON.stringify(master)}, ${JSON.stringify(value)})`,
+      context,
+    );
+  assert.equal(match(['Chanel'], 'Channel'), 'Chanel');
+  assert.equal(match(['Jolibliss Scandalove'], 'Jolibliss Scandalouse'), 'Jolibliss Scandalove');
+  assert.equal(match(['Jolibliss Wild Berry'], 'Jolibliss Pink Berry'), '');
+  assert.equal(match(['Botol 30 ml'], 'Botol 50 ml'), '');
+});
+
 test('update identitas SPK menyinkronkan Filling, Press dan penutupan hanya pada batch terkait', () => {
   const context = vm.createContext({});
   vm.runInContext(fs.readFileSync(new URL('../Code.gs', import.meta.url), 'utf8'), context);
@@ -39,6 +53,40 @@ test('update identitas SPK menyinkronkan Filling, Press dan penutupan hanya pada
   assert.equal(rebuilt, 1);
   context.syncSpkWorkIdentity_(batch, 'Produk Baru', 'Baru', '2026-10-04T01:00:00Z');
   assert.equal(entries.rows[0][16], 3);
+});
+
+test('penghapusan SPK ditolak jika dipakai di Filling, Press, atau keduanya', () => {
+  const context = vm.createContext({});
+  vm.runInContext(fs.readFileSync(new URL('../Code.gs', import.meta.url), 'utf8'), context);
+  const batch = '01-01102026';
+  let deleted = false;
+  const found = {
+    values: [batch, '', '', '', 1, 1, 1, 'admin'],
+    row: 2,
+    sheet: { deleteRow: () => { deleted = true; } },
+  };
+  Object.assign(context, {
+    findSpkRow_: () => found,
+    requireManage_: () => {},
+    getEntries_: () => [],
+  });
+
+  for (const entries of [
+    [{ reportId: `FILL - ${batch}` }],
+    [{ reportId: `PRESS - ${batch}` }],
+    [{ reportId: `FILL - ${batch}` }, { reportId: `PRESS - ${batch}` }],
+  ]) {
+    context.getEntries_ = () => entries;
+    assert.throws(
+      () => context.deleteSpk_({ username: 'admin' }, batch),
+      /sudah digunakan pada data Filling\/Press sehingga tidak dapat dihapus/,
+    );
+    assert.equal(deleted, false);
+  }
+
+  context.getEntries_ = () => [{ reportId: 'FILL - 02-01102026' }];
+  context.deleteSpk_({ username: 'admin' }, batch);
+  assert.equal(deleted, true);
 });
 
 test('SPK yang sudah dipakai tetap dapat diperbarui, sedangkan penghapusannya ditolak', () => {

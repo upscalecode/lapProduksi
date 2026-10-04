@@ -2449,6 +2449,79 @@ function canonicalMasterValue_(list, value, label) {
   );
 }
 
+function approximateImportedMasterValue_(list, value) {
+  const normalize = function (input) {
+    return String(input || "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "");
+  };
+  const target = normalize(value);
+  if (target.length < 5) return "";
+
+  const distance = function (left, right) {
+    let previous = [];
+    for (let j = 0; j <= right.length; j++) previous[j] = j;
+    for (let i = 1; i <= left.length; i++) {
+      const current = [i];
+      for (let j = 1; j <= right.length; j++) {
+        current[j] = Math.min(
+          current[j - 1] + 1,
+          previous[j] + 1,
+          previous[j - 1] + (left[i - 1] === right[j - 1] ? 0 : 1),
+        );
+      }
+      previous = current;
+    }
+    return previous[right.length];
+  };
+  const candidates = (list || [])
+    .map(function (item) {
+      const masterValue = String(item || "").trim();
+      const normalized = normalize(masterValue);
+      if (!normalized) return null;
+      const targetNumbers = target.match(/\d+/g) || [];
+      const candidateNumbers = normalized.match(/\d+/g) || [];
+      if (targetNumbers.join("|") !== candidateNumbers.join("|")) return null;
+      const editDistance = distance(target, normalized);
+      return {
+        value: masterValue,
+        distance: editDistance,
+        similarity:
+          1 - editDistance / Math.max(target.length, normalized.length),
+      };
+    })
+    .filter(Boolean)
+    .sort(function (a, b) {
+      return a.distance - b.distance;
+    });
+  const best = candidates[0];
+  if (!best || best.distance > 2) return "";
+  if (
+    target.length < 8 &&
+    (best.distance > 1 || best.similarity < 0.85)
+  )
+    return "";
+  if (
+    best.distance === 2 &&
+    (target.length < 15 || best.similarity < 0.9)
+  )
+    return "";
+  const equallyClose = candidates.filter(function (candidate) {
+    return candidate.distance === best.distance;
+  });
+  if (equallyClose.length !== 1) return "";
+  const second = candidates[1];
+  if (
+    best.distance === 2 &&
+    second &&
+    second.distance - best.distance < 2
+  )
+    return "";
+  return best.value;
+}
+
 function balanceKey_(produk, botol) {
   return (
     String(produk || "")
@@ -3826,6 +3899,17 @@ function createSpkEntriesBatch_(user, dataList) {
   if (dataList.length > 99)
     throw new Error("Maksimal 99 SPK per sekali simpan.");
 
+  let currentMaster = getMaster_();
+  dataList.forEach(function (data) {
+    if (!data || data.imported !== true) return;
+    data.produk =
+      approximateImportedMasterValue_(currentMaster.produk, data.produk) ||
+      String(data.produk || "").trim();
+    data.botol =
+      approximateImportedMasterValue_(currentMaster.botol, data.botol) ||
+      String(data.botol || "").trim();
+  });
+
   // Produk hasil import SPK boleh langsung menjadi Master Produk. Hanya baris
   // yang ditandai imported oleh alur import yang memperoleh perilaku ini;
   // input manual tetap wajib memilih produk yang sudah terdaftar.
@@ -3839,7 +3923,6 @@ function createSpkEntriesBatch_(user, dataList) {
       })
       .filter(String),
   );
-  let currentMaster = getMaster_();
   importedProducts.forEach(function (produk) {
     const exists = currentMaster.produk.some(function (value) {
       return String(value).toLowerCase() === produk.toLowerCase();
@@ -3970,14 +4053,14 @@ function findSpkRow_(batchNo) {
 }
 
 function assertSpkUnused_(batchNo) {
-  const suffix = " - " + String(batchNo || "").trim();
+  const targetBatchNo = String(batchNo || "").trim();
   const used = getEntries_().some(function (entry) {
-    return String(entry.reportId || "").endsWith(suffix);
+    return reportBatchNo_(entry.reportId) === targetBatchNo;
   });
   if (used)
     throw new Error(
       "SPK " +
-        batchNo +
+        targetBatchNo +
         " sudah digunakan pada data Filling/Press sehingga tidak dapat dihapus.",
     );
 }

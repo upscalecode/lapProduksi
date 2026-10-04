@@ -50,7 +50,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbytJ-cKWEiYGgXQkNpZQhSxk5tRCx-fXCtPiMNqouoahRcJwKKo7i9m63WQPG1uon40Zw/exec",
+      "https://script.google.com/macros/s/AKfycbwZDfqSw5aa7fGuXjzllSR7CXUvE44JxiHOpYLEE_gReu2ibGOqq-q0sMRDTpb43WBpCw/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -1236,7 +1236,9 @@
       button.setAttribute("aria-pressed", String(visible));
     }
     setVisible(false);
-    button.addEventListener("click", () => setVisible(input.type === "password"));
+    button.addEventListener("click", () =>
+      setVisible(input.type === "password"),
+    );
     input.form?.addEventListener("reset", () => setVisible(false));
     wrapper.append(button);
   }
@@ -1897,7 +1899,7 @@
 
   function approximateMasterValue(category, value) {
     const target = normalizedFuzzyText(value);
-    if (target.length < 4) return "";
+    if (target.length < 5) return "";
     const targetNumbers = target.match(/\d+/g) || [];
     const candidates = masterValues(category)
       .map((masterValue) => {
@@ -1905,26 +1907,81 @@
         const candidateNumbers = normalized.match(/\d+/g) || [];
         // Angka merupakan identitas penting, khususnya ukuran botol.
         if (targetNumbers.join("|") !== candidateNumbers.join("|")) return null;
-        const longest = Math.max(target.length, normalized.length);
-        const similarity = longest
-          ? 1 - levenshteinDistance(target, normalized) / longest
-          : 0;
-        return { value: masterValue, similarity };
+        const distance = levenshteinDistance(target, normalized);
+        return {
+          value: masterValue,
+          distance,
+          similarity: 1 - distance / Math.max(target.length, normalized.length),
+        };
       })
       .filter(Boolean)
-      .sort((a, b) => b.similarity - a.similarity);
+      .sort((a, b) => a.distance - b.distance);
     const best = candidates[0];
-    if (!best) return "";
-    const minimumSimilarity = target.length < 7 ? 0.85 : 0.75;
-    if (best.similarity < minimumSimilarity) return "";
+    if (!best || best.distance > 2) return "";
+    if (target.length < 8 && (best.distance > 1 || best.similarity < 0.85))
+      return "";
+    if (best.distance === 2 && (target.length < 15 || best.similarity < 0.9))
+      return "";
+    const equallyClose = candidates.filter(
+      (candidate) => candidate.distance === best.distance,
+    );
+    if (equallyClose.length !== 1) return "";
     const second = candidates[1];
-    if (
-      second &&
-      best.similarity < 0.9 &&
-      best.similarity - second.similarity < 0.04
-    )
+    if (best.distance === 2 && second && second.distance - best.distance < 2)
       return "";
     return best.value;
+  }
+
+  function firstSpkImportValue(value) {
+    return String(value || "")
+      .split("/", 1)[0]
+      .trim()
+      .replace(/\s+/g, " ");
+  }
+
+  function matchSpkBottleBySize(value) {
+    const target = normalizedFuzzyText(value);
+    const targetNumbers = target.match(/\d+/g) || [];
+    if (!targetNumbers.length) return "";
+    const unitAliases = [
+      [/millilit(?:er|re)s?/, "ml"],
+      [/cc/, "ml"],
+      [/ml/, "ml"],
+      [/lit(?:er|re)s?/, "l"],
+      [/ltr/, "l"],
+      [/l/, "l"],
+      [/pieces?/, "pcs"],
+      [/pcs?/, "pcs"],
+    ];
+    let targetText = target
+      .replace(/\d+/g, "")
+      .replace(/^(?:botol|btl|bottle)/, "");
+    let targetUnit = "";
+    unitAliases.forEach(([pattern, unit]) => {
+      if (pattern.test(targetText)) {
+        targetUnit = unit;
+        targetText = targetText.replace(pattern, "");
+      }
+    });
+    if (targetText) return "";
+    const matches = masterValues("botol").filter((masterValue) => {
+      const candidate = normalizedFuzzyText(masterValue);
+      const candidateNumbers = candidate.match(/\d+/g) || [];
+      if (targetNumbers.join("|") !== candidateNumbers.join("|")) return false;
+      if (!targetUnit) return true;
+      let candidateText = candidate
+        .replace(/\d+/g, "")
+        .replace(/^(?:botol|btl|bottle)/, "");
+      let candidateUnit = "";
+      unitAliases.forEach(([pattern, unit]) => {
+        if (pattern.test(candidateText)) {
+          candidateUnit = unit;
+          candidateText = candidateText.replace(pattern, "");
+        }
+      });
+      return candidateUnit === targetUnit;
+    });
+    return matches.length === 1 ? matches[0] : "";
   }
 
   function normalizeSpkProductName(value) {
@@ -7138,14 +7195,14 @@
             : sourceRows;
         importRows.forEach((row, rowIndex) => {
           const batchNo = String(row[indexes["NO BATCH"]] || "").trim();
-          const merkText = String(row[indexes.MERK] || "").trim();
-          const varianText = String(row[indexes.VARIAN] || "").trim();
+          const merkText = firstSpkImportValue(row[indexes.MERK]);
+          const varianText = firstSpkImportValue(row[indexes.VARIAN]);
           const produkText = normalizeSpkProductName(
-            `${merkText} ${varianText}`,
+            firstSpkImportValue(`${merkText} ${varianText}`),
           );
           // Pada merged header, SheetJS menyimpan nilai di sel pertama.
           // indexOf mengambil kolom pertama/paling kiri tersebut.
-          const botolText = String(row[indexes["BOTOL (MILL)"]] || "").trim();
+          const botolText = firstSpkImportValue(row[indexes["BOTOL (MILL)"]]);
           const produksiDusText = String(
             row[indexes["PRODUKSI (DUS)"]] || "",
           ).trim();
@@ -7166,25 +7223,20 @@
           }
           if (!merkText) throw new Error(`Baris ${lineNo}: MERK kosong.`);
           if (!varianText) throw new Error(`Baris ${lineNo}: VARIAN kosong.`);
-          // Nama varian yang mirip bisa merupakan produk berbeda.
-          // Pertahankan nama dari Excel jika tidak cocok persis dengan Master.
-          let produk = canonicalMasterValue("produk", produkText);
+          let produk =
+            canonicalMasterValue("produk", produkText) ||
+            approximateMasterValue("produk", produkText);
           let botol =
             canonicalMasterValue("botol", botolText) ||
+            matchSpkBottleBySize(botolText) ||
             approximateMasterValue("botol", botolText);
           if (!produk) {
             produk = produkText;
-            state.master.produk = [...(state.master.produk || []), produk];
           }
           if (!botolText)
             throw new Error(`Baris ${lineNo}: BOTOL (MILL) kosong.`);
           if (!botol) {
             botol = botolText;
-            state.master.botol = [...(state.master.botol || []), botol];
-            state.master.botolpecah = [
-              ...(state.master.botolpecah || []),
-              botol,
-            ];
           }
           const produksiDus = Math.floor(
             Number(produksiDusText.replace(/[.,\s]/g, "")) || 0,
@@ -7221,9 +7273,6 @@
         if (!imported.length)
           throw new Error("Tidak ada baris SPK untuk diimport.");
         state.preview.spk.push(...imported);
-        try {
-          localStorage.setItem(CONFIG.MASTER_KEY, JSON.stringify(state.master));
-        } catch (_) {}
         state.spk.date = todayStr();
         state.spk.page = 1;
         if (dateFilter) dateFilter.value = state.spk.date;
@@ -7598,6 +7647,42 @@
           state.spkEntries = state.spkEntries
             .filter((item) => !savedBatchNos.has(String(item.batchNo)))
             .concat(response.saved);
+          state.master.produk = [
+            ...new Set(
+              [
+                ...(state.master.produk || []),
+                ...response.saved.map((item) =>
+                  String(item.produk || "").trim(),
+                ),
+              ].filter(Boolean),
+            ),
+          ];
+          state.master.botol = [
+            ...new Set(
+              [
+                ...(state.master.botol || []),
+                ...response.saved.map((item) =>
+                  String(item.botol || "").trim(),
+                ),
+              ].filter(Boolean),
+            ),
+          ];
+          state.master.botolpecah = [
+            ...new Set(
+              [
+                ...(state.master.botolpecah || []),
+                ...response.saved.map((item) =>
+                  String(item.botol || "").trim(),
+                ),
+              ].filter(Boolean),
+            ),
+          ];
+          try {
+            localStorage.setItem(
+              CONFIG.MASTER_KEY,
+              JSON.stringify(state.master),
+            );
+          } catch (_) {}
         }
         state.preview.spk = [];
         selectedSpkRows.clear();
