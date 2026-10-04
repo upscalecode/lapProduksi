@@ -3947,7 +3947,7 @@ function assertSpkUnused_(batchNo) {
     throw new Error(
       "SPK " +
         batchNo +
-        " sudah digunakan pada data Filling/Press sehingga tidak dapat diubah atau dihapus.",
+        " sudah digunakan pada data Filling/Press sehingga tidak dapat dihapus.",
     );
 }
 
@@ -3956,7 +3956,6 @@ function updateSpk_(user, batchNo, data) {
   if (!found) throw new Error("SPK yang akan di-update tidak ditemukan.");
   const createdBy = String(found.values[7] || "").trim();
   requireManage_(user, "spk", createdBy === user.username ? "own" : "others");
-  assertSpkUnused_(batchNo);
   data = data && typeof data === "object" ? data : {};
   const master = getMaster_();
   const produk = canonicalMasterValue_(master.produk, data.produk, "Produk");
@@ -3983,6 +3982,7 @@ function updateSpk_(user, batchNo, data) {
         updateCount,
       ],
     ]);
+  syncSpkWorkIdentity_(String(found.values[0] || "").trim(), produk, botol, updatedAt);
   return {
     batchNo: String(found.values[0] || "").trim(),
     tanggal: formatDateCell_(found.values[1]),
@@ -3997,6 +3997,35 @@ function updateSpk_(user, batchNo, data) {
     updateCount: updateCount,
     status: String(found.values[11] || "normal").trim().toLowerCase(),
   };
+}
+
+// Caller holds the write lock. Match the batch, never the product name alone.
+function syncSpkWorkIdentity_(batchNo, produk, botol, updatedAt) {
+  const sh = entrySheet_();
+  if (sh.getLastRow() >= 2) {
+    const rows = sh.getRange(2, 1, sh.getLastRow() - 1, APP.ENTRY_HEADERS.length).getValues();
+    rows.forEach(function (row, index) {
+      if (reportBatchNo_(row[1]) !== batchNo || !["filling", "press"].includes(String(row[2]))) return;
+      if (row[5] === produk && row[6] === botol) return;
+      // Preserve separately recorded broken-bottle types.
+      if (!row[10] || row[10] === row[6]) row[10] = botol;
+      row[5] = produk;
+      row[6] = botol;
+      row[15] = updatedAt;
+      row[16] = Math.max(0, Math.floor(number_(row[16]))) + 1;
+      sh.getRange(index + 2, 1, 1, APP.ENTRY_HEADERS.length).setValues([row]);
+    });
+  }
+  [pressAdjustmentSheet_(false), pressAdjustmentArchiveSheet_()].forEach(function (sheet) {
+    if (!sheet || sheet.getLastRow() < 2) return;
+    const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, APP.PRESS_ADJUSTMENT_HEADERS.length).getValues();
+    rows.forEach(function (row, index) {
+      if (String(row[10] || "").trim() === batchNo) {
+        sheet.getRange(index + 2, 3, 1, 2).setValues([[produk, botol]]);
+      }
+    });
+  });
+  rebuildPressRemainders_();
 }
 
 function deleteSpk_(user, batchNo) {

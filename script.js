@@ -50,7 +50,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbxRskkCGPvBsVHj6HPGN54olNl-JA6pdWt2O7epx45I-JjSgTem1lMUrZb5z-HKc22eSg/exec",
+      "https://script.google.com/macros/s/AKfycbytJ-cKWEiYGgXQkNpZQhSxk5tRCx-fXCtPiMNqouoahRcJwKKo7i9m63WQPG1uon40Zw/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -7140,9 +7140,9 @@
           }
           if (!merkText) throw new Error(`Baris ${lineNo}: MERK kosong.`);
           if (!varianText) throw new Error(`Baris ${lineNo}: VARIAN kosong.`);
-          let produk =
-            canonicalMasterValue("produk", produkText) ||
-            approximateMasterValue("produk", produkText);
+          // Nama varian yang mirip bisa merupakan produk berbeda.
+          // Pertahankan nama dari Excel jika tidak cocok persis dengan Master.
+          let produk = canonicalMasterValue("produk", produkText);
           let botol =
             canonicalMasterValue("botol", botolText) ||
             approximateMasterValue("botol", botolText);
@@ -7357,7 +7357,17 @@
             );
           }
           renderFillingSpkQueue();
-          toast(`SPK ${edit.key} berhasil di-update.`);
+          try {
+            await loadAppData();
+            toast(
+              `SPK ${edit.key} dan data Filling/Press terkait berhasil di-update.`,
+            );
+          } catch (refreshError) {
+            toast(
+              `SPK tersimpan, tetapi data terbaru gagal dimuat: ${refreshError.message}. Muat ulang halaman.`,
+              true,
+            );
+          }
         } catch (err) {
           submitButton.disabled = false;
           return toast(`Gagal meng-update SPK: ${err.message}`, true);
@@ -11053,7 +11063,10 @@
         });
         const details = Array.from(byBottle.entries())
           .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "id"))
-          .map(([bottle, qty]) => `${bottle}: ${qty.toLocaleString("id-ID")} botol`);
+          .map(
+            ([bottle, qty]) =>
+              `${bottle}: ${qty.toLocaleString("id-ID")} botol`,
+          );
         return `${label} (${period.label})\n${details.length ? details.join("\n") : "Tidak ada botol pecah."}`;
       };
       const setDamageTooltip = (card, detail) => {
