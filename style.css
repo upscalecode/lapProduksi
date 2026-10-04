@@ -96,13 +96,14 @@
 }
 
 .password-wrapper {
+  display: block;
   position: relative;
   width: 100%;
 }
 
 .password-wrapper input {
   width: 100%;
-  padding-right: 45px;
+  padding-right: 56px;
   box-sizing: border-box;
 }
 
@@ -114,12 +115,24 @@
   border: none;
   background: transparent;
   cursor: pointer;
-  font-size: 18px;
-  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ink-soft);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 8px;
 }
 
 .toggle-password:hover {
   opacity: 0.7;
+}
+
+.toggle-password:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 3px;
 }
 
 :root {

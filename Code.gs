@@ -185,16 +185,16 @@ function setupSpreadsheet() {
   ensureSettingsSheet_(ss);
 
   if (master.getLastRow() < 2) {
-    master.getRange(2, 1, 3, 3).setValues([
+    master.getRange(2, 1, 3, 3).setValues(literalSheetValues_([
       ["Operator 1", "Produk 1", "Botol 30 ml"],
       ["Operator 2", "Produk 2", "Botol 50 ml"],
       ["Operator 3", "Produk 3", "Botol 100 ml"],
-    ]);
+    ]));
   }
   ensureApdCriteriaMaster_(ss);
 
   if (users.getLastRow() < 2) {
-    users.getRange(2, 1, 2, APP.USER_HEADERS.length).setValues([
+    users.getRange(2, 1, 2, APP.USER_HEADERS.length).setValues(literalSheetValues_([
       [
         "admin",
         hashPassword_("admin123"),
@@ -213,7 +213,7 @@ function setupSpreadsheet() {
         new Date(),
         JSON.stringify(defaultPermissions_("user")),
       ],
-    ]);
+    ]));
   }
 
   // Migrasi user lama: isi permissionsJson yang masih kosong tanpa perlu edit manual.
@@ -233,7 +233,7 @@ function setupSpreadsheet() {
     if (changed)
       users
         .getRange(2, 1, userRows.length, APP.USER_HEADERS.length)
-        .setValues(userRows);
+        .setValues(literalSheetValues_(userRows));
   }
 
   // Bangun saldo sisa dari data Pengerjaan lama agar langsung kompatibel.
@@ -362,11 +362,11 @@ function doPost(e) {
   try {
     const action = param_(e, "action");
 
-    if (action === "login") return handleLogin_(e);
+    if (action === "login") return withWriteLock_(function () { return handleLogin_(e); });
 
     if (action === "logout") {
       const token = param_(e, "token");
-      if (token) deleteSession_(token);
+      if (token) withWriteLock_(function () { deleteSession_(token); });
       return json_({ ok: true });
     }
 
@@ -732,9 +732,9 @@ function ensureDowntimeSheet_(ss) {
       APP.DOWNTIME_HEADERS.length - sh.getMaxColumns(),
     );
   }
-  sh.getRange(1, 1, 1, APP.DOWNTIME_HEADERS.length).setValues([
+  sh.getRange(1, 1, 1, APP.DOWNTIME_HEADERS.length).setValues(literalSheetValues_([
     APP.DOWNTIME_HEADERS,
-  ]);
+  ]));
   styleHeader_(sh, APP.DOWNTIME_HEADERS.length);
   sh.setFrozenRows(1);
 
@@ -759,9 +759,9 @@ function ensureDowntimeSheet_(ss) {
       changed = true;
     });
     if (changed) {
-      sh.getRange(2, 1, rows.length, APP.DOWNTIME_HEADERS.length).setValues(
+      sh.getRange(2, 1, rows.length, APP.DOWNTIME_HEADERS.length).setValues(literalSheetValues_(
         rows,
-      );
+      ));
     }
   }
   return sh;
@@ -823,14 +823,7 @@ function upsertDowntimeEntry_(user, data) {
   const arrivalTimestamp = new Date(data.arrivalTimestamp || "");
   if (!arrivalTimestamp || isNaN(arrivalTimestamp.getTime()))
     throw new Error("Waktu kedatangan racikan tidak valid.");
-  const productionStartTime = String(data.productionStartTime || "").trim();
-  const startMatch = /^(\d{2}):(\d{2})$/.exec(productionStartTime);
-  if (
-    !startMatch ||
-    Number(startMatch[1]) > 23 ||
-    Number(startMatch[2]) > 59
-  )
-    throw new Error("Jam Masuk Kerja Produksi wajib diisi.");
+  const productionStartTime = "08:30";
   const arrivalTime = Utilities.formatDate(
     arrivalTimestamp,
     Session.getScriptTimeZone(),
@@ -838,7 +831,7 @@ function upsertDowntimeEntry_(user, data) {
   );
   const arrivalParts = arrivalTime.split(":");
   const arrivalMinutes = Number(arrivalParts[0]) * 60 + Number(arrivalParts[1]);
-  const startMinutes = Number(startMatch[1]) * 60 + Number(startMatch[2]);
+  const startMinutes = 8 * 60 + 30;
   const downTime = arrivalMinutes - startMinutes;
   let alasan = String(data.alasan || "").trim();
   let keterangan = String(data.keterangan || "").trim();
@@ -858,6 +851,8 @@ function upsertDowntimeEntry_(user, data) {
     alasan = "Tepat Waktu";
     keterangan = "";
   }
+  if (downTime > 0 && alasan === "Tepat Waktu")
+    throw new Error("Pilih alasan keterlambatan untuk Down Time lebih dari 0 menit.");
   if (allowedReasons.indexOf(alasan) < 0)
     throw new Error("Alasan Down Time tidak valid.");
   if (alasan === "Lainnya" && !keterangan)
@@ -877,21 +872,21 @@ function upsertDowntimeEntry_(user, data) {
         throw new Error(
           "Validasi Down Time yang sudah tersimpan hanya dapat diubah oleh Super User.",
         );
-      sh.getRange(index + 2, 1, 1, APP.DOWNTIME_HEADERS.length).setValues([
+      sh.getRange(index + 2, 1, 1, APP.DOWNTIME_HEADERS.length).setValues(literalSheetValues_([
         [productionStartTime, arrivalTimestamp, downTime, alasan, keterangan],
-      ]);
+      ]));
       return getDowntimeEntries_().find(function (item) {
         return item.tanggal === today;
       });
     }
   }
-  sh.appendRow([
+  sh.appendRow(literalSheetValue_([
     productionStartTime,
     arrivalTimestamp,
     downTime,
     alasan,
     keterangan,
-  ]);
+  ]));
   return getDowntimeEntries_().find(function (item) {
     return item.tanggal === today;
   });
@@ -906,12 +901,22 @@ function handleLogin_(e) {
     throw new Error("Username dan password wajib diisi.");
   }
 
-  // findUser_ memakai CacheService sehingga login berulang tidak perlu selalu baca Spreadsheet.
+  maybePurgeExpiredSessions_();
+  const props = PropertiesService.getScriptProperties();
+  const attemptKey = "PPR_LOGIN_ATTEMPT_" + hashPassword_(username.toLowerCase());
+  const now = Date.now();
+  let attempt;
+  try { attempt = JSON.parse(props.getProperty(attemptKey) || "null"); } catch (_) {}
+  if (!attempt || !(attempt.expiresAt > now)) attempt = { count: 0, expiresAt: now + 60000 };
+  if (attempt.count >= 5)
+    throw new Error("Terlalu banyak percobaan login. Coba lagi dalam " + Math.ceil((attempt.expiresAt - now) / 1000) + " detik.");
   const user = findUser_(username);
-  if (!user || !user.active)
-    throw new Error("Akun tidak ditemukan atau tidak aktif.");
-  if (user.passwordHash !== hashPassword_(password))
-    throw new Error("Password salah.");
+  if (!user || !user.active || user.passwordHash !== hashPassword_(password)) {
+    attempt.count += 1;
+    props.setProperty(attemptKey, JSON.stringify(attempt));
+    throw new Error("Username atau password salah.");
+  }
+  props.deleteProperty(attemptKey);
 
   const token = Utilities.getUuid() + Utilities.getUuid().replace(/-/g, "");
   const createdAt = new Date();
@@ -1050,7 +1055,30 @@ function removeCachedSession_(token) {
   if (token) CacheService.getScriptCache().remove(sessionCacheKey_(token));
 }
 
+// Called under the write lock. No browser storage or preview data is touched.
+function maybePurgeExpiredSessions_() {
+  const props = PropertiesService.getScriptProperties();
+  const now = Date.now();
+  if (now - Number(props.getProperty("PPR_SESSION_CLEANUP_AT") || 0) < 300000) return;
+  purgeExpiredSessions_();
+  props.setProperty("PPR_SESSION_CLEANUP_AT", String(now));
+}
+
 function purgeExpiredSessions_() {
+  const props = PropertiesService.getScriptProperties();
+  const all = props.getProperties();
+  Object.keys(all).forEach(function (key) {
+    const session = key.indexOf("PPR_SESSION_") === 0 && key !== "PPR_SESSION_CLEANUP_AT";
+    const attempt = key.indexOf("PPR_LOGIN_ATTEMPT_") === 0;
+    if (!session && !attempt) return;
+    let data;
+    try { data = JSON.parse(all[key]); } catch (_) {}
+    const expires = data && (attempt ? Number(data.expiresAt) : new Date(data.expiresAt).getTime());
+    if (!(expires > Date.now())) {
+      if (session) removeCachedSession_(key.substring("PPR_SESSION_".length));
+      props.deleteProperty(key);
+    }
+  });
   const sh = sheet_(APP.SHEETS.SESSIONS);
   const values = sh.getDataRange().getValues();
   if (values.length <= 1) return;
@@ -1067,7 +1095,7 @@ function purgeExpiredSessions_() {
 
   if (keep.length !== values.length) {
     sh.clearContents();
-    sh.getRange(1, 1, keep.length, APP.SESSION_HEADERS.length).setValues(keep);
+    sh.getRange(1, 1, keep.length, APP.SESSION_HEADERS.length).setValues(literalSheetValues_(keep));
     styleHeader_(sh, APP.SESSION_HEADERS.length);
   }
 }
@@ -1075,8 +1103,11 @@ function purgeExpiredSessions_() {
 function deleteSession_(token) {
   removeCachedSession_(token);
   deletePersistedSession_(token);
-  // Sheet Sessions hanya dipertahankan untuk kompatibilitas token lama;
-  // logout versi baru tidak perlu scan/delete row sehingga lebih cepat.
+  const sh = sheet_(APP.SHEETS.SESSIONS);
+  const rows = sh.getDataRange().getValues();
+  for (let i = rows.length - 1; i >= 1; i--) {
+    if (String(rows[i][0]) === String(token)) sh.deleteRow(i + 1);
+  }
 }
 
 /* ------------------------- APD ------------------------- */
@@ -1160,7 +1191,7 @@ function ensureApdCriteriaMaster_(ss) {
   );
   const range = sh.getRange(1, firstColumn, rows.length, columnCount);
   const current = range.getDisplayValues();
-  if (JSON.stringify(current) !== JSON.stringify(rows)) range.setValues(rows);
+  if (JSON.stringify(current) !== JSON.stringify(rows)) range.setValues(literalSheetValues_(rows));
   sh.hideColumns(firstColumn, columnCount);
 }
 
@@ -1623,7 +1654,7 @@ function createApdEntriesBatch_(user, dataList) {
       1,
       rowsToWrite.length,
       APP.APD_HEADERS.length,
-    ).setValues(rowsToWrite);
+    ).setValues(literalSheetValues_(rowsToWrite));
   }
 
   return {
@@ -1653,7 +1684,7 @@ function updateApdEntry_(user, id, rawData) {
 
   const oldMeta = sh.getRange(rowNumber, 13, 1, 4).getValues()[0];
   const now = new Date().toISOString();
-  sh.getRange(rowNumber, 1, 1, APP.APD_HEADERS.length).setValues([
+  sh.getRange(rowNumber, 1, 1, APP.APD_HEADERS.length).setValues(literalSheetValues_([
     [
       record.tanggal,
       record.operator,
@@ -1673,7 +1704,7 @@ function updateApdEntry_(user, id, rawData) {
       now,
       record.photoFileId,
     ],
-  ]);
+  ]));
 
   parseApdPhotoIds_(existingPhotoId).forEach(function (oldId) {
     if (record.photoFileIds.indexOf(oldId) < 0) {
@@ -1984,7 +2015,7 @@ function createEntriesBatch_(user, dataList) {
       1,
       newEntries.length,
       APP.ENTRY_HEADERS.length,
-    ).setValues(newEntries.map(entryToRow_));
+    ).setValues(literalSheetValues_(newEntries.map(entryToRow_)));
     restoredAudits.forEach(function (item) {
       markDeletedEntryAuditRestored_(
         item.audit,
@@ -2070,7 +2101,7 @@ function createEntry_(user, data) {
   // Balance Press dihitung berdasarkan Nama Produk dan tidak boleh memakai Filling tanggal setelah Press.
   assertProjectedBalance_([entry], "");
 
-  entrySheet_().appendRow(entryToRow_(entry));
+  entrySheet_().appendRow(literalSheetValue_(entryToRow_(entry)));
   markDeletedEntryAuditRestored_(deletedAudit, entry.id, entry.createdAt);
   rebuildPressRemainders_();
 
@@ -2137,7 +2168,7 @@ function updateEntry_(user, id, data) {
 
   entrySheet_()
     .getRange(found.row, 1, 1, APP.ENTRY_HEADERS.length)
-    .setValues([entryToRow_(updated)]);
+    .setValues(literalSheetValues_([entryToRow_(updated)]));
   rebuildPressRemainders_();
 
   const saved = findEntryRow_(id);
@@ -2525,9 +2556,9 @@ function ensureEntrySheetSchema_(ss, forceSetup) {
         }
       }
       if (needsWrite) {
-        sh.getRange(2, createdByIndex + 1, rowCount, 1).setValues(
+        sh.getRange(2, createdByIndex + 1, rowCount, 1).setValues(literalSheetValues_(
           createdByValues,
-        );
+        ));
       }
     }
     sh.deleteColumn(createdByNameIndex + 1);
@@ -2603,7 +2634,7 @@ function ensureEntrySheetSchema_(ss, forceSetup) {
       APP.ENTRY_HEADERS.length - sh.getMaxColumns(),
     );
   }
-  sh.getRange(1, 1, 1, APP.ENTRY_HEADERS.length).setValues([APP.ENTRY_HEADERS]);
+  sh.getRange(1, 1, 1, APP.ENTRY_HEADERS.length).setValues(literalSheetValues_([APP.ENTRY_HEADERS]));
   styleHeader_(sh, APP.ENTRY_HEADERS.length);
   sh.setFrozenRows(1);
 
@@ -2630,7 +2661,7 @@ function ensureEntrySheetSchema_(ss, forceSetup) {
     }
 
     if (auditChanged) {
-      sh.getRange(2, 16, rowCount, 2).setValues(auditValues);
+      sh.getRange(2, 16, rowCount, 2).setValues(literalSheetValues_(auditValues));
     }
   }
 
@@ -2712,14 +2743,14 @@ function markDeletedEntryAuditRestored_(audit, entryId, restoredAt) {
   if (!audit) return;
   deletedEntryAuditSheet_()
     .getRange(audit.row, 10, 1, 2)
-    .setValues([[String(entryId), restoredAt || new Date().toISOString()]]);
+    .setValues(literalSheetValues_([[String(entryId), restoredAt || new Date().toISOString()]]));
 }
 
 function recordDeletedEntryAudit_(entry, user) {
   const legacyAudit = parseEntryUpdateAudit_(entry.updatedAt);
   const nextUpdateCount =
     Math.max(number_(entry.updateCount), legacyAudit.count) + 1;
-  deletedEntryAuditSheet_().appendRow([
+  deletedEntryAuditSheet_().appendRow(literalSheetValue_([
     entry.tab,
     entry.tanggal,
     entry.operator,
@@ -2731,7 +2762,7 @@ function recordDeletedEntryAudit_(entry, user) {
     String((user && user.username) || ""),
     "",
     "",
-  ]);
+  ]));
 }
 
 function pressRemainderSheet_(createIfMissing) {
@@ -3024,7 +3055,7 @@ function writePressModel_(entries, model, adjustments) {
       1,
       rows.length,
       APP.PRESS_REMAINDER_HEADERS.length,
-    ).setValues(rows);
+    ).setValues(literalSheetValues_(rows));
   }
 
   // Metadata Press ditulis satu kali secara batch. Tidak perlu membaca ulang
@@ -3036,7 +3067,7 @@ function writePressModel_(entries, model, adjustments) {
         entry.tab === "press" ? model.pressMeta[String(entry.id)] : null;
       return [meta ? meta.tanggalAsal : "", meta ? meta.keterangan : ""];
     });
-    entrySh.getRange(2, 18, noteRows.length, 2).setValues(noteRows);
+    entrySh.getRange(2, 18, noteRows.length, 2).setValues(literalSheetValues_(noteRows));
   }
 
   return decoratePressRemainders_(model.remainders, entries, adjustments || []);
@@ -3185,9 +3216,9 @@ function pressAdjustmentSheet_(createIfMissing) {
         requiredColumns - sh.getMaxColumns(),
       );
     }
-    sh.getRange(1, 1, 1, requiredColumns).setValues([
+    sh.getRange(1, 1, 1, requiredColumns).setValues(literalSheetValues_([
       APP.PRESS_ADJUSTMENT_HEADERS,
-    ]);
+    ]));
   }
   return sh || null;
 }
@@ -3240,7 +3271,7 @@ function syncPressAdjustmentArchive_() {
         missingRows.length,
         width,
       )
-      .setValues(missingRows);
+      .setValues(literalSheetValues_(missingRows));
   }
   return archive;
 }
@@ -3477,7 +3508,7 @@ function appendPressAdjustments_(adjustments) {
       1,
       rows.length,
       APP.PRESS_ADJUSTMENT_HEADERS.length,
-    ).setValues(rows);
+    ).setValues(literalSheetValues_(rows));
   });
 }
 
@@ -3609,9 +3640,9 @@ function repairLegacySpkRows_(sh) {
     }
   });
   groups.forEach(function (group) {
-    sh.getRange(group.startRow, 1, group.values.length, width).setValues(
+    sh.getRange(group.startRow, 1, group.values.length, width).setValues(literalSheetValues_(
       group.values,
-    );
+    ));
   });
 }
 
@@ -3690,7 +3721,7 @@ function ensureSpkSheet_(ss, forceSetup) {
       APP.SPK_HEADERS.length - sh.getMaxColumns(),
     );
   }
-  sh.getRange(1, 1, 1, APP.SPK_HEADERS.length).setValues([APP.SPK_HEADERS]);
+  sh.getRange(1, 1, 1, APP.SPK_HEADERS.length).setValues(literalSheetValues_([APP.SPK_HEADERS]));
   if (!isOldSchema) repairLegacySpkRows_(sh);
   removeEmptyDuplicateSpkColumns_(sh);
   styleHeader_(sh, APP.SPK_HEADERS.length);
@@ -3771,7 +3802,7 @@ function createSpk_(user, data) {
     previewUpdateCount,
     String(data.status || "normal").trim().toLowerCase(),
   ];
-  ensureSpkSheet_(spreadsheet_()).appendRow(row);
+  ensureSpkSheet_(spreadsheet_()).appendRow(literalSheetValue_(row));
   return {
     batchNo: batchNo,
     tanggal: tanggal,
@@ -3918,7 +3949,7 @@ function createSpkEntriesBatch_(user, dataList) {
     1,
     rows.length,
     APP.SPK_HEADERS.length,
-  ).setValues(rows);
+  ).setValues(literalSheetValues_(rows));
   return saved;
 }
 
@@ -3965,11 +3996,14 @@ function updateSpk_(user, batchNo, data) {
   if (produksiDus <= 0) throw new Error("Produksi (Dus) harus lebih dari 0.");
   if (qtyPerDus <= 0) throw new Error("Qty/Dus harus lebih dari 0 pcs/dus.");
   const qty = produksiDus * qtyPerDus;
+  const qtyChanged = produksiDus !== number_(found.values[4]) ||
+    qtyPerDus !== number_(found.values[5]) || qty !== number_(found.values[6]);
+  if (qtyChanged) assertSpkUnused_(batchNo);
   const updatedAt = new Date().toISOString();
   const updateCount = Math.max(0, Math.floor(number_(found.values[10]))) + 1;
   found.sheet
     .getRange(found.row, 3, 1, 9)
-    .setValues([
+    .setValues(literalSheetValues_([
       [
         produk,
         botol,
@@ -3981,7 +4015,7 @@ function updateSpk_(user, batchNo, data) {
         updatedAt,
         updateCount,
       ],
-    ]);
+    ]));
   syncSpkWorkIdentity_(String(found.values[0] || "").trim(), produk, botol, updatedAt);
   return {
     batchNo: String(found.values[0] || "").trim(),
@@ -4013,7 +4047,7 @@ function syncSpkWorkIdentity_(batchNo, produk, botol, updatedAt) {
       row[6] = botol;
       row[15] = updatedAt;
       row[16] = Math.max(0, Math.floor(number_(row[16]))) + 1;
-      sh.getRange(index + 2, 1, 1, APP.ENTRY_HEADERS.length).setValues([row]);
+      sh.getRange(index + 2, 1, 1, APP.ENTRY_HEADERS.length).setValues(literalSheetValues_([row]));
     });
   }
   [pressAdjustmentSheet_(false), pressAdjustmentArchiveSheet_()].forEach(function (sheet) {
@@ -4021,7 +4055,7 @@ function syncSpkWorkIdentity_(batchNo, produk, botol, updatedAt) {
     const rows = sheet.getRange(2, 1, sheet.getLastRow() - 1, APP.PRESS_ADJUSTMENT_HEADERS.length).getValues();
     rows.forEach(function (row, index) {
       if (String(row[10] || "").trim() === batchNo) {
-        sheet.getRange(index + 2, 3, 1, 2).setValues([[produk, botol]]);
+        sheet.getRange(index + 2, 3, 1, 2).setValues(literalSheetValues_([[produk, botol]]));
       }
     });
   });
@@ -4130,22 +4164,22 @@ function ensureSettingsSheet_(ss) {
 
   let changed = false;
   if (!existingKeys[KPI_FILLING_OUTPUT_TARGET_KEY_]) {
-    sh.appendRow([
+    sh.appendRow(literalSheetValue_([
       KPI_FILLING_OUTPUT_TARGET_KEY_,
       KPI_FILLING_OUTPUT_TARGET_DEFAULT_,
       new Date(),
       "setup",
-    ]);
+    ]));
     changed = true;
   }
 
   if (!existingKeys[KPI_PRESS_OUTPUT_TARGET_KEY_]) {
-    sh.appendRow([
+    sh.appendRow(literalSheetValue_([
       KPI_PRESS_OUTPUT_TARGET_KEY_,
       KPI_PRESS_OUTPUT_TARGET_DEFAULT_,
       new Date(),
       "setup",
-    ]);
+    ]));
     changed = true;
   }
 
@@ -4264,8 +4298,8 @@ function setKpiSettingValue_(user, key, target) {
 
   const row = [key, target, now, updatedBy];
   if (rowNumber)
-    sh.getRange(rowNumber, 1, 1, APP.SETTINGS_HEADERS.length).setValues([row]);
-  else sh.appendRow(row);
+    sh.getRange(rowNumber, 1, 1, APP.SETTINGS_HEADERS.length).setValues(literalSheetValues_([row]));
+  else sh.appendRow(literalSheetValue_(row));
 
   invalidateSettingsCache_();
   return getSettings_();
@@ -4307,11 +4341,11 @@ function setKpiOutputTargets_(user, fillingValue, pressValue) {
     const row = [key, target, now, updatedBy];
     const rowNumber = rowByKey[key] || 0;
     if (rowNumber) {
-      sh.getRange(rowNumber, 1, 1, APP.SETTINGS_HEADERS.length).setValues([
+      sh.getRange(rowNumber, 1, 1, APP.SETTINGS_HEADERS.length).setValues(literalSheetValues_([
         row,
-      ]);
+      ]));
     } else {
-      sh.appendRow(row);
+      sh.appendRow(literalSheetValue_(row));
       rowByKey[key] = sh.getLastRow();
     }
   }
@@ -4406,7 +4440,7 @@ function writeMasterColumn_(col, values) {
   const rowsToClear = Math.max(sh.getMaxRows() - 1, 1);
   sh.getRange(2, col, rowsToClear, 1).clearContent();
   if (values.length)
-    sh.getRange(2, col, values.length, 1).setValues(values.map((v) => [v]));
+    sh.getRange(2, col, values.length, 1).setValues(literalSheetValues_(values.map((v) => [v])));
 }
 
 function addUser_(name, username, password, role) {
@@ -4436,7 +4470,7 @@ function addUser_(name, username, password, role) {
       master: "none",
       kpiSettings: "none",
     };
-  sheet_(APP.SHEETS.USERS).appendRow([
+  sheet_(APP.SHEETS.USERS).appendRow(literalSheetValue_([
     username,
     hashPassword_(password),
     name,
@@ -4444,7 +4478,7 @@ function addUser_(name, username, password, role) {
     true,
     new Date(),
     JSON.stringify(permissions),
-  ]);
+  ]));
   invalidateUsersCache_();
 }
 
@@ -4463,7 +4497,7 @@ function setUserPermissions_(username, permissions) {
         "Super User selalu memiliki akses penuh dan tidak memerlukan pengaturan custom.",
       );
     const normalized = normalizePermissions_("user", permissions || {});
-    sh.getRange(i + 1, 7).setValue(JSON.stringify(normalized));
+    sh.getRange(i + 1, 7).setValue(literalSheetValue_(JSON.stringify(normalized)));
     invalidateUsersCache_();
     return;
   }
@@ -4481,7 +4515,7 @@ function resetUserPassword_(username, password) {
   const values = sh.getDataRange().getValues();
   for (let i = 1; i < values.length; i++) {
     if (String(values[i][0]) !== target) continue;
-    sh.getRange(i + 1, 2).setValue(hashPassword_(nextPassword));
+    sh.getRange(i + 1, 2).setValue(literalSheetValue_(hashPassword_(nextPassword)));
     invalidateUsersCache_();
     removeSessionsForUser_(target);
     return;
@@ -4996,7 +5030,7 @@ function ensureApdSheet_(ss, forceSetup) {
       APP.APD_HEADERS.length - sh.getMaxColumns(),
     );
   }
-  sh.getRange(1, 1, 1, APP.APD_HEADERS.length).setValues([APP.APD_HEADERS]);
+  sh.getRange(1, 1, 1, APP.APD_HEADERS.length).setValues(literalSheetValues_([APP.APD_HEADERS]));
   styleHeader_(sh, APP.APD_HEADERS.length);
   sh.setFrozenRows(1);
 
@@ -5022,7 +5056,7 @@ function ensureApdSheet_(ss, forceSetup) {
       }
     }
     if (metadataChanged)
-      sh.getRange(2, 13, metadata.length, 4).setValues(metadata);
+      sh.getRange(2, 13, metadata.length, 4).setValues(literalSheetValues_(metadata));
   }
 
   APD_READY_SHEET_ = sh;
@@ -5057,7 +5091,7 @@ function ensureSheet_(ss, name, headers) {
     })
   )
     return sh;
-  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sh.getRange(1, 1, 1, headers.length).setValues(literalSheetValues_([headers]));
   styleHeader_(sh, headers.length);
   sh.setFrozenRows(1);
   return sh;
@@ -5162,4 +5196,15 @@ function jsonError_(err) {
   const message =
     err && err.message ? err.message : String(err || "Terjadi kesalahan.");
   return json_({ ok: false, message: message });
+}
+
+// Keep user text literal when Sheets would interpret a formula or a leading quote.
+// Numbers, booleans and Date values retain their native types.
+function literalSheetValue_(value) {
+  if (Array.isArray(value)) return value.map(literalSheetValue_);
+  return typeof value === "string" && /^[=']/.test(value) ? "'" + value : value;
+}
+
+function literalSheetValues_(rows) {
+  return rows.map(function (row) { return row.map(literalSheetValue_); });
 }

@@ -1214,7 +1214,35 @@
   }
 
   /* ------------------------- LOGIN PAGE ------------------------- */
+  function initPasswordToggle(id) {
+    const input = el(id);
+    if (!input || input.closest(".password-wrapper")) return;
+    const wrapper = document.createElement("span");
+    wrapper.className = "password-wrapper";
+    input.before(wrapper);
+    wrapper.append(input);
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "toggle-password";
+    button.setAttribute("aria-controls", id);
+    function setVisible(visible) {
+      input.type = visible ? "text" : "password";
+      button.innerHTML = visible
+        ? '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>'
+        : '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 9c2 4 5 6 9 6s7-2 9-6M5 12l-2 3m6-1-1 4m7-4 1 4m3-6 2 3"/></svg>';
+      const label = visible ? "Sembunyikan password" : "Tampilkan password";
+      button.setAttribute("aria-label", label);
+      button.title = label;
+      button.setAttribute("aria-pressed", String(visible));
+    }
+    setVisible(false);
+    button.addEventListener("click", () => setVisible(input.type === "password"));
+    input.form?.addEventListener("reset", () => setVisible(false));
+    wrapper.append(button);
+  }
+
   async function initLoginPage() {
+    initPasswordToggle("loginPassword");
     const form = el("loginForm");
     if (!form) return;
 
@@ -6494,7 +6522,7 @@
     )
       return;
 
-    let arrivalTimestamp = "";
+    const productionStartTime = "08:30";
     const timeValue = (date) =>
       `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
     const minutesOfDay = (value) => {
@@ -6503,7 +6531,8 @@
     };
     const syncDowntime = () => {
       const arrivalMinutes = minutesOfDay(arrival.value);
-      const startMinutes = minutesOfDay(productionStart.value);
+      productionStart.value = productionStartTime;
+      const startMinutes = minutesOfDay(productionStartTime);
       const result =
         arrivalMinutes === null || startMinutes === null
           ? ""
@@ -6513,7 +6542,11 @@
       if (isOnTime) {
         reason.value = "Tepat Waktu";
         note.value = "";
+      } else if (reason.value === "Tepat Waktu") {
+        reason.value = "";
       }
+      const onTimeOption = reason.querySelector('option[value="Tepat Waktu"]');
+      if (onTimeOption) onTimeOption.disabled = !isOnTime;
       reason.disabled = isOnTime;
       syncNote();
       return result;
@@ -6547,33 +6580,21 @@
       const arrivalDate = entry?.timestamp
         ? new Date(entry.timestamp)
         : new Date();
-      arrivalTimestamp = arrivalDate.toISOString();
       arrival.value = timeValue(arrivalDate);
-      if (entry) {
-        if (/^\d{2}:\d{2}$/.test(entry.productionStartTime || "")) {
-          productionStart.value = entry.productionStartTime;
-        } else {
-          const arrivalMinutes = minutesOfDay(arrival.value);
-          const startMinutes = Math.max(
-            0,
-            (arrivalMinutes ?? 0) - Math.max(0, Number(entry.downTime) || 0),
-          );
-          productionStart.value = `${String(Math.floor(startMinutes / 60)).padStart(2, "0")}:${String(startMinutes % 60).padStart(2, "0")}`;
-        }
-      }
+      productionStart.value = productionStartTime;
       reason.value = entry?.alasan || "";
       note.value = entry?.keterangan || "";
       syncNote();
       syncDowntime();
       if (error) error.hidden = true;
       modal.hidden = false;
-      productionStart.focus();
+      arrival.focus();
     };
     openFillingDowntimeModal = open;
 
     reason.addEventListener("change", syncNote);
-    productionStart.addEventListener("input", syncDowntime);
-    productionStart.addEventListener("change", syncDowntime);
+    arrival.addEventListener("input", syncDowntime);
+    arrival.addEventListener("change", syncDowntime);
     el("fillingDowntimeValidateButton")?.addEventListener("click", open);
     el("fillingDowntimeReopenButton")?.addEventListener("click", open);
     el("fillingDowntimeHistoryButton")?.addEventListener("click", open);
@@ -6584,15 +6605,16 @@
     });
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const downTime = Number(syncDowntime());
+      const downtimeValue = syncDowntime();
+      const downTime = Number(downtimeValue);
       const alasan = reason.value;
       const keterangan = note.value.trim();
-      if (!Number.isFinite(downTime)) {
+      if (downtimeValue === "" || !Number.isFinite(downTime)) {
         if (error) {
           error.textContent = "Hasil Down Time tidak valid.";
           error.hidden = false;
         }
-        productionStart.focus();
+        arrival.focus();
         return;
       }
       if (!alasan || (alasan === "Lainnya" && !keterangan)) {
@@ -6605,6 +6627,10 @@
         }
         return;
       }
+      const arrivalDate = new Date();
+      const [hours, arrivalMinute] = arrival.value.split(":").map(Number);
+      arrivalDate.setHours(hours, arrivalMinute, 0, 0);
+      const arrivalTimestamp = arrivalDate.toISOString();
       const button = el("fillingDowntimeSave");
       if (button) button.disabled = true;
       try {
@@ -6612,7 +6638,7 @@
           apiPost("downtime.upsert", {
             data: JSON.stringify({
               arrivalTimestamp,
-              productionStartTime: productionStart.value,
+              productionStartTime,
               downTime,
               alasan,
               keterangan,
@@ -11491,6 +11517,8 @@
   }
 
   function initUserManagement() {
+    initPasswordToggle("resetPasswordNew");
+    initPasswordToggle("resetPasswordConfirm");
     const form = el("userAddForm");
     const tbody = el("userTbody");
     if (!form || !tbody) return;
