@@ -8026,7 +8026,12 @@
   function aggregateLaporanRows(rows) {
     const groups = new Map();
     rows.forEach((entry) => {
-      const key = [entry.operator, entry.produk, entry.botol]
+      const key = [
+        entry.operator,
+        entry.produk,
+        entry.botol,
+        Number(entry.qtyBotolPerKardus) || 0,
+      ]
         .map((value) =>
           String(value || "")
             .trim()
@@ -8095,6 +8100,7 @@
       group.batchNo =
         batches.length <= 1 ? batches[0] || "—" : `${batches.length} batch`;
       group.reportId = group.batchNo;
+      group.batchNumbers = batches;
       const qtyPerCartonValues = [...group._qtyPerCartonValues];
       group.qtyBotolPerKardus =
         qtyPerCartonValues.length === 1 ? qtyPerCartonValues[0] : null;
@@ -8173,7 +8179,7 @@
       .map(
         (e) => `
       <tr>
-        <td><span class="id-badge">${esc(entryBatchNo(e) || e.reportId)}</span></td>
+        <td><span class="id-badge"${e.batchNumbers?.length > 1 ? ` title="${esc("No batch: " + e.batchNumbers.join(", "))}" style="cursor: help"` : ""}>${esc(entryBatchNo(e) || e.reportId)}</span></td>
         <td>${esc(laporanLineLabel(e.tab))}</td>
         <td>${esc(e.tanggal)}</td>
         <td>${esc(e.operator)}</td>
