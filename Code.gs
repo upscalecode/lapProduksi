@@ -300,6 +300,7 @@ function doGet(e) {
         can_(session.user, "accessKpiReport") ||
         canLevel_(session.user, "kpiFilling", "read") ||
         canLevel_(session.user, "kpiPress", "read") ||
+        canLevel_(session.user, "kpiShift", "read") ||
         canLevel_(session.user, "kpiSpv", "read");
       const readSpkReport = canLevel_(session.user, "spkReport", "read");
       const readReports = can_(session.user, "accessWorkReport") || readKpi;
@@ -4549,6 +4550,7 @@ function addUser_(name, username, password, role) {
       spkReport: "none",
       kpiFilling: "none",
       kpiPress: "none",
+      kpiShift: "none",
       kpiSpv: "none",
       master: "none",
       kpiSettings: "none",
@@ -4718,6 +4720,7 @@ function defaultPermissions_(role) {
       accessKpiReport: true,
       accessKpiFillingReport: true,
       accessKpiPressReport: true,
+      accessKpiShiftReport: true,
       accessKpiSpvReport: true,
       deleteUnpressed: true,
       viewAllData: true,
@@ -4743,6 +4746,7 @@ function defaultPermissions_(role) {
     accessKpiReport: false,
     accessKpiFillingReport: false,
     accessKpiPressReport: false,
+    accessKpiShiftReport: false,
     accessKpiSpvReport: false,
     deleteUnpressed: false,
     viewAllData: false,
@@ -4780,6 +4784,9 @@ function normalizePermissions_(role, raw) {
     parsed.accessKpiFillingReport = parsed.accessReports === true;
   if (!Object.prototype.hasOwnProperty.call(parsed, "accessKpiPressReport"))
     parsed.accessKpiPressReport = parsed.accessReports === true;
+  if (!Object.prototype.hasOwnProperty.call(parsed, "accessKpiShiftReport"))
+    parsed.accessKpiShiftReport =
+      parsed.accessKpiReport === true || parsed.accessReports === true;
   if (!Object.prototype.hasOwnProperty.call(parsed, "accessKpiSpvReport"))
     parsed.accessKpiSpvReport =
       parsed.accessKpiReport === true || parsed.accessReports === true;
@@ -4804,6 +4811,7 @@ function normalizePermissions_(role, raw) {
     spkReport: "accessSpkReport",
     kpiFilling: "accessKpiFillingReport",
     kpiPress: "accessKpiPressReport",
+    kpiShift: "accessKpiShiftReport",
     kpiSpv: "accessKpiSpvReport",
     master: "accessMaster",
     kpiSettings: "accessKpiSettings",
@@ -4815,7 +4823,7 @@ function normalizePermissions_(role, raw) {
       hasLevels &&
       scope === "reports" &&
       !Object.prototype.hasOwnProperty.call(parsed.levels, "reports")
-        ? ["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiSpv"].some(
+        ? ["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiShift", "kpiSpv"].some(
             function (child) {
               return (
                 ["read", "write", "admin"].indexOf(parsed.levels[child]) >= 0
@@ -4840,6 +4848,7 @@ function normalizePermissions_(role, raw) {
             defaults.accessKpiReport ||
             defaults.accessKpiFillingReport ||
             defaults.accessKpiPressReport ||
+            defaults.accessKpiShiftReport ||
             defaults.accessKpiSpvReport
           : defaults[scopes[scope]] ||
             (scope.indexOf("kpi") === 0 && defaults.accessKpiReport);
@@ -4867,7 +4876,7 @@ function normalizePermissions_(role, raw) {
   });
   if (hasLevels) {
     const parent = levels.reports;
-    ["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiSpv"].forEach(
+    ["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiShift", "kpiSpv"].forEach(
       function (scope) {
         defaults[scopes[scope]] =
           parent === "admin" || (parent !== "none" && levels[scope] !== "none");
@@ -4911,7 +4920,7 @@ function canLevel_(user, scope, minimum) {
   ).levels;
   const rank = { none: 0, read: 1, write: 2, admin: 3 };
   if (
-    ["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiSpv"].indexOf(
+    ["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiShift", "kpiSpv"].indexOf(
       scope,
     ) >= 0
   ) {

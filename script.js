@@ -230,6 +230,7 @@
     accessKpiReport: false,
     accessKpiFillingReport: false,
     accessKpiPressReport: false,
+    accessKpiShiftReport: false,
     accessKpiSpvReport: false,
     deleteUnpressed: false,
     viewAllData: false,
@@ -259,6 +260,8 @@
         saved.accessKpiFillingReport ?? saved.accessReports ?? false,
       accessKpiPressReport:
         saved.accessKpiPressReport ?? saved.accessReports ?? false,
+      accessKpiShiftReport:
+        saved.accessKpiShiftReport ?? saved.accessKpiReport ?? saved.accessReports ?? false,
       accessKpiSpvReport:
         saved.accessKpiSpvReport ??
         saved.accessKpiReport ??
@@ -292,6 +295,7 @@
       spkReport: "accessSpkReport",
       kpiFilling: "accessKpiFillingReport",
       kpiPress: "accessKpiPressReport",
+      kpiShift: "accessKpiShiftReport",
       kpiSpv: "accessKpiSpvReport",
       master: "accessMaster",
       kpiSettings: "accessKpiSettings",
@@ -304,7 +308,7 @@
         ? "write"
         : "read";
     if (
-      ["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiSpv"].includes(
+      ["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiShift", "kpiSpv"].includes(
         scope,
       )
     ) {
@@ -329,6 +333,7 @@
     if (can("accessKpiReport")) return true;
     if (type === "press") return canLevel("kpiPress");
     if (type === "filling") return canLevel("kpiFilling");
+    if (type === "shift") return canLevel("kpiShift");
     if (type === "spv") return canLevel("kpiSpv");
     return false;
   }
@@ -340,6 +345,7 @@
         canLevel("spkReport") ||
         canKpiType("filling") ||
         canKpiType("press") ||
+        canKpiType("shift") ||
         canKpiType("spv"))
     );
   }
@@ -484,6 +490,7 @@
             : !(
                 canKpiType("filling") ||
                 canKpiType("press") ||
+                canKpiType("shift") ||
                 canKpiType("spv")
               );
     });
@@ -2087,6 +2094,22 @@
         .toLowerCase();
 
       let sourceValues = masterValues(input.dataset.master);
+      if (input.id === "apdOperator") {
+        const date = el("apdTanggal")?.value || todayStr();
+        const editing = el("apdEditingId");
+        const usedOperators = new Set();
+        for (const source of ["preview", "saved"]) {
+          const rows = source === "preview" ? state.preview.apd || [] : state.apdEntries || [];
+          rows.forEach((row) => {
+            if (row.tanggal !== date) return;
+            if (editing?.dataset.source === source && editing.value === row.id) return;
+            usedOperators.add(String(row.operator || "").trim().toLocaleLowerCase("id-ID"));
+          });
+        }
+        sourceValues = sourceValues.filter((value) =>
+          !usedOperators.has(value.trim().toLocaleLowerCase("id-ID")),
+        );
+      }
       // Khusus filter Laporan KPI, suggestion hanya menampilkan karyawan
       // yang benar-benar memiliki pengerjaan pada line dan bulan KPI terpilih.
       if (input.id === "lap-kpi-operator") {
@@ -5574,39 +5597,35 @@
     if (!wrap) return;
 
     const alerts = [];
-    const sorted = balanceRows
-      .slice()
-      .sort(
-        (a, b) =>
-          dashboardAgeDays(b.tanggalAsal) - dashboardAgeDays(a.tanggalAsal) ||
-          (Number(b.remaining) || 0) - (Number(a.remaining) || 0),
+    const today = todayStr();
+    // SPK harus diproses pada tanggal pembuatannya. Tampilkan sisa proses
+    // sejak hari yang sama, termasuk SPK yang masih tertunda dari hari lalu.
+    const pendingFilling = (state.spkEntries || [])
+      .filter((spk) => spk.tanggal && spk.tanggal <= today)
+      .map((spk) => ({ ...spk, remaining: spkRemainingQty(spk) }))
+      .filter((spk) => spk.remaining > 0);
+    const pendingPress = balanceRows.map((row) => {
+      const spk = (state.spkEntries || []).find(
+        (item) => String(item.batchNo || "").trim() === String(row.batchNo || "").trim() && item.batchNo,
       );
-
-    sorted
-      .filter((row) => dashboardAgeDays(row.tanggalAsal) >= 2)
-      .slice(0, 2)
-      .forEach((row) => {
-        alerts.push({
-          type: "critical",
-          label: "KRITIS",
-          text: `${row.produk} — sisa Press ${dashboardQty(row.remaining)} pcs sejak ${dashboardShortDate(row.tanggalAsal)}`,
-        });
+      const dueDate = spk ? spk.tanggal : row.tanggalAsal;
+      return { ...row, tanggal: dueDate };
+    }).filter((row) => row.tanggal && row.tanggal <= today && Number(row.remaining) > 0);
+    [
+      { line: "Filling", rows: pendingFilling },
+      { line: "Press", rows: pendingPress },
+    ].forEach(({ line, rows }) => {
+      if (!rows.length) return;
+      const remaining = rows.reduce((sum, row) => sum + (Number(row.remaining) || 0), 0);
+      const unknownQty = line === "Filling" && rows.some((row) => !(Number(row.qty) > 0));
+      const overdueCount = rows.filter((row) => dashboardAgeDays(row.tanggal) > 2).length;
+      alerts.push({
+        type: overdueCount ? "critical" : "warning",
+        label: overdueCount ? "KRITIS" : "PERINGATAN",
+        text: `${line} belum selesai sesuai batas tanggal SPK: ${rows.length} ${line === "Filling" ? "SPK" : "batch"}${unknownQty ? " (sebagian Qty SPK belum tersedia)" : `, sisa ${dashboardQty(remaining)} pcs`}.${overdueCount ? ` ${overdueCount} sudah lebih dari 2 hari sejak tanggal SPK.` : " Termasuk pekerjaan pada hari yang sama."}`,
       });
-
-    if (alerts.length < 3) {
-      sorted
-        .filter((row) => dashboardAgeDays(row.tanggalAsal) === 1)
-        .slice(0, 3 - alerts.length)
-        .forEach((row) => {
-          alerts.push({
-            type: "warning",
-            label: "PERINGATAN",
-            text: `${row.produk} — sisa Press ${dashboardQty(row.remaining)} pcs sejak kemarin`,
-          });
-        });
-    }
-
-    if (brokenToday > 0 && alerts.length < 4) {
+    });
+    if (brokenToday > 0) {
       alerts.push({
         type: "attention",
         label: "PERHATIAN",
@@ -5614,7 +5633,7 @@
       });
     }
 
-    if (balanceRows.length > 0 && alerts.length < 4) {
+    if (balanceRows.length > 0) {
       alerts.push({
         type: "attention",
         label: "PERHATIAN",
@@ -5622,7 +5641,7 @@
       });
     }
 
-    const activeAlerts = alerts.slice(0, 4);
+    const activeAlerts = alerts;
     dashboardSetText("dashboardAlertCount", `${activeAlerts.length} alert`);
 
     if (!activeAlerts.length) {
@@ -9001,6 +9020,16 @@
     }),
   });
   const SHIFT_LEADER_MASTER_NAME = "ARUNG GILANG SAMPURNA";
+  const SPV_MASTER_NAME = "BENI SETIAWAN";
+
+  function getSpvName() {
+    const target = SPV_MASTER_NAME.toLowerCase();
+    return (
+      (state.master.operator || []).find(
+        (name) => String(name || "").trim().toLowerCase() === target,
+      ) || SPV_MASTER_NAME
+    );
+  }
 
   function getShiftLeaderName() {
     const target = SHIFT_LEADER_MASTER_NAME.toLowerCase();
@@ -9922,7 +9951,7 @@
       lineLabel: kpiTypeLabel(reportType),
       operator:
         normalizeKpiType(reportType) === "spv"
-          ? "SPV Produksi"
+          ? getSpvName()
           : getShiftLeaderName(),
       period,
       outputTarget,
@@ -10362,7 +10391,7 @@
         reports: report ? [report] : [],
         period,
         selectedOperator:
-          type === "spv" ? "SPV Produksi" : getShiftLeaderName(),
+          type === "spv" ? getSpvName() : getShiftLeaderName(),
         type,
         error: "",
       };
@@ -10603,6 +10632,7 @@
             : name === "kpi" &&
                 (canKpiType("filling") ||
                   canKpiType("press") ||
+                  canKpiType("shift") ||
                   canKpiType("spv"))
               ? "kpi"
               : canLevel("spkReport")
@@ -11688,12 +11718,13 @@
       ["spkReport", "Data SPK"],
       ["kpiFilling", "Laporan KPI Filling"],
       ["kpiPress", "Laporan KPI Press"],
+      ["kpiShift", "Laporan KPI Ka. Shift"],
       ["kpiSpv", "Laporan KPI SPV Produksi"],
       ["master", "Data Master (Sumber Search)"],
       ["kpiSettings", "Pengaturan KPI"],
     ];
     if (permissionGrid) {
-      permissionGrid.innerHTML = `<div class="permission-table-wrap"><table class="permission-table"><thead><tr><th>Bagian</th><th>Read</th><th>Write</th><th>Administrator</th><th>Kelola Sendiri</th><th>Kelola User Lain</th><th>Export CSV</th></tr></thead><tbody>${permissionScopes.map(([scope, title]) => `<tr data-scope="${scope}" ${["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiSpv"].includes(scope) ? 'class="permission-child"' : ""}><th scope="row">${title}</th>${["read", "write", "admin"].map((level) => `<td><label><input type="checkbox" data-level="${level}" aria-label="${title}: ${level}" ${["dashboard", "reports", "workReport", "spkReport", "kpiFilling", "kpiPress", "kpiSpv"].includes(scope) && level === "write" ? 'disabled title="Bagian ini tidak memiliki aksi tulis"' : ""}></label></td>`).join("")}${["own", "others"].map((owner) => `<td><label><input type="checkbox" data-manage="${owner}" aria-label="${title}: kelola data ${owner === "own" ? "sendiri" : "user lain"}" ${["spk", "filling", "press", "apd"].includes(scope) ? "" : 'disabled title="Tidak berlaku pada bagian ini"'}></label></td>`).join("")}<td><label><input type="checkbox" data-export-csv aria-label="${title}: Export CSV" ${["filling", "press"].includes(scope) ? "" : 'disabled title="Export CSV khusus Filling dan Press"'}></label></td></tr>`).join("")}</tbody></table></div><p class="hint-text">Export CSV dapat diberikan secara terpisah untuk Filling dan Press. Kelola Sendiri dan Kelola User Lain berlaku pada SPK, Filling, Press, dan APD.</p>`;
+      permissionGrid.innerHTML = `<div class="permission-table-wrap"><table class="permission-table"><thead><tr><th>Bagian</th><th>Read</th><th>Write</th><th>Administrator</th><th>Kelola Sendiri</th><th>Kelola User Lain</th><th>Export CSV</th></tr></thead><tbody>${permissionScopes.map(([scope, title]) => `<tr data-scope="${scope}" ${["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiShift", "kpiSpv"].includes(scope) ? 'class="permission-child"' : ""}><th scope="row">${title}</th>${["read", "write", "admin"].map((level) => `<td><label><input type="checkbox" data-level="${level}" aria-label="${title}: ${level}" ${["dashboard", "reports", "workReport", "spkReport", "kpiFilling", "kpiPress", "kpiShift", "kpiSpv"].includes(scope) && level === "write" ? 'disabled title="Bagian ini tidak memiliki aksi tulis"' : ""}></label></td>`).join("")}${["own", "others"].map((owner) => `<td><label><input type="checkbox" data-manage="${owner}" aria-label="${title}: kelola data ${owner === "own" ? "sendiri" : "user lain"}" ${["spk", "filling", "press", "apd"].includes(scope) ? "" : 'disabled title="Tidak berlaku pada bagian ini"'}></label></td>`).join("")}<td><label><input type="checkbox" data-export-csv aria-label="${title}: Export CSV" ${["filling", "press"].includes(scope) ? "" : 'disabled title="Export CSV khusus Filling dan Press"'}></label></td></tr>`).join("")}</tbody></table></div><p class="hint-text">Export CSV dapat diberikan secara terpisah untuk Filling dan Press. Kelola Sendiri dan Kelola User Lain berlaku pada SPK, Filling, Press, dan APD.</p>`;
       function syncManagement(row, reset) {
         if (!["spk", "filling", "press", "apd"].includes(row.dataset.scope))
           return;
@@ -11865,6 +11896,7 @@
             "spkReport",
             "kpiFilling",
             "kpiPress",
+            "kpiShift",
             "kpiSpv",
           ].forEach((scope) => {
             permissions.levels[scope] = "none";
