@@ -11206,13 +11206,15 @@
           const qty = Math.max(0, Number(valueForEntry(entry)) || 0);
           if (!qty) return;
           const bottle = String(entry.botol || "Botol tidak diketahui").trim();
-          byBottle.set(bottle, (byBottle.get(bottle) || 0) + qty);
+          const cartonQty = Number(entry.qtyBotolPerKardus) || 0;
+          const bottleLabel = cartonQty > 0 ? `${bottle} (${cartonQty})` : bottle;
+          byBottle.set(bottleLabel, (byBottle.get(bottleLabel) || 0) + qty);
         });
         const details = Array.from(byBottle.entries())
           .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "id"))
           .map(
             ([bottle, qty]) =>
-              `${bottle}: ${qty.toLocaleString("id-ID")} botol`,
+              `${bottle} = ${qty.toLocaleString("id-ID")}`,
           );
         return `${label} (${period.label})\n${details.length ? details.join("\n") : "Tidak ada botol pecah."}`;
       };

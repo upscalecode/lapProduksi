@@ -76,7 +76,7 @@ foreach ($current in $views.Keys) {
   $content = $pageBlocks -join "`r`n`r`n        "
   $output = $pagePrefix + $content + "`r`n`r`n        " + $sharedModals.Trim() + "`r`n      " + $suffix
   $output = $output -replace 'style\.css\?v=[^"'']+', 'style.css?v=20261003-v112-damage-card-tooltip'
-  $output = $output -replace 'script\.js\?v=[^"'']+', 'script.js?v=20261003-v204-damage-card-tooltip'
+  $output = $output -replace 'script\.js\?v=[^"'']+', 'script.js?v=20261009-v205-damage-carton-tooltip'
   Set-Content -LiteralPath $views[$current] -Value $output -Encoding UTF8
 }
 
