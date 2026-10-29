@@ -9806,6 +9806,11 @@
   function kpiOperatorsForPeriod(period, type) {
     const line = normalizeKpiType(type);
     const names = new Map();
+    const fillingOperators = new Set(
+      line === "press"
+        ? kpiOperatorsForPeriod(period, "filling").map(kpiOperatorKey)
+        : [],
+    );
 
     (state.reportEntries || [])
       .filter(
@@ -9819,7 +9824,7 @@
       )
       .forEach((item) => {
         const name = String(item.operator || "").trim();
-        if (!name) return;
+        if (!name || fillingOperators.has(kpiOperatorKey(name))) return;
         const key = name.toLowerCase();
         if (!names.has(key)) names.set(key, name);
       });
@@ -10197,10 +10202,11 @@
   function kpiPressEmployeeCardHtml(report, index, expanded = false) {
     const detailId = `kpi-employee-detail-${index}`;
     const totalAchievementTarget = 100;
-    const totalScoreClass = kpiAchievementColorClass(
-      report.totalAchievement,
-      totalAchievementTarget,
-    );
+    const totalScoreClass = report.totalAchievement > 111
+      ? "kpi-score-equal"
+      : report.totalAchievement >= 100 && report.totalAchievement <= 110
+        ? "kpi-score-yellow"
+        : kpiAchievementColorClass(report.totalAchievement, totalAchievementTarget);
     return `
       <article class="kpi-employee-card ${expanded ? "is-expanded" : ""}" data-kpi-card="${index}">
         <div class="kpi-employee-card-head">
@@ -10397,8 +10403,7 @@
       };
     }
 
-    // Hanya operator yang benar-benar memiliki pengerjaan pada line KPI terpilih.
-    // Master operator, data APD, atau line lain tidak lagi membuat card KPI ikut tampil.
+    // Operator KPI Filling tidak ikut ditampilkan sebagai operator KPI Press.
     const allOperators = kpiOperatorsForPeriod(period, type);
     const rawOperator = String(el("lap-kpi-operator")?.value || "").trim();
     let selectedOperator = "";

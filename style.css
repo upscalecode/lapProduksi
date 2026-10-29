@@ -6417,6 +6417,15 @@ button {
 .kpi-press-result .kpi-achievement-card.kpi-score-above :is(span, strong) {
   color: #ffffff !important;
 }
+
+.kpi-press-result .kpi-employee-card .kpi-achievement-card.kpi-score-yellow {
+  background: #FFE9A9 !important;
+  color: var(--ink) !important;
+}
+
+.kpi-press-result .kpi-achievement-card.kpi-score-yellow :is(span, strong) {
+  color: var(--ink) !important;
+}
 @media (max-width: 560px) {
   .kpi-employee-cards {
     grid-template-columns: 1fr;
