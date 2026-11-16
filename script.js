@@ -68,6 +68,7 @@
     spkEntries: [],
     apdEntries: [],
     downtimeEntries: [],
+    fillingHistory: {},
     preview: { filling: [], press: [], apd: [], spk: [] },
     previewDeletedEntryAudits: [],
     users: [],
@@ -990,7 +991,7 @@
   function spkFillingUsedQty(batchNo, excludeEntryId = "") {
     const target = String(batchNo || "").trim();
     if (!target) return 0;
-    return [
+    return (state.fillingHistory?.[target]?.qty || 0) + [
       ...(state.entries || []).filter((item) => item.tab === "filling"),
       ...(state.preview.filling || []),
     ]
@@ -1754,6 +1755,16 @@
     if (Array.isArray(data.adjustments)) state.adjustments = data.adjustments;
     if (Array.isArray(data.remainders)) state.remainders = data.remainders;
     if (Array.isArray(data.spkEntries)) state.spkEntries = data.spkEntries;
+    if (data.scoped) {
+      state.fillingHistory = {};
+      state.spkEntries.forEach((spk) => {
+        const loaded = state.entries.filter((entry) => entry.tab === "filling" && entryBatchNo(entry) === spk.batchNo);
+        state.fillingHistory[spk.batchNo] = {
+          qty: (Number(spk.fillingUsedQty) || 0) - loaded.reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0),
+          count: (Number(spk.fillingCount) || 0) - loaded.length,
+        };
+      });
+    } else if (Array.isArray(data.entries)) state.fillingHistory = {};
     if (Array.isArray(data.apdEntries)) state.apdEntries = data.apdEntries;
     if (Array.isArray(data.downtimeEntries)) {
       state.downtimeEntries = data.downtimeEntries;
@@ -1797,7 +1808,7 @@
     maybeOpenFillingDowntimeModal();
     if (el("spkOpenButton"))
       el("spkOpenButton").hidden = !canLevel("spk", "write");
-    if (Array.isArray(data.reportEntries) || data.reportEntriesSameAsEntries)
+    if (!data.scoped && (Array.isArray(data.reportEntries) || data.reportEntriesSameAsEntries))
       selectAvailableKpiMonth();
     renderDashboard();
     if (typeof window.refreshLaporanAutoPreview === "function") {
@@ -1824,30 +1835,105 @@
     return data;
   }
 
-  async function loadAppData(includeBootstrap = false) {
-    const data = await apiGet("appdata", {
-      includeBootstrap: includeBootstrap ? "1" : "0",
+  let appDataRequestId = 0;
+  let loadedDataKey = "";
+
+  function currentDataView() {
+    return qs(".tab-btn.active")?.dataset.view || document.body.dataset.activeView || "dashboard";
+  }
+
+  function appDataParams(view = currentDataView()) {
+    const today = todayStr();
+    let periods = [{ start: dashboardDateParts(today), end: dashboardDateParts(today) }];
+    if (view === "dashboard") periods.push(dashboardChartConfig(), dashboardPressKpiPeriod());
+    if (view === "spk") periods = [{ start: dashboardDateParts(state.spk.date || today), end: dashboardDateParts(state.spk.date || today) }];
+    if (view === "laporan") {
+      const subview = qs(".laporan-subnav-btn.active")?.dataset.laporanView || "hasil";
+      periods = [];
+      if (subview === "hasil") periods.push(kpiReportPeriodFromInputs());
+      const kpi = kpiPressMonthPeriod(el("lap-kpi-month")?.value || today.slice(0, 7));
+      if (subview === "kpi" && kpi) periods.push(kpi);
+      const mode = el("lap-spk-mode")?.value || "week";
+      const start = mode === "date" ? el("lap-spk-date")?.value : mode === "range" ? el("lap-spk-start")?.value : "";
+      const end = mode === "date" ? start : mode === "range" ? el("lap-spk-end")?.value : "";
+      if (subview === "spk") periods.push({ start: dashboardDateParts(start) || dashboardAddDays(dashboardDateParts(today), -6), end: dashboardDateParts(end) || dashboardDateParts(today) });
+    }
+    const dates = periods.flatMap((period) => [period.start, period.end]).filter((date) => date && !isNaN(date.getTime()));
+    const keys = dates.map(dashboardDateKey).sort();
+    return { view, reportView: view === "laporan" ? qs(".laporan-subnav-btn.active")?.dataset.laporanView || "hasil" : "", start: keys[0] || today, end: keys[keys.length - 1] || today };
+  }
+
+  function appDataStatus(view, loading, error = "") {
+    let notice = el("appDataNotice");
+    if (!notice) {
+      notice = document.createElement("div");
+      notice.id = "appDataNotice";
+      notice.setAttribute("role", "status");
+      notice.className = "app-data-notice";
+      qs(".content")?.before(notice);
+    }
+    notice.replaceChildren();
+    notice.hidden = !loading && !error;
+    notice.append(document.createTextNode(error || "Memuat data periode pilihan…"));
+    const section = el("view-" + view);
+    if (section) {
+      section.inert = loading || Boolean(error);
+      section.setAttribute("aria-busy", String(loading));
+      section.classList.toggle("data-loading", loading || Boolean(error));
+    }
+    if (error) {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "btn";
+      retry.textContent = "Coba lagi";
+      retry.onclick = () => loadAppData(false, view).catch(() => {});
+      notice.append(retry);
+    }
+  }
+
+  async function loadAppData(includeBootstrap = false, view = currentDataView()) {
+    const params = appDataParams(view);
+    const requestId = ++appDataRequestId;
+    appDataStatus(view, true);
+    try {
+      const data = await apiGet("appdata", {
+        ...params,
+        includeBootstrap: includeBootstrap ? "1" : "0",
+      });
+      // Kompatibilitas deployment lama: jalur baru cukup satu request.
+      if (includeBootstrap && (!data.user || !data.master)) {
+        const bootstrap = await apiGet("bootstrap");
+        data.user = bootstrap.user;
+        data.master = bootstrap.master;
+        if (!data.settings) data.settings = bootstrap.settings;
+      }
+      if (requestId !== appDataRequestId) return data;
+      applyBootstrap(data);
+      loadedDataKey = JSON.stringify(params);
+      appDataStatus(view, false);
+      if (
+        !Array.isArray(data.reportEntries) &&
+        !data.reportEntriesSameAsEntries &&
+        canOpenReports()
+      ) {
+        setConnection("error", "Backend laporan perlu diperbarui");
+        toast(
+          "Backend laporan belum diperbarui. Deploy ulang Code.gs agar data semua user tersedia.",
+          true,
+        );
+      }
+      return data;
+    } catch (err) {
+      if (requestId === appDataRequestId) appDataStatus(view, false, `Gagal memuat data: ${err.message}`);
+      throw err;
+    }
+  }
+
+  function initDataPeriodLoading() {
+    document.addEventListener("change", (event) => {
+      if (!event.target.matches("#spkDateFilter, #dashboardChartMode, #dashboardChartMonth, #dashboardChartYear, #dashboardChartStart, #dashboardChartEnd, #dashboardPressKpiMode, #dashboardPressKpiMonth, #dashboardPressKpiYear, #dashboardPressKpiStart, #dashboardPressKpiEnd, #lap-period-mode, #lap-date, #lap-month, #lap-year, #lap-start, #lap-end, #lap-kpi-month, #lap-spk-mode, #lap-spk-date, #lap-spk-start, #lap-spk-end")) return;
+      if (JSON.stringify(appDataParams()) !== loadedDataKey) loadAppData().catch(() => {});
     });
-    // Kompatibilitas deployment lama: jalur baru cukup satu request.
-    if (includeBootstrap && (!data.user || !data.master)) {
-      const bootstrap = await apiGet("bootstrap");
-      data.user = bootstrap.user;
-      data.master = bootstrap.master;
-      if (!data.settings) data.settings = bootstrap.settings;
-    }
-    applyBootstrap(data);
-    if (
-      !Array.isArray(data.reportEntries) &&
-      !data.reportEntriesSameAsEntries &&
-      canOpenReports()
-    ) {
-      setConnection("error", "Backend laporan perlu diperbarui");
-      toast(
-        "Backend laporan belum diperbarui. Deploy ulang Code.gs agar data semua user tersedia.",
-        true,
-      );
-    }
-    return data;
   }
 
   function fillSelect(select, list, placeholder) {
@@ -2676,7 +2762,7 @@
         tanggalAsal: String(item.tanggalAsal || item.tanggal || ""),
         produk: String(item.produk || "").trim(),
         botol: String(item.botol || "").trim(),
-        batchNo: entryBatchNo(sourceEntry),
+        batchNo: entryBatchNo(sourceEntry) || String(item.batchNo || ""),
         qtyBotolPerKardus: getQtyBotolPerKardusFromRemainder(item),
         qtyBotolPerKardusValues: [],
         qtyFilling: Number(item.qtyFilling) || remaining,
@@ -6838,7 +6924,7 @@
               : Number(item.usedQty) > 0
                 ? "SPK sudah digunakan dan tidak dapat dihapus"
                 : "Anda tidak memiliki izin mengelola SPK ini";
-            const fillingCount = fillingRows.filter(
+            const fillingCount = (state.fillingHistory?.[batchNo]?.count || 0) + fillingRows.filter(
               (entry) => entryBatchNo(entry) === batchNo,
             ).length;
             const qty = Math.max(0, Number(item.qty) || 0);
@@ -6869,7 +6955,7 @@
       : '<tr><td colspan="10" class="empty-row">Tidak ada SPK dengan sisa Qty.</td></tr>';
     dashboardSetText(
       "fillingSpkSummary",
-      `${rows.length ? start + 1 : 0}–${Math.min(start + pageSize, rows.length)} dari ${rows.length} SPK belum selesai · ${fillingRows.length} total input Filling`,
+      `${rows.length ? start + 1 : 0}–${Math.min(start + pageSize, rows.length)} dari ${rows.length} SPK belum selesai`,
     );
     renderPagination(
       el("fillingSpkPagination"),
@@ -7963,9 +8049,12 @@
     const tabbar = el("mainTabbar");
     if (!tabbar) return;
     let handlingTabHistory = false;
-    tabbar.addEventListener("click", (event) => {
+    let navigating = false;
+    tabbar.addEventListener("click", async (event) => {
       const btn = event.target.closest(".tab-btn");
       if (!btn || !state.currentUser) return;
+      if (navigating) { event.preventDefault(); return; }
+      const fromHistory = handlingTabHistory;
       if (btn.classList.contains("active")) {
         event.preventDefault();
         return;
@@ -8018,12 +8107,21 @@
       qsa(".content > .view").forEach((node) => {
         node.hidden = node.id !== "view-" + view;
       });
+      navigating = true;
+      try {
+        await loadAppData(false, view);
+      } catch (err) {
+        toast(err.message, true);
+        return;
+      } finally {
+        navigating = false;
+      }
       if (view === "filling") maybeOpenFillingDowntimeModal();
       if (view === "laporan") {
         window.refreshLaporanAutoPreview?.();
         window.refreshKpiLaporanAutoPreview?.();
       }
-      if (!handlingTabHistory) {
+      if (!fromHistory) {
         try {
           history.pushState({ appTab: true, view }, "", `#${view}`);
         } catch (error) {
@@ -10703,6 +10801,7 @@
       const btn = event.target.closest(".laporan-subnav-btn");
       if (!btn) return;
       showLaporanSubview(btn.dataset.laporanView || "hasil");
+      loadAppData(false, "laporan").catch(() => {});
     });
 
     // initAppPage memasang event sebelum profil/cache pengguna selesai dimuat.
@@ -11071,6 +11170,8 @@
     if (!generate) return;
 
     let previewTimer = null;
+    if (el("lap-period-mode")) el("lap-period-mode").value = "month";
+    if (el("lap-month")) el("lap-month").value = todayStr().slice(0, 7);
     // Browser dapat memulihkan nilai <select> setelah refresh. Laporan harus
     // selalu dimulai dalam mode per pengerjaan sampai pengguna memilih sendiri.
     if (el("lap-operator-filter")) el("lap-operator-filter").value = "";
@@ -12516,6 +12617,7 @@
     initSettingCards();
     initMasterData();
     initExcelTableFilters();
+    initDataPeriodLoading();
 
     // Tampilkan aplikasi langsung memakai profil + master cache terakhir.
     // Validasi server tetap berjalan segera setelahnya.

@@ -292,6 +292,14 @@ function doGet(e) {
 
     if (action === "appdata") {
       const session = requireSession_(param_(e, "token"));
+      if (param_(e, "view")) {
+        const data = scopedAppData_(session.user, e);
+        if (param_(e, "includeBootstrap") === "1") {
+          data.user = publicUser_(session.user);
+          data.master = getMaster_();
+        }
+        return json_(data);
+      }
       const readDashboard = can_(session.user, "accessDashboard");
       const readFilling = can_(session.user, "accessFilling");
       const readSpk = can_(session.user, "accessSpk");
@@ -359,6 +367,129 @@ function doGet(e) {
   }
 }
 
+function cachedAppRead_(key, read) {
+  const revision = PropertiesService.getScriptProperties().getProperty("PPR_DATA_REVISION") || "0";
+  const cacheKey = "ppr_data_v1_" + hashPassword_(revision + ":" + key);
+  const cache = CacheService.getScriptCache();
+  try {
+    const saved = cache.get(cacheKey);
+    if (saved) return JSON.parse(saved);
+  } catch (_) {}
+  const data = read();
+  // shortcut: respons besar tidak di-cache; pecah cache jika laporan semua periode sering digunakan.
+  try {
+    const json = JSON.stringify(data).replace(/[\u007f-\uffff]/g, function (ch) {
+      return "\\u" + ("0000" + ch.charCodeAt(0).toString(16)).slice(-4);
+    });
+    if (json.length < 90000) cache.put(cacheKey, json, 60);
+  } catch (_) {}
+  return data;
+}
+
+function productionOverview_() {
+  const sh = entrySheet_();
+  const count = sh.getLastRow() - 1;
+  if (count <= 0) return [];
+  return sh.getRange(2, 1, count, 10).getValues().map(function (row, index) {
+    return {
+      id: String(row[0] || ""), reportId: String(row[1] || ""), tab: String(row[2] || ""),
+      tanggal: formatDateCell_(row[3]), produk: String(row[5] || ""), botol: String(row[6] || ""),
+      qtyBotolPerKardus: number_(row[8]), totalQty: number_(row[9]), row: index + 2,
+    };
+  }).filter(function (entry) { return entry.id; });
+}
+
+function entriesInPeriod_(overview, start, end) {
+  const matches = overview.filter(function (entry) {
+    return entry.tanggal >= start && entry.tanggal <= end;
+  });
+  if (!matches.length) return [];
+  const groups = [];
+  matches.forEach(function (entry) {
+    const previous = groups[groups.length - 1];
+    if (previous && previous.end + 1 === entry.row) previous.end = entry.row;
+    else groups.push({ start: entry.row, end: entry.row });
+  });
+  // Hindari ratusan panggilan Sheets bila tanggal input tidak berurutan.
+  if (groups.length > 20) {
+    return getEntries_().filter(function (entry) {
+      return entry.tanggal >= start && entry.tanggal <= end;
+    });
+  }
+  const sh = entrySheet_();
+  let result = [];
+  groups.forEach(function (group) {
+    result = result.concat(sh.getRange(group.start, 1, group.end - group.start + 1, APP.ENTRY_HEADERS.length)
+      .getValues().map(rowToEntry_));
+  });
+  return result;
+}
+
+function scopedAppData_(user, e) {
+  const view = param_(e, "view");
+  const reportView = param_(e, "reportView") || "hasil";
+  if (["dashboard", "spk", "filling", "press", "apd", "laporan", "master"].indexOf(view) < 0)
+    throw new Error("Halaman tidak valid.");
+  const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "Asia/Jakarta", "yyyy-MM-dd");
+  const start = param_(e, "start") || today.slice(0, 7) + "-01";
+  const end = param_(e, "end") || today;
+  validateEntryDate_(start);
+  validateEntryDate_(end);
+  if (start > end) throw new Error("Rentang tanggal tidak valid.");
+  const key = JSON.stringify([user.username, user.role, user.permissions, view, reportView, start, end, today]);
+  return cachedAppRead_(key, function () {
+    const dashboard = view === "dashboard" && can_(user, "accessDashboard");
+    const filling = view === "filling" && can_(user, "accessFilling");
+    const press = view === "press" && can_(user, "accessPress");
+    const spk = view === "spk" && can_(user, "accessSpk");
+    const kpi = view === "laporan" && reportView !== "spk" && (can_(user, "accessKpiReport") ||
+      ["kpiFilling", "kpiPress", "kpiShift", "kpiSpv"].some(function (scope) { return canLevel_(user, scope, "read"); }));
+    const reports = view === "laporan" && reportView !== "spk" && (can_(user, "accessWorkReport") || kpi);
+    const spkReport = view === "laporan" && reportView === "spk" && canLevel_(user, "spkReport", "read");
+    const apd = (view === "apd" && can_(user, "accessApd")) || dashboard || kpi;
+    const overview = dashboard || filling || press || spk || reports || spkReport ? productionOverview_() : [];
+    const entries = dashboard || filling || press || reports ? entriesInPeriod_(overview, start, end) : [];
+    const used = {}, counts = {};
+    overview.forEach(function (entry) {
+      if (entry.tab !== "filling") return;
+      const batch = reportBatchNo_(entry.reportId);
+      used[batch] = number_(used[batch]) + entry.totalQty;
+      counts[batch] = number_(counts[batch]) + 1;
+    });
+    const allSpk = dashboard || filling || press || spk || spkReport ? getSpkEntries_() : [];
+    const spkEntries = allSpk.map(function (item) {
+      return Object.assign({}, item, { fillingUsedQty: number_(used[item.batchNo]), fillingCount: number_(counts[item.batchNo]) });
+    }).filter(function (item) {
+      return (item.tanggal >= start && item.tanggal <= end) ||
+        ((dashboard || filling || press) && (number_(item.qty) > 0 ? item.fillingUsedQty < number_(item.qty) : !item.fillingCount));
+    });
+    const remainders = (press || filling || dashboard) && can_(user, "accessPress")
+      ? getPressRemainders_(overview, []) : [];
+    // Batch asal saldo tetap disertakan meskipun SPK-nya dibuat sebelum periode pilihan.
+    if (remainders.length) {
+      const known = {};
+      spkEntries.forEach(function (item) { known[item.batchNo] = true; });
+      const needed = {};
+      remainders.forEach(function (item) { needed[item.batchNo] = true; });
+      allSpk.forEach(function (item) {
+        if (needed[item.batchNo] && !known[item.batchNo]) spkEntries.push(Object.assign({}, item, {
+          fillingUsedQty: number_(used[item.batchNo]), fillingCount: number_(counts[item.batchNo]),
+        }));
+      });
+    }
+    const inPeriod = function (item) { return item.tanggal >= start && item.tanggal <= end; };
+    return {
+      ok: true, scoped: true, entries: entries.filter(function (entry) {
+        return dashboard || (entry.tab === "filling" ? filling : entry.tab === "press" && press);
+      }),
+      reportEntries: reports ? entries : [], adjustments: [], remainders: remainders, spkEntries: spkEntries,
+      apdEntries: apd ? getApdEntries_(start, end) : [],
+      downtimeEntries: filling || dashboard || kpi ? getDowntimeEntries_().filter(inPeriod) : [],
+      users: view === "master" && user.role === "superuser" ? getUsers_() : [], settings: getSettings_(),
+    };
+  });
+}
+
 function doPost(e) {
   try {
     const action = param_(e, "action");
@@ -372,6 +503,7 @@ function doPost(e) {
     }
 
     const session = requireSession_(param_(e, "token"));
+    INVALIDATE_APP_DATA_ = true;
 
     switch (action) {
       case "entry.create":
@@ -655,6 +787,12 @@ function doPost(e) {
   }
 }
 
+let INVALIDATE_APP_DATA_ = false;
+
+function invalidateAppData_() {
+  PropertiesService.getScriptProperties().setProperty("PPR_DATA_REVISION", Utilities.getUuid());
+}
+
 function withWriteLock_(fn) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(APP.WRITE_LOCK_MS)) {
@@ -663,9 +801,14 @@ function withWriteLock_(fn) {
     );
   }
   try {
+    if (INVALIDATE_APP_DATA_) invalidateAppData_();
     return fn();
   } finally {
-    lock.releaseLock();
+    try {
+      if (INVALIDATE_APP_DATA_) invalidateAppData_();
+    } finally {
+      lock.releaseLock();
+    }
   }
 }
 
@@ -902,7 +1045,6 @@ function handleLogin_(e) {
     throw new Error("Username dan password wajib diisi.");
   }
 
-  maybePurgeExpiredSessions_();
   const props = PropertiesService.getScriptProperties();
   const attemptKey = "PPR_LOGIN_ATTEMPT_" + hashPassword_(username.toLowerCase());
   const now = Date.now();
@@ -1054,6 +1196,19 @@ function readCachedSession_(token) {
 
 function removeCachedSession_(token) {
   if (token) CacheService.getScriptCache().remove(sessionCacheKey_(token));
+}
+
+function setupPerformanceMaintenance() {
+  const exists = ScriptApp.getProjectTriggers().some(function (trigger) {
+    return trigger.getHandlerFunction() === "cleanupExpiredSessions";
+  });
+  if (!exists) ScriptApp.newTrigger("cleanupExpiredSessions").timeBased().everyHours(1).create();
+  cleanupExpiredSessions();
+  return "Pembersihan sesi otomatis setiap jam sudah aktif.";
+}
+
+function cleanupExpiredSessions() {
+  return withWriteLock_(function () { maybePurgeExpiredSessions_(); });
 }
 
 // Called under the write lock. No browser storage or preview data is touched.
@@ -1447,20 +1602,34 @@ function apdRowToObject_(row, rowNumber) {
   };
 }
 
-function getApdEntries_() {
+function getApdEntries_(start, end) {
   const sh = ensureApdSheet_(spreadsheet_());
   const lastRow = sh.getLastRow();
   if (lastRow < 2) return [];
+  let first = 2, last = lastRow;
+  if (start && end) {
+    const dates = sh.getRange(2, 1, lastRow - 1, 1).getValues();
+    const matches = [];
+    dates.forEach(function (row, index) {
+      const date = formatDateCell_(row[0]);
+      if (date >= start && date <= end) matches.push(index + 2);
+    });
+    if (!matches.length) return [];
+    first = matches[0];
+    last = matches[matches.length - 1];
+  }
   const rows = sh
-    .getRange(2, 1, lastRow - 1, APP.APD_HEADERS.length)
+    .getRange(first, 1, last - first + 1, APP.APD_HEADERS.length)
     .getValues();
-  return apdRowsToEntries_(rows);
+  return apdRowsToEntries_(rows, first).filter(function (item) {
+    return !start || !end || (item.tanggal >= start && item.tanggal <= end);
+  });
 }
 
-function apdRowsToEntries_(rows) {
+function apdRowsToEntries_(rows, firstRow) {
   return rows
     .map(function (row, index) {
-      return apdRowToObject_(row, index + 2);
+      return apdRowToObject_(row, index + (firstRow || 2));
     })
     .sort(function (a, b) {
       return (
@@ -3089,13 +3258,15 @@ function buildPressAllocationModel_(entries, adjustments) {
 
 function decoratePressRemainders_(remainders, entries, adjustments) {
   const rows = Array.isArray(remainders) ? remainders : [];
-  const model = buildPressAllocationModel_(entries || [], adjustments || []);
   const lotsById = {};
   // Data Pengerjaan hanya dipakai untuk melengkapi Qty Botol/Kardus karena kolom
   // tersebut belum tersimpan di sheet Sisa Press. Nilai Qty Filling, Sudah Press,
   // dan Sisa tetap dibaca langsung dari setiap baris sheet Sisa Press.
-  model.fillingLots.forEach(function (lot) {
-    lotsById[lot.id] = lot;
+  (entries || []).forEach(function (entry) {
+    if (entry.tab !== "filling" || number_(entry.totalQty) <= 0) return;
+    lotsById[String(entry.id)] = {
+      qtyBotolPerKardus: entry.qtyBotolPerKardus, batchNo: reportBatchNo_(entry.reportId),
+    };
   });
   return rows.map(function (item) {
     const lot = lotsById[String(item.id)];

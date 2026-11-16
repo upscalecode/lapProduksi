@@ -6944,3 +6944,13 @@ button {
     grid-template-rows: auto auto auto auto;
   }
 }
+.app-data-notice {
+  margin: 12px 0;
+  padding: 12px 16px;
+  background: #fff;
+  color: #26374d;
+  border: 1px solid #dbe2ea;
+  border-radius: 8px;
+}
+.app-data-notice .btn { margin-left: 12px; }
+.view.data-loading { opacity: 0.45; }
