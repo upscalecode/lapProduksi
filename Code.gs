@@ -1807,6 +1807,7 @@ function createEntriesBatch_(user, dataList) {
         "Data ke-" + (index + 1) + ": Line pengerjaan tidak valid.",
       );
     }
+    validateEntryDate_(data.tanggal);
     if (!data.operator || !data.produk || !data.botol) {
       throw new Error(
         "Data ke-" + (index + 1) + ": Operator, Produk, dan Botol wajib diisi.",
@@ -2038,7 +2039,7 @@ function createEntriesBatch_(user, dataList) {
 }
 
 function createEntry_(user, data) {
-  validateEntry_(data);
+  if (!data) throw new Error("Data pengerjaan kosong.");
 
   const createdAt = new Date();
   const line = data.line === "press" ? "press" : "filling";
@@ -2056,6 +2057,8 @@ function createEntry_(user, data) {
       throw new Error("ID permintaan sudah digunakan oleh user lain.");
     }
   }
+
+  validateEntry_(data);
 
   const id = validRequestedId || Utilities.getUuid();
   const reportId = makeReportId_(line, createdAt, data.batchNo);
@@ -2336,10 +2339,19 @@ function rowToEntry_(row) {
   };
 }
 
+function validateEntryDate_(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value))
+    throw new Error("Tanggal pengerjaan tidak valid.");
+  const date = new Date(value + "T00:00:00.000Z");
+  if (isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value)
+    throw new Error("Tanggal pengerjaan tidak valid.");
+}
+
 function validateEntry_(data, excludeEntryId) {
   if (!data) throw new Error("Data pengerjaan kosong.");
   if (data.line !== "filling" && data.line !== "press")
     throw new Error("Line pengerjaan tidak valid.");
+  validateEntryDate_(data.tanggal);
   if (!data.operator || !data.produk || !data.botol)
     throw new Error("Operator, Produk, dan Botol wajib diisi.");
 
