@@ -50,7 +50,7 @@
 
     // Ganti dengan URL deployment Web App terbaru yang berakhir /exec.
     WEB_APP_URL:
-      "https://script.google.com/macros/s/AKfycbwZDfqSw5aa7fGuXjzllSR7CXUvE44JxiHOpYLEE_gReu2ibGOqq-q0sMRDTpb43WBpCw/exec",
+      "https://script.google.com/macros/s/AKfycbw4NGIwBO1Jt1HoYZrXwEMZ6Z3B65jpdkm-l8j2KPaN1fMtvvTSWR-moJRAK5vDHv9r4g/exec",
   };
 
   const SCHEMA_VERSION = "2026-09-19-v15-all-line-hide-fourth-summary";
@@ -261,7 +261,10 @@
       accessKpiPressReport:
         saved.accessKpiPressReport ?? saved.accessReports ?? false,
       accessKpiShiftReport:
-        saved.accessKpiShiftReport ?? saved.accessKpiReport ?? saved.accessReports ?? false,
+        saved.accessKpiShiftReport ??
+        saved.accessKpiReport ??
+        saved.accessReports ??
+        false,
       accessKpiSpvReport:
         saved.accessKpiSpvReport ??
         saved.accessKpiReport ??
@@ -308,9 +311,14 @@
         ? "write"
         : "read";
     if (
-      ["workReport", "spkReport", "kpiFilling", "kpiPress", "kpiShift", "kpiSpv"].includes(
-        scope,
-      )
+      [
+        "workReport",
+        "spkReport",
+        "kpiFilling",
+        "kpiPress",
+        "kpiShift",
+        "kpiSpv",
+      ].includes(scope)
     ) {
       const parent =
         perms.levels?.reports || (perms.accessReports ? "admin" : "read");
@@ -2099,15 +2107,24 @@
         const editing = el("apdEditingId");
         const usedOperators = new Set();
         for (const source of ["preview", "saved"]) {
-          const rows = source === "preview" ? state.preview.apd || [] : state.apdEntries || [];
+          const rows =
+            source === "preview"
+              ? state.preview.apd || []
+              : state.apdEntries || [];
           rows.forEach((row) => {
             if (row.tanggal !== date) return;
-            if (editing?.dataset.source === source && editing.value === row.id) return;
-            usedOperators.add(String(row.operator || "").trim().toLocaleLowerCase("id-ID"));
+            if (editing?.dataset.source === source && editing.value === row.id)
+              return;
+            usedOperators.add(
+              String(row.operator || "")
+                .trim()
+                .toLocaleLowerCase("id-ID"),
+            );
           });
         }
-        sourceValues = sourceValues.filter((value) =>
-          !usedOperators.has(value.trim().toLocaleLowerCase("id-ID")),
+        sourceValues = sourceValues.filter(
+          (value) =>
+            !usedOperators.has(value.trim().toLocaleLowerCase("id-ID")),
         );
       }
       // Khusus filter Laporan KPI, suggestion hanya menampilkan karyawan
@@ -5604,21 +5621,34 @@
       .filter((spk) => spk.tanggal && spk.tanggal <= today)
       .map((spk) => ({ ...spk, remaining: spkRemainingQty(spk) }))
       .filter((spk) => spk.remaining > 0);
-    const pendingPress = balanceRows.map((row) => {
-      const spk = (state.spkEntries || []).find(
-        (item) => String(item.batchNo || "").trim() === String(row.batchNo || "").trim() && item.batchNo,
+    const pendingPress = balanceRows
+      .map((row) => {
+        const spk = (state.spkEntries || []).find(
+          (item) =>
+            String(item.batchNo || "").trim() ===
+              String(row.batchNo || "").trim() && item.batchNo,
+        );
+        const dueDate = spk ? spk.tanggal : row.tanggalAsal;
+        return { ...row, tanggal: dueDate };
+      })
+      .filter(
+        (row) =>
+          row.tanggal && row.tanggal <= today && Number(row.remaining) > 0,
       );
-      const dueDate = spk ? spk.tanggal : row.tanggalAsal;
-      return { ...row, tanggal: dueDate };
-    }).filter((row) => row.tanggal && row.tanggal <= today && Number(row.remaining) > 0);
     [
       { line: "Filling", rows: pendingFilling },
       { line: "Press", rows: pendingPress },
     ].forEach(({ line, rows }) => {
       if (!rows.length) return;
-      const remaining = rows.reduce((sum, row) => sum + (Number(row.remaining) || 0), 0);
-      const unknownQty = line === "Filling" && rows.some((row) => !(Number(row.qty) > 0));
-      const overdueCount = rows.filter((row) => dashboardAgeDays(row.tanggal) > 2).length;
+      const remaining = rows.reduce(
+        (sum, row) => sum + (Number(row.remaining) || 0),
+        0,
+      );
+      const unknownQty =
+        line === "Filling" && rows.some((row) => !(Number(row.qty) > 0));
+      const overdueCount = rows.filter(
+        (row) => dashboardAgeDays(row.tanggal) > 2,
+      ).length;
       alerts.push({
         type: overdueCount ? "critical" : "warning",
         label: overdueCount ? "KRITIS" : "PERINGATAN",
@@ -9026,7 +9056,10 @@
     const target = SPV_MASTER_NAME.toLowerCase();
     return (
       (state.master.operator || []).find(
-        (name) => String(name || "").trim().toLowerCase() === target,
+        (name) =>
+          String(name || "")
+            .trim()
+            .toLowerCase() === target,
       ) || SPV_MASTER_NAME
     );
   }
@@ -10202,11 +10235,15 @@
   function kpiPressEmployeeCardHtml(report, index, expanded = false) {
     const detailId = `kpi-employee-detail-${index}`;
     const totalAchievementTarget = 100;
-    const totalScoreClass = report.totalAchievement > 111
-      ? "kpi-score-equal"
-      : report.totalAchievement >= 100 && report.totalAchievement <= 110
-        ? "kpi-score-yellow"
-        : kpiAchievementColorClass(report.totalAchievement, totalAchievementTarget);
+    const totalScoreClass =
+      report.totalAchievement > 111
+        ? "kpi-score-equal"
+        : report.totalAchievement >= 100 && report.totalAchievement <= 110
+          ? "kpi-score-yellow"
+          : kpiAchievementColorClass(
+              report.totalAchievement,
+              totalAchievementTarget,
+            );
     return `
       <article class="kpi-employee-card ${expanded ? "is-expanded" : ""}" data-kpi-card="${index}">
         <div class="kpi-employee-card-head">
@@ -10396,8 +10433,7 @@
       return {
         reports: report ? [report] : [],
         period,
-        selectedOperator:
-          type === "spv" ? getSpvName() : getShiftLeaderName(),
+        selectedOperator: type === "spv" ? getSpvName() : getShiftLeaderName(),
         type,
         error: "",
       };
@@ -11212,15 +11248,13 @@
           if (!qty) return;
           const bottle = String(entry.botol || "Botol tidak diketahui").trim();
           const cartonQty = Number(entry.qtyBotolPerKardus) || 0;
-          const bottleLabel = cartonQty > 0 ? `${bottle} (${cartonQty})` : bottle;
+          const bottleLabel =
+            cartonQty > 0 ? `${bottle} (${cartonQty})` : bottle;
           byBottle.set(bottleLabel, (byBottle.get(bottleLabel) || 0) + qty);
         });
         const details = Array.from(byBottle.entries())
           .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "id"))
-          .map(
-            ([bottle, qty]) =>
-              `${bottle} = ${qty.toLocaleString("id-ID")}`,
-          );
+          .map(([bottle, qty]) => `${bottle} = ${qty.toLocaleString("id-ID")}`);
         return `${label} (${period.label})\n${details.length ? details.join("\n") : "Tidak ada botol pecah."}`;
       };
       const setDamageTooltip = (card, detail) => {
