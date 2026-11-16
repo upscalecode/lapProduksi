@@ -405,6 +405,10 @@
     );
   }
 
+  function canDeleteFillingRemainder() {
+    return canLevel("filling", "admin") || (canLevel("filling", "read") && can("deleteUnpressed"));
+  }
+
   function firstAllowedView() {
     if (can("accessDashboard")) return "dashboard";
     if (can("accessSpk")) return "spk";
@@ -1004,6 +1008,7 @@
   }
 
   function spkRemainingQty(spk, excludeEntryId = "") {
+    if (spk?.fillingClosedAt) return 0;
     const qty = Math.max(0, Number(spk?.qty) || 0);
     const used = spkFillingUsedQty(spk?.batchNo, excludeEntryId);
     // Data SPK lama tanpa Qty tetap tampil sampai pernah digunakan.
@@ -2695,8 +2700,9 @@
     document.head.appendChild(style);
   }
 
-  function askClosePressReason(rowOrRows) {
+  function askClosePressReason(rowOrRows, line = "press") {
     ensureClosePressModalStyle();
+    const isFilling = line === "filling";
     const rows = Array.isArray(rowOrRows) ? rowOrRows : [rowOrRows];
     const row = rows[0] || {};
     const totalRemaining = rows.reduce(
@@ -2712,8 +2718,8 @@
       overlay.className = "press-close-overlay";
       overlay.innerHTML = `
         <div class="press-close-dialog" role="dialog" aria-modal="true" aria-labelledby="pressCloseTitle">
-          <h3 id="pressCloseTitle">Hapus Sisa Pengerjaan Press</h3>
-          <p>Qty sisa akan dikeluarkan dari saldo Press aktif, tetapi riwayat Filling/Press tidak dihapus. Alasan wajib dicatat untuk audit.</p>
+          <h3 id="pressCloseTitle">Hapus Sisa Pengerjaan ${isFilling ? "Filling" : "Press"}</h3>
+          <p>${isFilling ? "Sisa SPK akan ditutup dan tidak dapat ditambahkan ke Filling lagi. Data SPK, Filling, dan saldo Press yang sudah ada tetap tersimpan." : "Qty sisa akan dikeluarkan dari saldo Press aktif, tetapi riwayat Filling/Press tidak dihapus."} Alasan wajib dicatat untuk audit.</p>
           <div class="press-close-meta">
             <div><strong>Produk</strong><br>${rows.length === 1 ? esc(row.produk) : `${new Set(rows.map((item) => item.produk)).size} produk dipilih`}</div>
             <div><strong>Botol</strong><br>${rows.length === 1 ? esc(row.botol) : `${new Set(rows.map((item) => item.botol)).size} jenis botol`}</div>
@@ -2723,7 +2729,7 @@
             <div><strong>Tanggal</strong><br>${esc(todayStr())}</div>
           </div>
           <label class="field"><span>Alasan Hapus <b>*</b></span>
-            <textarea class="press-close-reason" maxlength="500" placeholder="Contoh: sisa botol rusak dan tidak dapat diproses press" required></textarea>
+            <textarea class="press-close-reason" maxlength="500" placeholder="${isFilling ? "Contoh: sisa SPK dibatalkan karena bahan tidak tersedia" : "Contoh: sisa botol rusak dan tidak dapat diproses press"}" required></textarea>
           </label>
           <p class="press-close-error"></p>
           <div class="press-close-actions">
@@ -3761,6 +3767,12 @@
           (item) => String(item.batchNo) === String(payload.batchNo),
         );
         const requestedQty = payload.qtyKardus * payload.qtyBotolPerKardus;
+        const existing = editingSource === "saved" ? state.entries.find((entry) => entry.id === id) : null;
+        if (spk?.fillingClosedAt && (!existing || entryBatchNo(existing) !== payload.batchNo || requestedQty !== Number(existing.totalQty))) {
+          errorEl.textContent = "Sisa Filling SPK ini sudah ditutup; Qty tidak dapat diubah atau ditambah.";
+          errorEl.hidden = false;
+          return;
+        }
         const spkCapacity = Math.max(0, Number(spk?.qty) || 0);
         const alreadyUsedQty = spkFillingUsedQty(payload.batchNo, id);
         if (spkCapacity > 0 && alreadyUsedQty + requestedQty > spkCapacity) {
@@ -6958,9 +6970,7 @@
       rows
         .filter(
           (item) =>
-            Number(item.usedQty) <= 0 &&
-            canManageSpk(item) &&
-            canLevel("spk", "write"),
+            Number(item.qty) > 0 && canDeleteFillingRemainder(),
         )
         .map((item) => String(item.batchNo)),
     );
@@ -6978,10 +6988,8 @@
             const batchNo = String(item.batchNo || "");
             const selectable = selectableBatchNos.has(batchNo);
             const selectionTitle = selectable
-              ? "Pilih SPK untuk penghapusan massal"
-              : Number(item.usedQty) > 0
-                ? "SPK sudah digunakan dan tidak dapat dihapus"
-                : "Anda tidak memiliki izin mengelola SPK ini";
+              ? "Pilih sisa Filling untuk ditutup"
+              : "Perlu Qty SPK dan izin Hapus Sisa Filling / Press";
             const fillingCount = (state.fillingHistory?.[batchNo]?.count || 0) + fillingRows.filter(
               (entry) => entryBatchNo(entry) === batchNo,
             ).length;
@@ -7003,10 +7011,10 @@
             <td>${qty ? qty.toLocaleString("id-ID") : "—"}</td>
             <td><strong>${remainingLabel}</strong></td>
             <td><span class="sync-badge ${fillingCount ? "saved" : "pending"}">${fillingCount ? `${fillingCount} Input Filling` : "Belum ada Filling"}</span></td>
-            <td><button type="button" class="btn btn-primary filling-spk-use"
+            <td><div class="press-balance-actions filling-spk-actions"><button type="button" class="btn btn-primary filling-spk-use"
               data-batch-no="${esc(item.batchNo)}" data-produk="${esc(item.produk)}" data-botol="${esc(item.botol)}"
               data-qty-per-dus="${qtyPerDus}"
-              >Gunakan</button></td>
+              >Gunakan</button>${selectable ? `<button type="button" class="btn btn-danger filling-spk-close" data-batch-no="${esc(item.batchNo)}" title="Tutup sisa Filling dengan alasan">Hapus</button>` : ""}</div></td>
           </tr>`;
           })
           .join("")
@@ -7044,7 +7052,7 @@
     if (massDeleteButton) {
       massDeleteButton.hidden = !selectedFillingSpkRows.size;
       massDeleteButton.disabled =
-        !selectedFillingSpkRows.size || !canLevel("spk", "write");
+        !selectedFillingSpkRows.size || !canDeleteFillingRemainder();
       massDeleteButton.innerHTML = `<i class="fa-solid fa-trash"></i> Hapus Massal${selectedFillingSpkRows.size ? ` (${selectedFillingSpkRows.size})` : ""}`;
     }
   }
@@ -7071,39 +7079,11 @@
     });
     el("fillingSpkMassDeleteButton")?.addEventListener("click", async () => {
       const batchNos = Array.from(selectedFillingSpkRows);
-      if (!batchNos.length) return;
-      if (batchNos.length > 100)
-        return toast("Maksimal 100 SPK per sekali penghapusan.", true);
-      if (
-        !(await confirmDelete({
-          title: `Hapus ${batchNos.length} SPK terpilih?`,
-          message:
-            "SPK terpilih akan dihapus dari Spreadsheet. SPK yang sudah digunakan tidak dapat dihapus.",
-          item: `${batchNos.length} SPK belum digunakan`,
-        }))
-      )
-        return;
-
-      const button = el("fillingSpkMassDeleteButton");
-      button.disabled = true;
-      button.textContent = "Menghapus…";
-      try {
-        await enqueueWrite(() => apiPost("spk.batchDelete", { batchNos }));
-        const deleted = new Set(batchNos);
-        state.spkEntries = state.spkEntries.filter(
-          (item) => !deleted.has(String(item.batchNo)),
-        );
-        selectedFillingSpkRows.clear();
-        renderFillingSpkQueue();
-        renderSpkToday();
-        renderSpkReport();
-        toast(`${batchNos.length} SPK berhasil dihapus.`);
-      } catch (err) {
-        toast(`Gagal menghapus SPK terpilih: ${err.message}`, true);
-        renderFillingSpkQueue();
-      }
+      await closeFillingSpks(batchNos, el("fillingSpkMassDeleteButton"));
     });
-    el("fillingSpkBody")?.addEventListener("click", (event) => {
+    el("fillingSpkBody")?.addEventListener("click", async (event) => {
+      const closeButton = event.target.closest(".filling-spk-close");
+      if (closeButton && !closeButton.disabled) return closeFillingSpks([closeButton.dataset.batchNo], closeButton);
       const button = event.target.closest(".filling-spk-use");
       if (!button || button.disabled) return;
       const form = el("form-filling");
@@ -7130,6 +7110,43 @@
       openFillingFormPopup(button);
     });
     renderFillingSpkQueue();
+  }
+
+  async function closeFillingSpks(batchNos, button) {
+    if (!batchNos.length) return;
+    if (!canDeleteFillingRemainder()) return toast("Anda tidak memiliki izin menutup sisa Filling.", true);
+    if (batchNos.length > 100) return toast("Maksimal 100 SPK per penutupan Filling.", true);
+    const selected = new Set(batchNos);
+    const pending = [...state.preview.filling, ...state.entries.filter((entry) => entry._syncState)];
+    if (pending.some((entry) => selected.has(entryBatchNo(entry))))
+      return toast("Simpan atau hapus Preview Filling terkait sebelum menutup sisanya.", true);
+    const rows = state.spkEntries.filter((item) => selected.has(item.batchNo)).map((item) => {
+      const remaining = spkRemainingQty(item);
+      return { ...item, remaining, sisaKardus: remaining / (Number(item.qtyPerDus) || 1) };
+    });
+    if (rows.length !== selected.size || rows.some((row) => row.remaining <= 0 || !(Number(row.qty) > 0)))
+      return toast("Sisa Filling sudah tidak tersedia. Muat ulang data.", true);
+    const alasan = await askClosePressReason(rows, "filling");
+    if (!alasan) return;
+    button.disabled = true;
+    const oldText = button.textContent;
+    button.textContent = "Menutup…";
+    try {
+      const response = await enqueueWrite(() => apiPost("filling.closeBatch", { data: { batchNos, alasan } }));
+      const updated = new Map(response.spkEntries.map((item) => [item.batchNo, item]));
+      state.spkEntries = state.spkEntries.map((item) => updated.has(item.batchNo) ? { ...item, ...updated.get(item.batchNo) } : item);
+      batchNos.forEach((batchNo) => selectedFillingSpkRows.delete(batchNo));
+      renderFillingSpkQueue();
+      renderSpkToday();
+      renderSpkReport();
+      renderDashboard();
+      toast(`${rows.length} sisa Filling ditutup dengan alasan tercatat.`);
+    } catch (err) {
+      toast(`Gagal menutup sisa Filling: ${err.message}`, true);
+    } finally {
+      button.disabled = false;
+      button.textContent = oldText;
+    }
   }
 
   function spkStatusBadge(status, isPreview) {
@@ -7283,6 +7300,7 @@
     const produksiDusInput = el("spkProduksiDus");
     const qtyPerDusInput = el("spkQtyPerDus");
     const qtyInput = el("spkQty");
+    const alasanInput = el("spkAlasan");
     const errorEl = el("spkError");
     const cancelButton = el("spkCancel");
     const submitButton = el("spkAdd");
@@ -7582,6 +7600,8 @@
         produksiDus,
         qtyPerDus,
         qty,
+        alasan: String(alasanInput?.value || "").trim(),
+        status: edit?.source === "preview" ? state.preview.spk.find((item) => item.id === edit.key)?.status || "normal" : "normal",
         imported:
           edit?.source === "preview" &&
           state.preview.spk.find((item) => item.id === edit.key)?.imported ===
@@ -7616,6 +7636,7 @@
                 botol: values.botol,
                 produksiDus: values.produksiDus,
                 qtyPerDus: values.qtyPerDus,
+                alasan: values.alasan,
               },
             }),
           );
@@ -7751,6 +7772,7 @@
         batchInput.value = item.batchNo;
         produkInput.value = item.produk;
         botolInput.value = item.botol;
+        if (alasanInput) alasanInput.value = item.alasan || "";
         if (produksiDusInput)
           produksiDusInput.value = String(
             Math.max(0, Number(item.produksiDus) || 0),
@@ -7830,6 +7852,7 @@
                 Math.floor(Number(item.updateCount) || 0),
               ),
               status: item.status || "normal",
+              alasan: item.alasan || "",
             })),
           }),
         );

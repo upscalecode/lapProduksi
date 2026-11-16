@@ -1808,7 +1808,9 @@ body[data-page="login"] .login-screen {
 }
 
 .press-balance-panel .data-table th:last-child,
-.press-balance-panel .data-table td:last-child {
+.press-balance-panel .data-table td:last-child,
+.filling-spk-panel .data-table th:last-child,
+.filling-spk-panel .data-table td:last-child {
   width: 132px;
   min-width: 132px;
 }
@@ -6954,3 +6956,4 @@ button {
 }
 .app-data-notice .btn { margin-left: 12px; }
 .view.data-loading { opacity: 0.45; }
+.spk-reason-field { margin-top: 12px; }

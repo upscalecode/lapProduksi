@@ -29,7 +29,7 @@
     ></script>
     <link
       rel="stylesheet"
-      href="style.css?v=20261116-v113-scoped-startup"
+      href="style.css?v=20261116-v114-filling-closure"
     />
 
     <style>
@@ -2447,9 +2447,9 @@
               <label>
                 <input type="checkbox" data-permission="deleteUnpressed" />
                 <span>
-                  <strong>Hapus Sisa Press</strong><br />
+                  <strong>Hapus Sisa Filling / Press</strong><br />
                   <small
-                    >Dapat menutup atau menghapus sisa pengerjaan Press.</small
+                    >Dapat menutup sisa pengerjaan Filling dan Press dengan alasan.</small
                   >
                 </span>
               </label>
@@ -2695,6 +2695,10 @@
             <input type="number" id="spkQty" value="0" readonly />
           </label>
         </div>
+        <label class="field spk-reason-field">
+          <span>Alasan SPK</span>
+          <textarea id="spkAlasan" rows="2" maxlength="500" placeholder="Tuliskan alasan atau keterangan SPK"></textarea>
+        </label>
         <p class="form-error" id="spkError" hidden></p>
         <div class="form-actions">
           <button type="submit" class="btn btn-primary" id="spkAdd">
@@ -2720,7 +2724,7 @@
       });
     </script>
     <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-    <script src="script.js?v=20261116-v209-report-filters"></script>
+    <script src="script.js?v=20261116-v210-filling-closure"></script>
     <footer class="capkaki">
       <p>Created by <strong>ABSH Fragrance Creation</strong></p>
     </footer>

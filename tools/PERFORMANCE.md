@@ -16,3 +16,11 @@ Respons halaman di-cache selama 60 detik, terpisah per pengguna, hak akses, hala
 Data produksi tidak dihapus atau diarsipkan oleh perbaikan ini. Backend masih membaca kolom ringkasan riwayat untuk menjaga kapasitas SPK dan saldo lama; detail hanya dikirim sesuai periode. Tabel tetap memakai pagination browser yang sudah ada. Memilih semua periode atau menyimpan perubahan yang membutuhkan alokasi seluruh riwayat masih bisa lebih lambat. Kecepatan deployment perlu diukur langsung; tes lokal tidak mengukur latensi Google atau jaringan.
 
 Verifikasi lokal: `node --test tools/*.test.mjs` dan `node --check script.js`.
+
+## Alasan SPK dan penutupan Filling
+
+Form SPK memiliki kolom Alasan opsional, maksimal 500 karakter, termasuk saat preview diedit dan disimpan batch. Backend menambah kolom M–Q pada sheet SPK: Alasan, Qty Filling Ditutup, Alasan Penutupan Filling, Ditutup Filling Oleh, dan Ditutup Filling Pada. Kolom A–L dipertahankan. Kolom tambahan yang tidak dikenali akan menghentikan migrasi agar tidak ditimpa.
+
+Tombol Hapus pada antrean SPK → Filling, termasuk Hapus Massal, menutup sisa SPK dengan alasan wajib 5–500 karakter. Aksi ini menyimpan jumlah sisa berdasarkan data server, operator, dan waktu; tidak menghapus SPK atau data produksi dan tidak mengurangi saldo Press yang sudah terbentuk. Preview Filling terkait harus disimpan atau dibuang terlebih dahulu. Setelah ditutup, SPK tidak menerima Filling baru atau perubahan Qty; koreksi data tersimpan tanpa perubahan Qty tetap diizinkan. Penutupan juga menghilangkan sisa tersebut dari antrean dan alert Filling.
+
+Izin mengikuti pola penutupan Press: Administrator Filling, atau akses baca Filling dengan izin Hapus Sisa Filling / Press (`deleteUnpressed`). Tidak ada fitur membuka kembali penutupan. Deployment `Code.gs` terbaru diperlukan sebelum memakai penutupan Filling. Unggah HTML, JavaScript, dan CSS terbaru, lalu refresh browser.

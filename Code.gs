@@ -125,6 +125,11 @@ const APP = {
     "Di-update Pada",
     "Jumlah Update",
     "Status",
+    "Alasan",
+    "Qty Filling Ditutup",
+    "Alasan Penutupan Filling",
+    "Ditutup Filling Oleh",
+    "Ditutup Filling Pada",
   ],
   APD_HEADERS: [
     "Tanggal",
@@ -450,7 +455,7 @@ function scopedAppData_(user, e) {
       return Object.assign({}, item, { fillingUsedQty: number_(used[item.batchNo]), fillingCount: number_(counts[item.batchNo]) });
     }).filter(function (item) {
       return (item.tanggal >= start && item.tanggal <= end) ||
-        ((dashboard || filling || press) && (number_(item.qty) > 0 ? item.fillingUsedQty < number_(item.qty) : !item.fillingCount));
+        ((dashboard || filling || press) && !item.fillingClosedAt && (number_(item.qty) > 0 ? item.fillingUsedQty < number_(item.qty) : !item.fillingCount));
     });
     const remainders = (press || filling || dashboard) && can_(user, "accessPress")
       ? getPressRemainders_(overview, []) : [];
@@ -589,6 +594,11 @@ function doPost(e) {
           const batchNos = parseJsonParam_(e, "batchNos");
           const deletedBatchNos = deleteSpkBatch_(session.user, batchNos);
           return json_({ ok: true, deletedBatchNos: deletedBatchNos });
+        });
+
+      case "filling.closeBatch":
+        return withWriteLock_(function () {
+          return json_({ ok: true, spkEntries: closeFillingRemaindersBatch_(session.user, parseJsonParam_(e, "data")) });
         });
 
       // Dipertahankan untuk kompatibilitas data/versi lama.
@@ -2057,6 +2067,7 @@ function createEntriesBatch_(user, dataList) {
 
     if (data.line === "filling") {
       const spk = spkByBatchNo[data.batchNo];
+      if (spk && spk.fillingClosedAt) throw new Error("Sisa Filling untuk SPK " + data.batchNo + " sudah ditutup.");
       const requestedQty = qtyKardus * qtyBotol;
       const usedQty = number_(fillingQtyByBatchNo[data.batchNo]);
       if (
@@ -2580,7 +2591,15 @@ function assertSpkFillingQty_(data, excludeEntryId) {
     data.qtyBotolPerKardus = number_(spk.qtyPerDus);
   }
   const requested = Number(data.qtyKardus) * Number(data.qtyBotolPerKardus);
-  const used = getEntries_()
+  const entries = getEntries_();
+  if (spk.fillingClosedAt) {
+    const existing = entries.find(function (entry) {
+      return String(entry.id) === String(excludeEntryId || "") && entry.tab === "filling" && reportBatchNo_(entry.reportId) === batchNo;
+    });
+    if (!existing || requested !== number_(existing.totalQty))
+      throw new Error("Sisa Filling untuk SPK " + batchNo + " sudah ditutup; Qty tidak dapat diubah atau ditambah.");
+  }
+  const used = entries
     .filter(function (entry) {
       return (
         entry.tab === "filling" &&
@@ -3876,6 +3895,12 @@ function repairLegacySpkRows_(sh) {
         row[7],
         row[8],
         row[9],
+        row[11] || "normal",
+        row[12] || "",
+        row[13] || 0,
+        row[14] || "",
+        row[15] || "",
+        row[16] || "",
       ],
     });
   });
@@ -3897,17 +3922,18 @@ function repairLegacySpkRows_(sh) {
 }
 
 /** Hapus kolom sisa migrasi hanya jika header duplikat dan tidak berisi data. */
-function removeEmptyDuplicateSpkColumns_(sh) {
-  const firstExtraColumn = APP.SPK_HEADERS.length + 1;
+function removeEmptyDuplicateSpkColumns_(sh, baseWidth) {
+  const width = baseWidth || APP.SPK_HEADERS.length;
+  const firstExtraColumn = width + 1;
   const lastUsedColumn = sh.getLastColumn();
-  if (lastUsedColumn < firstExtraColumn) return;
+  if (lastUsedColumn < firstExtraColumn) return true;
 
-  const extraWidth = lastUsedColumn - APP.SPK_HEADERS.length;
+  const extraWidth = lastUsedColumn - width;
   const lastRow = Math.max(1, sh.getLastRow());
   const extraValues = sh
     .getRange(1, firstExtraColumn, lastRow, extraWidth)
     .getDisplayValues();
-  const duplicateHeader = APP.SPK_HEADERS[APP.SPK_HEADERS.length - 1];
+  const duplicateHeader = APP.SPK_HEADERS[width - 1];
   const removable = extraValues.every(function (row, rowIndex) {
     return row.every(function (value) {
       const text = String(value || "").trim();
@@ -3916,6 +3942,7 @@ function removeEmptyDuplicateSpkColumns_(sh) {
   });
 
   if (removable) sh.deleteColumns(firstExtraColumn, extraWidth);
+  return removable;
 }
 
 function ensureSpkSheet_(ss, forceSetup) {
@@ -3968,6 +3995,16 @@ function ensureSpkSheet_(ss, forceSetup) {
   const isQtySchema = qtyHeaders.every(function (header, index) {
     return headers[index] === header;
   });
+  if (APP.SPK_HEADERS.slice(0, 12).every(function (header, index) { return headers[index] === header; })) {
+    if (headers[12] === "Status") {
+      if (!removeEmptyDuplicateSpkColumns_(sh, 12)) throw new Error("Kolom tambahan SPK masih berisi data. Periksa sebelum migrasi.");
+    } else {
+      APP.SPK_HEADERS.slice(12).forEach(function (header, index) {
+        if (headers[index + 12] && headers[index + 12] !== header)
+          throw new Error("Kolom tambahan SPK tidak dikenali. Periksa sebelum migrasi agar data tetap aman.");
+      });
+    }
+  }
 
   // Migrasi aman: kolom baru disisipkan setelah Botol. Qty lama bergeser ke
   // posisi Total Qty, sehingga data historis dan kolom audit tidak tertimpa.
@@ -3999,26 +4036,86 @@ function getSpkEntries_() {
     .filter(function (row) {
       return String(row[0] || "").trim();
     })
-    .map(function (row) {
-      return {
-        batchNo: String(row[0] || "").trim(),
-        tanggal: formatDateCell_(row[1]),
-        produk: String(row[2] || "").trim(),
-        botol: String(row[3] || "").trim(),
-        produksiDus: Math.max(0, number_(row[4])),
-        qtyPerDus: Math.max(0, number_(row[5])),
-        qty: Math.max(0, number_(row[6])),
-        createdBy: String(row[7] || "").trim(),
-        createdAt: isoCell_(row[8]),
-        updatedAt: isoCell_(row[9]),
-        updateCount: Math.max(0, Math.floor(number_(row[10]))),
-        status: String(row[11] || "normal").trim().toLowerCase(),
-      };
-    });
+    .map(spkRowToObject_);
+}
+
+function spkRowToObject_(row) {
+  return {
+    batchNo: String(row[0] || "").trim(),
+    tanggal: formatDateCell_(row[1]),
+    produk: String(row[2] || "").trim(),
+    botol: String(row[3] || "").trim(),
+    produksiDus: Math.max(0, number_(row[4])),
+    qtyPerDus: Math.max(0, number_(row[5])),
+    qty: Math.max(0, number_(row[6])),
+    createdBy: String(row[7] || "").trim(),
+    createdAt: isoCell_(row[8]),
+    updatedAt: isoCell_(row[9]),
+    updateCount: Math.max(0, Math.floor(number_(row[10]))),
+    status: String(row[11] || "normal").trim().toLowerCase(),
+    alasan: String(row[12] || ""),
+    fillingClosedQty: Math.max(0, number_(row[13])),
+    fillingClosedReason: String(row[14] || ""),
+    fillingClosedBy: String(row[15] || ""),
+    fillingClosedAt: isoCell_(row[16]),
+  };
+}
+
+function spkReason_(value) {
+  const alasan = String(value || "").trim();
+  if (alasan.length > 500) throw new Error("Alasan SPK maksimal 500 karakter.");
+  return alasan;
+}
+
+function closeFillingRemaindersBatch_(user, data) {
+  if (!canLevel_(user, "filling", "admin")) {
+    requireLevel_(user, "filling", "read");
+    requirePermission_(user, "deleteUnpressed", 'Anda tidak memiliki izin "Hapus Sisa Filling / Press".');
+  }
+  const alasan = String(data && data.alasan || "").trim();
+  if (alasan.length < 5 || alasan.length > 500)
+    throw new Error("Alasan penutupan Filling wajib diisi 5–500 karakter.");
+  const batchNos = data && data.batchNos;
+  if (!Array.isArray(batchNos) || !batchNos.length || batchNos.length > 100)
+    throw new Error("Pilih 1–100 SPK untuk penutupan Filling.");
+  const targets = unique_(batchNos.map(function (value) { return String(value || "").trim(); }));
+  if (!targets.length) throw new Error("No Batch SPK wajib diisi.");
+  const sh = ensureSpkSheet_(spreadsheet_());
+  const count = sh.getLastRow() - 1;
+  const rows = count > 0 ? sh.getRange(2, 1, count, APP.SPK_HEADERS.length).getValues() : [];
+  const used = Object.create(null), positions = Object.create(null);
+  getEntries_().forEach(function (entry) {
+    if (entry.tab !== "filling") return;
+    const batchNo = reportBatchNo_(entry.reportId);
+    used[batchNo] = number_(used[batchNo]) + number_(entry.totalQty);
+  });
+  rows.forEach(function (row, index) { positions[String(row[0] || "").trim()] = index; });
+  const now = new Date().toISOString();
+  let changed = false;
+  const updated = targets.map(function (batchNo) {
+    const index = positions[batchNo];
+    if (index === undefined) throw new Error("SPK " + batchNo + " tidak ditemukan.");
+    const row = rows[index];
+    if (!row[16]) {
+      const remaining = number_(row[6]) - number_(used[batchNo]);
+      if (remaining <= 0) throw new Error("Sisa Filling untuk SPK " + batchNo + " sudah tidak tersedia.");
+      row[13] = remaining;
+      row[14] = alasan;
+      row[15] = user.username;
+      row[16] = now;
+      changed = true;
+    }
+    return spkRowToObject_(row);
+  });
+  if (changed) sh.getRange(2, 14, rows.length, 4).setValues(literalSheetValues_(rows.map(function (row) {
+    return [number_(row[13]), row[14] || "", row[15] || "", row[16] || ""];
+  })));
+  return updated;
 }
 
 function createSpk_(user, data) {
   data = data && typeof data === "object" ? data : {};
+  const alasan = spkReason_(data.alasan);
   const master = getMaster_();
   const produk = canonicalMasterValue_(master.produk, data.produk, "Produk");
   const botol = canonicalMasterValue_(master.botol, data.botol, "Botol");
@@ -4060,22 +4157,10 @@ function createSpk_(user, data) {
     previewUpdatedAt,
     previewUpdateCount,
     String(data.status || "normal").trim().toLowerCase(),
+    alasan, 0, "", "", "",
   ];
   ensureSpkSheet_(spreadsheet_()).appendRow(literalSheetValue_(row));
-  return {
-    batchNo: batchNo,
-    tanggal: tanggal,
-    produk: produk,
-    botol: botol,
-    produksiDus: produksiDus,
-    qtyPerDus: qtyPerDus,
-    qty: qty,
-    createdBy: user.username,
-    createdAt: now.toISOString(),
-    updatedAt: previewUpdatedAt,
-    updateCount: previewUpdateCount,
-    status: String(data.status || "normal").trim().toLowerCase(),
-  };
+  return spkRowToObject_(row);
 }
 
 /** Simpan seluruh preview SPK dengan satu kali baca dan satu kali tulis. */
@@ -4084,6 +4169,7 @@ function createSpkEntriesBatch_(user, dataList) {
     throw new Error("Preview SPK kosong.");
   if (dataList.length > 99)
     throw new Error("Maksimal 99 SPK per sekali simpan.");
+  dataList.forEach(function (data) { spkReason_(data && data.alasan); });
 
   let currentMaster = getMaster_();
   dataList.forEach(function (data) {
@@ -4196,6 +4282,7 @@ function createSpkEntriesBatch_(user, dataList) {
       updatedAt: updatedAt,
       updateCount: updateCount,
       status: String(data.status || "normal").trim().toLowerCase(),
+      alasan: spkReason_(data.alasan),
     };
     saved.push(item);
     return [
@@ -4211,6 +4298,7 @@ function createSpkEntriesBatch_(user, dataList) {
       item.updatedAt,
       item.updateCount,
       item.status || "normal",
+      item.alasan, 0, "", "", "",
     ];
   });
   sh.getRange(
@@ -4238,7 +4326,8 @@ function findSpkRow_(batchNo) {
   return null;
 }
 
-function assertSpkUnused_(batchNo) {
+function assertSpkUnused_(batchNo, values) {
+  if (values && values[16]) throw new Error("SPK sudah ditutup pada proses Filling dan tidak dapat dihapus atau diubah Qty-nya.");
   const targetBatchNo = String(batchNo || "").trim();
   const used = getEntries_().some(function (entry) {
     return reportBatchNo_(entry.reportId) === targetBatchNo;
@@ -4257,6 +4346,7 @@ function updateSpk_(user, batchNo, data) {
   const createdBy = String(found.values[7] || "").trim();
   requireManage_(user, "spk", createdBy === user.username ? "own" : "others");
   data = data && typeof data === "object" ? data : {};
+  const alasan = spkReason_(data.alasan === undefined ? found.values[12] : data.alasan);
   const master = getMaster_();
   const produk = canonicalMasterValue_(master.produk, data.produk, "Produk");
   const botol = canonicalMasterValue_(master.botol, data.botol, "Botol");
@@ -4267,11 +4357,11 @@ function updateSpk_(user, batchNo, data) {
   const qty = produksiDus * qtyPerDus;
   const qtyChanged = produksiDus !== number_(found.values[4]) ||
     qtyPerDus !== number_(found.values[5]) || qty !== number_(found.values[6]);
-  if (qtyChanged) assertSpkUnused_(batchNo);
+  if (qtyChanged) assertSpkUnused_(batchNo, found.values);
   const updatedAt = new Date().toISOString();
   const updateCount = Math.max(0, Math.floor(number_(found.values[10]))) + 1;
   found.sheet
-    .getRange(found.row, 3, 1, 9)
+    .getRange(found.row, 3, 1, 11)
     .setValues(literalSheetValues_([
       [
         produk,
@@ -4283,6 +4373,8 @@ function updateSpk_(user, batchNo, data) {
         found.values[8],
         updatedAt,
         updateCount,
+        found.values[11] || "normal",
+        alasan,
       ],
     ]));
   syncSpkWorkIdentity_(String(found.values[0] || "").trim(), produk, botol, updatedAt);
@@ -4299,6 +4391,11 @@ function updateSpk_(user, batchNo, data) {
     updatedAt: updatedAt,
     updateCount: updateCount,
     status: String(found.values[11] || "normal").trim().toLowerCase(),
+    alasan: alasan,
+    fillingClosedQty: Math.max(0, number_(found.values[13])),
+    fillingClosedReason: String(found.values[14] || ""),
+    fillingClosedBy: String(found.values[15] || ""),
+    fillingClosedAt: isoCell_(found.values[16]),
   };
 }
 
@@ -4336,7 +4433,7 @@ function deleteSpk_(user, batchNo) {
   if (!found) throw new Error("SPK yang akan dihapus tidak ditemukan.");
   const createdBy = String(found.values[7] || "").trim();
   requireManage_(user, "spk", createdBy === user.username ? "own" : "others");
-  assertSpkUnused_(batchNo);
+  assertSpkUnused_(batchNo, found.values);
   found.sheet.deleteRow(found.row);
 }
 
@@ -4358,7 +4455,7 @@ function deleteSpkBatch_(user, batchNos) {
     if (!found) throw new Error("SPK " + batchNo + " tidak ditemukan.");
     const createdBy = String(found.values[7] || "").trim();
     requireManage_(user, "spk", createdBy === user.username ? "own" : "others");
-    assertSpkUnused_(batchNo);
+    assertSpkUnused_(batchNo, found.values);
     return { batchNo: batchNo, sheet: found.sheet, row: found.row };
   });
   foundRows
