@@ -73,6 +73,48 @@ test('laporan historis diambil sesuai periode dan setting tidak membaca produksi
   assert.equal(reads.length, 0);
 });
 
+test('tanggal berselang-seling tetap dibaca sekali dan tanggal di luar periode tidak terkirim', () => {
+  const { c } = setup();
+  let calls = 0;
+  const rows = Array.from({ length: 20 }, (_, index) => ({
+    id: String(index), tanggal: index % 2 ? '2026-10-01' : '2026-11-16', row: index + 2,
+  }));
+  c.rowToEntry_ = row => row;
+  c.entrySheet_ = () => ({ getRange: (start, col, count) => {
+    calls++;
+    return { getValues: () => rows.slice(start - 2, start - 2 + count) };
+  } });
+  const result = c.entriesInPeriod_(rows, '2026-11-16', '2026-11-16');
+  assert.equal(calls, 1);
+  assert.equal(result.length, 10);
+  assert.ok(result.every(entry => entry.tanggal === '2026-11-16'));
+});
+
+test('SPK yang sudah dimigrasi tidak memindai atau menulis ulang format ketika dibaca', () => {
+  const { c, values } = setup();
+  const headers = vm.runInContext('APP.SPK_HEADERS', c);
+  let writes = 0, repairs = 0;
+  const sh = {
+    getSheetId: () => 7, getLastColumn: () => headers.length, getMaxColumns: () => headers.length,
+    getRange: () => ({ getDisplayValues: () => [headers], setValues: () => writes++ }),
+    setFrozenRows: () => writes++,
+  };
+  const ss = { getId: () => 'ss', getSheetByName: () => sh };
+  c.repairLegacySpkRows_ = () => repairs++;
+  c.removeEmptyDuplicateSpkColumns_ = () => {};
+  c.styleHeader_ = () => writes++;
+  c.ensureSpkSheet_(ss);
+  assert.equal(repairs, 1);
+  assert.equal(values.get('PPR_SPK_SCHEMA_V2_ss_7'), '1');
+  vm.runInContext('SPK_READY_SHEET_ = null', c);
+  const initial = writes;
+  c.ensureSpkSheet_(ss);
+  assert.equal(writes, initial);
+  assert.equal(repairs, 1);
+  c.ensureSpkSheet_(ss, true);
+  assert.equal(repairs, 2);
+});
+
 test('cache dibagi per pengguna dan hak akses, dibatalkan sesudah penulisan', () => {
   const { request, c, reads } = setup();
   request('filling');
@@ -86,6 +128,25 @@ test('cache dibagi per pengguna dan hak akses, dibatalkan sesudah penulisan', ()
   const data = c.scopedAppData_(restricted, { parameter: { view: 'filling', start: '2026-11-16', end: '2026-11-16' } });
   assert.equal(data.entries.length, 0);
   assert.equal(data.spkEntries.length, 0);
+});
+
+test('snapshot awal menyediakan seluruh tab sesuai hak akses tanpa menggandakan data laporan', () => {
+  const { c, request } = setup();
+  const data = request('workspace');
+  assert.equal(data.workspace, true);
+  assert.deepEqual(Array.from(data.entries, entry => entry.id), ['new', 'press']);
+  assert.equal(data.reportEntriesSameAsEntries, true);
+  assert.equal(data.reportEntries, undefined);
+  assert.ok(data.spkEntries.length);
+  assert.ok(data.remainders.length);
+  const permissions = c.defaultPermissions_('user');
+  permissions.levels = { filling: 'read' };
+  const restricted = { username: 'limited', role: 'user', permissions };
+  const limited = c.scopedAppData_(restricted, { parameter: { view: 'workspace', start: '2026-11-16', end: '2026-11-16' } });
+  assert.deepEqual(Array.from(limited.entries, entry => entry.tab), ['filling']);
+  assert.equal(limited.reportEntries.length, 0);
+  assert.equal(limited.apdEntries.length, 0);
+  assert.equal(limited.users.length, 0);
 });
 
 test('dekorasi saldo tidak menghitung ulang seluruh alokasi Press', () => {
@@ -201,6 +262,7 @@ test('respons frontend yang terlambat tidak menimpa halaman terbaru dan kegagala
   const c = vm.createContext({
     apiGet: (action, params) => new Promise((resolve, reject) => pending.push({ params, resolve, reject })),
     applyBootstrap: data => applied.push(data), canOpenReports: () => false,
+    todayStr: () => '2026-11-16',
     document: {},
   });
   vm.runInContext(frontend.slice(frontend.indexOf('  let appDataRequestId ='), frontend.indexOf('  function initDataPeriodLoading(')), c);

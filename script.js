@@ -1756,8 +1756,8 @@
     if (Array.isArray(data.remainders)) state.remainders = data.remainders;
     if (Array.isArray(data.spkEntries)) state.spkEntries = data.spkEntries;
     if (data.scoped) {
-      state.fillingHistory = {};
-      state.spkEntries.forEach((spk) => {
+      if (!data.mergeWorkspace) state.fillingHistory = {};
+      (data.snapshotSpkEntries || state.spkEntries).forEach((spk) => {
         const loaded = state.entries.filter((entry) => entry.tab === "filling" && entryBatchNo(entry) === spk.batchNo);
         state.fillingHistory[spk.batchNo] = {
           qty: (Number(spk.fillingUsedQty) || 0) - loaded.reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0),
@@ -1836,7 +1836,10 @@
   }
 
   let appDataRequestId = 0;
-  let loadedDataKey = "";
+  let loadedDataRanges = [];
+  let loadedDataDay = "";
+  let workspaceBackendSupported = true;
+  let initialAppDataPromise = null;
 
   function currentDataView() {
     return qs(".tab-btn.active")?.dataset.view || document.body.dataset.activeView || "dashboard";
@@ -1873,8 +1876,8 @@
       qs(".content")?.before(notice);
     }
     notice.replaceChildren();
-    notice.hidden = !loading && !error;
-    notice.append(document.createTextNode(error || "Memuat data periode pilihan…"));
+    notice.hidden = !error;
+    notice.append(document.createTextNode(error));
     const section = el("view-" + view);
     if (section) {
       section.inert = loading || Boolean(error);
@@ -1891,15 +1894,64 @@
     }
   }
 
+  function isAppDataLoaded(params) {
+    return loadedDataDay === todayStr() && loadedDataRanges.some((range) =>
+      range.start <= params.start && range.end >= params.end,
+    );
+  }
+
+  function ensureAppData(view = currentDataView()) {
+    if (initialAppDataPromise) return initialAppDataPromise.then(() => ensureAppData(view));
+    if (isAppDataLoaded(appDataParams(view))) {
+      appDataStatus(view, false);
+      return Promise.resolve();
+    }
+    return loadAppData(false, view);
+  }
+
+  function mergeWorkspaceData(data, params, reset) {
+    if (!data.workspace || reset) return data;
+    const incomingSpk = data.spkEntries;
+    const merge = (previous, incoming, key) => {
+      const ids = new Set(incoming.map(key));
+      return previous.filter((item) => !ids.has(key(item)) &&
+        (item._syncState || item.tanggal < params.start || item.tanggal > params.end),
+      ).concat(incoming);
+    };
+    return {
+      ...data,
+      entries: merge(state.entries, data.entries, (item) => item.id),
+      reportEntries: merge(state.reportEntries, data.reportEntries, (item) => item.id),
+      apdEntries: merge(state.apdEntries, data.apdEntries, (item) => item.id),
+      downtimeEntries: merge(state.downtimeEntries, data.downtimeEntries, (item) => item.tanggal),
+      spkEntries: merge(state.spkEntries, incomingSpk, (item) => item.batchNo),
+      snapshotSpkEntries: incomingSpk,
+      mergeWorkspace: true,
+    };
+  }
+
   async function loadAppData(includeBootstrap = false, view = currentDataView()) {
     const params = appDataParams(view);
+    if (includeBootstrap) {
+      const today = dashboardDateParts(todayStr());
+      params.start = [params.start, dashboardDateKey(dashboardAddDays(today, -6)), todayStr().slice(0, 7) + "-01"].sort()[0];
+      params.end = [params.end, dashboardDateKey(new Date(today.getFullYear(), today.getMonth() + 1, 0))].sort().at(-1);
+    }
     const requestId = ++appDataRequestId;
     appDataStatus(view, true);
     try {
-      const data = await apiGet("appdata", {
-        ...params,
+      let data;
+      const fetchData = () => apiGet("appdata", {
+        ...(workspaceBackendSupported ? { ...params, view: "workspace", reportView: "" } : {}),
         includeBootstrap: includeBootstrap ? "1" : "0",
       });
+      try {
+        data = await fetchData();
+      } catch (err) {
+        if (!workspaceBackendSupported || !err?.isApiError || err.message !== "Halaman tidak valid.") throw err;
+        workspaceBackendSupported = false;
+        data = await fetchData();
+      }
       // Kompatibilitas deployment lama: jalur baru cukup satu request.
       if (includeBootstrap && (!data.user || !data.master)) {
         const bootstrap = await apiGet("bootstrap");
@@ -1908,8 +1960,14 @@
         if (!data.settings) data.settings = bootstrap.settings;
       }
       if (requestId !== appDataRequestId) return data;
-      applyBootstrap(data);
-      loadedDataKey = JSON.stringify(params);
+      if (data.reportEntriesSameAsEntries) data.reportEntries = data.entries;
+      const permissionsChanged = data.user && JSON.stringify([data.user.username, data.user.role, data.user.permissions]) !==
+        JSON.stringify([state.currentUser?.username, state.currentUser?.role, state.currentUser?.permissions]);
+      const reset = includeBootstrap || permissionsChanged || loadedDataDay !== todayStr();
+      applyBootstrap(mergeWorkspaceData(data, params, reset));
+      if (reset) loadedDataRanges = [];
+      loadedDataRanges.push(data.scoped ? { start: params.start, end: params.end } : { start: "1900-01-01", end: "2999-12-31" });
+      loadedDataDay = todayStr();
       appDataStatus(view, false);
       if (
         !Array.isArray(data.reportEntries) &&
@@ -1932,7 +1990,7 @@
   function initDataPeriodLoading() {
     document.addEventListener("change", (event) => {
       if (!event.target.matches("#spkDateFilter, #dashboardChartMode, #dashboardChartMonth, #dashboardChartYear, #dashboardChartStart, #dashboardChartEnd, #dashboardPressKpiMode, #dashboardPressKpiMonth, #dashboardPressKpiYear, #dashboardPressKpiStart, #dashboardPressKpiEnd, #lap-period-mode, #lap-date, #lap-month, #lap-year, #lap-start, #lap-end, #lap-kpi-month, #lap-spk-mode, #lap-spk-date, #lap-spk-start, #lap-spk-end")) return;
-      if (JSON.stringify(appDataParams()) !== loadedDataKey) loadAppData().catch(() => {});
+      ensureAppData().catch(() => {});
     });
   }
 
@@ -8109,7 +8167,7 @@
       });
       navigating = true;
       try {
-        await loadAppData(false, view);
+        await ensureAppData(view);
       } catch (err) {
         toast(err.message, true);
         return;
@@ -8398,6 +8456,11 @@
     const showFillingBroken = state.lastLaporan.line !== "press";
     const showPressBroken = state.lastLaporan.line !== "filling";
     const table = tbody.closest("table");
+    if (table && table.dataset.laporanFilterLine !== state.lastLaporan.line) {
+      table.__excelFilterState?.filters.clear();
+      if (table.__excelFilterState) table.__excelFilterState.sort = null;
+      table.dataset.laporanFilterLine = state.lastLaporan.line;
+    }
     const headerRow = table?.querySelector("thead tr");
     if (headerRow) {
       headerRow.innerHTML = `
@@ -8419,10 +8482,14 @@
         (e) => laporanQtyPerCartonDisplay(e),
         (e) => e.qtyKardus,
         (e) => e.totalQty,
-        (e) => laporanBrokenFilling(e),
-        (e) => laporanBrokenPress(e),
+        ...(showFillingBroken ? [(e) => laporanBrokenFilling(e)] : []),
+        ...(showPressBroken ? [(e) => laporanBrokenPress(e)] : []),
+        ...metricColumns.map((column) => (e) => kpiReportDisplay(e[column.key])),
       ],
-      renderLaporanRows,
+      () => {
+        state.pages.laporan = 1;
+        renderLaporanRows();
+      },
     );
     const totalPages = Math.max(1, Math.ceil(rows.length / CONFIG.PAGE_SIZE));
     state.pages.laporan = Math.min(
@@ -10801,7 +10868,7 @@
       const btn = event.target.closest(".laporan-subnav-btn");
       if (!btn) return;
       showLaporanSubview(btn.dataset.laporanView || "hasil");
-      loadAppData(false, "laporan").catch(() => {});
+      ensureAppData("laporan").catch(() => {});
     });
 
     // initAppPage memasang event sebelum profil/cache pengguna selesai dimuat.
@@ -12553,7 +12620,7 @@
           if (!(node instanceof Element)) return;
           enhanceAll(node);
           const table = node.closest("table");
-          if (table) applyTable(table);
+          if (table) enhanceTable(table);
         });
       });
     });
@@ -12878,8 +12945,9 @@
       initDashboardSlider();
     }
     try {
-      // Profil, master, dan data awal dimuat bersama dalam satu request.
-      await loadAppData(true);
+      // Data periode awal untuk seluruh tab yang diizinkan diambil sekali.
+      initialAppDataPromise = loadAppData(true).finally(() => { initialAppDataPromise = null; });
+      await initialAppDataPromise;
       suppressNavigationLoading = false;
       if (state.currentUser) {
         localStorage.setItem(

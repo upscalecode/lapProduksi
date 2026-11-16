@@ -3,9 +3,13 @@
 1. Perbarui kode project Google Apps Script dengan `Code.gs` dari repository ini.
 2. Dari editor Apps Script, jalankan `setupPerformanceMaintenance()` sekali dan selesaikan otorisasi Google. Fungsi ini memasang satu trigger pembersihan sesi setiap jam; menjalankannya kembali tidak membuat trigger ganda. Tidak perlu menjalankan ulang `setupSpreadsheet()`.
 3. Perbarui deployment Web App yang digunakan aplikasi ke versi kode terbaru. Pertahankan URL deployment yang sama; jika memakai URL baru, perbarui `CONFIG.WEB_APP_URL` di `script.js`.
-4. Unggah `script.js` dan `style.css` terbaru ke hosting aplikasi, lalu refresh browser.
+4. Unggah seluruh HTML, `script.js`, dan `style.css` terbaru ke hosting aplikasi, lalu refresh browser. Versi URL JavaScript pada HTML harus ikut diperbarui agar browser tidak memakai kode navigasi lama.
 
-Login tidak lagi melakukan pembersihan sesi. Aplikasi meminta data sesuai halaman dan periode; Filling, Press, dan APD meminta hari ini, sedangkan Laporan Hasil dimulai pada bulan berjalan. Riwayat tetap tersedia melalui filter, termasuk pilihan semua periode. SPK yang belum selesai dan saldo Press lama tetap disertakan.
+Login tidak lagi melakukan pembersihan sesi. Saat aplikasi dibuka, satu snapshot periode awal dimuat untuk seluruh menu yang diizinkan: bulan berjalan dan tujuh hari terakhir jika melintasi bulan. Setelah pemuatan awal selesai, perpindahan tab dan submenu laporan memakai data dalam memori tanpa request atau loading baru. Tabel operasional tetap menampilkan hari ini; laporan dimulai pada bulan berjalan. SPK yang belum selesai dan saldo Press lama tetap disertakan.
+
+Filter yang meminta periode di luar snapshot mengambil data periode tersebut sekali, lalu menggabungkannya tanpa menghapus data periode awal. Membuka kembali periode yang sudah diambil tidak membuat request baru. Berganti hari, refresh halaman, atau tombol Muat Ulang memperbarui data; perubahan pengguna lain tidak otomatis muncul hanya dengan berpindah tab. Penyimpanan dan penghapusan lokal tetap memperbarui state yang digunakan bersama oleh semua tab.
+
+Jika backend versi sebelumnya belum mengenali snapshot seluruh menu, frontend memakai endpoint appdata lengkap yang sudah ada. Navigasi tetap bisa memakai data awal, tetapi pembatasan riwayat memerlukan deployment backend terbaru.
 
 Respons halaman di-cache selama 60 detik, terpisah per pengguna, hak akses, halaman, dan periode. Penulisan melalui API aplikasi membatalkan cache sebelum dan sesudah operasi, termasuk ketika operasi gagal setelah sebagian perubahan. Perubahan langsung di Spreadsheet atau lewat fungsi editor dapat baru terlihat setelah cache kedaluwarsa. Respons besar dibaca langsung tanpa cache.
 

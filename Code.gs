@@ -404,31 +404,20 @@ function entriesInPeriod_(overview, start, end) {
     return entry.tanggal >= start && entry.tanggal <= end;
   });
   if (!matches.length) return [];
-  const groups = [];
-  matches.forEach(function (entry) {
-    const previous = groups[groups.length - 1];
-    if (previous && previous.end + 1 === entry.row) previous.end = entry.row;
-    else groups.push({ start: entry.row, end: entry.row });
-  });
-  // Hindari ratusan panggilan Sheets bila tanggal input tidak berurutan.
-  if (groups.length > 20) {
-    return getEntries_().filter(function (entry) {
+  // Satu pembacaan Sheets lebih ringan daripada banyak panggilan untuk tanggal yang berselang-seling.
+  const first = matches[0].row;
+  const last = matches[matches.length - 1].row;
+  return entrySheet_().getRange(first, 1, last - first + 1, APP.ENTRY_HEADERS.length)
+    .getValues().map(rowToEntry_).filter(function (entry) {
       return entry.tanggal >= start && entry.tanggal <= end;
     });
-  }
-  const sh = entrySheet_();
-  let result = [];
-  groups.forEach(function (group) {
-    result = result.concat(sh.getRange(group.start, 1, group.end - group.start + 1, APP.ENTRY_HEADERS.length)
-      .getValues().map(rowToEntry_));
-  });
-  return result;
 }
 
 function scopedAppData_(user, e) {
   const view = param_(e, "view");
+  const workspace = view === "workspace";
   const reportView = param_(e, "reportView") || "hasil";
-  if (["dashboard", "spk", "filling", "press", "apd", "laporan", "master"].indexOf(view) < 0)
+  if (["workspace", "dashboard", "spk", "filling", "press", "apd", "laporan", "master"].indexOf(view) < 0)
     throw new Error("Halaman tidak valid.");
   const today = Utilities.formatDate(new Date(), Session.getScriptTimeZone() || "Asia/Jakarta", "yyyy-MM-dd");
   const start = param_(e, "start") || today.slice(0, 7) + "-01";
@@ -438,15 +427,15 @@ function scopedAppData_(user, e) {
   if (start > end) throw new Error("Rentang tanggal tidak valid.");
   const key = JSON.stringify([user.username, user.role, user.permissions, view, reportView, start, end, today]);
   return cachedAppRead_(key, function () {
-    const dashboard = view === "dashboard" && can_(user, "accessDashboard");
-    const filling = view === "filling" && can_(user, "accessFilling");
-    const press = view === "press" && can_(user, "accessPress");
-    const spk = view === "spk" && can_(user, "accessSpk");
-    const kpi = view === "laporan" && reportView !== "spk" && (can_(user, "accessKpiReport") ||
+    const dashboard = (workspace || view === "dashboard") && can_(user, "accessDashboard");
+    const filling = (workspace || view === "filling") && can_(user, "accessFilling");
+    const press = (workspace || view === "press") && can_(user, "accessPress");
+    const spk = (workspace || view === "spk") && can_(user, "accessSpk");
+    const kpi = (workspace || (view === "laporan" && reportView !== "spk")) && (can_(user, "accessKpiReport") ||
       ["kpiFilling", "kpiPress", "kpiShift", "kpiSpv"].some(function (scope) { return canLevel_(user, scope, "read"); }));
-    const reports = view === "laporan" && reportView !== "spk" && (can_(user, "accessWorkReport") || kpi);
-    const spkReport = view === "laporan" && reportView === "spk" && canLevel_(user, "spkReport", "read");
-    const apd = (view === "apd" && can_(user, "accessApd")) || dashboard || kpi;
+    const reports = (workspace || (view === "laporan" && reportView !== "spk")) && (can_(user, "accessWorkReport") || kpi);
+    const spkReport = (workspace || (view === "laporan" && reportView === "spk")) && canLevel_(user, "spkReport", "read");
+    const apd = ((workspace || view === "apd") && can_(user, "accessApd")) || dashboard || kpi;
     const overview = dashboard || filling || press || spk || reports || spkReport ? productionOverview_() : [];
     const entries = dashboard || filling || press || reports ? entriesInPeriod_(overview, start, end) : [];
     const used = {}, counts = {};
@@ -478,14 +467,18 @@ function scopedAppData_(user, e) {
       });
     }
     const inPeriod = function (item) { return item.tanggal >= start && item.tanggal <= end; };
+    const reportEntriesSameAsEntries = reports && (dashboard || (filling && press));
     return {
-      ok: true, scoped: true, entries: entries.filter(function (entry) {
+      ok: true, scoped: true, workspace: workspace, user: workspace ? publicUser_(user) : undefined,
+      entries: entries.filter(function (entry) {
         return dashboard || (entry.tab === "filling" ? filling : entry.tab === "press" && press);
       }),
-      reportEntries: reports ? entries : [], adjustments: [], remainders: remainders, spkEntries: spkEntries,
+      reportEntries: reportEntriesSameAsEntries ? undefined : reports ? entries : [],
+      reportEntriesSameAsEntries: reportEntriesSameAsEntries,
+      adjustments: [], remainders: remainders, spkEntries: spkEntries,
       apdEntries: apd ? getApdEntries_(start, end) : [],
       downtimeEntries: filling || dashboard || kpi ? getDowntimeEntries_().filter(inPeriod) : [],
-      users: view === "master" && user.role === "superuser" ? getUsers_() : [], settings: getSettings_(),
+      users: (workspace || view === "master") && user.role === "superuser" ? getUsers_() : [], settings: getSettings_(),
     };
   });
 }
@@ -3961,6 +3954,14 @@ function ensureSpkSheet_(ss, forceSetup) {
     .map(function (value) {
       return String(value || "").trim();
     });
+  const schemaKey = "PPR_SPK_SCHEMA_V2_" + ss.getId() + "_" + sh.getSheetId();
+  const schemaProps = PropertiesService.getScriptProperties();
+  if (!forceSetup && readWidth === APP.SPK_HEADERS.length &&
+      APP.SPK_HEADERS.every(function (header, index) { return headers[index] === header; }) &&
+      schemaProps.getProperty(schemaKey) === "1") {
+    SPK_READY_SHEET_ = sh;
+    return sh;
+  }
   const isOldSchema = oldHeaders.every(function (header, index) {
     return headers[index] === header;
   });
@@ -3983,6 +3984,7 @@ function ensureSpkSheet_(ss, forceSetup) {
   removeEmptyDuplicateSpkColumns_(sh);
   styleHeader_(sh, APP.SPK_HEADERS.length);
   sh.setFrozenRows(1);
+  schemaProps.setProperty(schemaKey, "1");
   SPK_READY_SHEET_ = sh;
   return sh;
 }
