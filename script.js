@@ -1910,7 +1910,8 @@
 
   function isAppDataLoaded(params) {
     return loadedDataDay === todayStr() && loadedDataRanges.some((range) =>
-      range.start <= params.start && range.end >= params.end,
+      range.start <= params.start && range.end >= params.end &&
+      (!range.reportOnly || (params.view === "laporan" && params.reportView === "hasil")),
     );
   }
 
@@ -1952,11 +1953,12 @@
       params.end = [params.end, dashboardDateKey(new Date(today.getFullYear(), today.getMonth() + 1, 0))].sort().at(-1);
     }
     const requestId = ++appDataRequestId;
+    const reportOnly = !includeBootstrap && loadedDataDay === todayStr() && params.view === "laporan" && params.reportView === "hasil";
     appDataStatus(view, true);
     try {
       let data;
       const fetchData = () => apiGet("appdata", {
-        ...(workspaceBackendSupported ? { ...params, view: "workspace", reportView: "" } : {}),
+        ...(workspaceBackendSupported ? { ...params, view: reportOnly ? "laporan" : "workspace", reportView: reportOnly ? "hasil" : "" } : {}),
         includeBootstrap: includeBootstrap ? "1" : "0",
       });
       try {
@@ -1977,10 +1979,24 @@
       if (data.reportEntriesSameAsEntries) data.reportEntries = data.entries;
       const permissionsChanged = data.user && JSON.stringify([data.user.username, data.user.role, data.user.permissions]) !==
         JSON.stringify([state.currentUser?.username, state.currentUser?.role, state.currentUser?.permissions]);
+      if (reportOnly && data.scoped && !data.workspace && !permissionsChanged) {
+        const mergePeriod = (previous, incoming) => {
+          const ids = new Set(incoming.map((item) => item.id));
+          return previous.filter((item) => !ids.has(item.id) &&
+            (item._syncState || item.tanggal < params.start || item.tanggal > params.end),
+          ).concat(incoming);
+        };
+        state.reportEntries = mergePeriod(state.reportEntries, data.reportEntries || []);
+        state.apdEntries = mergePeriod(state.apdEntries, data.apdEntries || []);
+        loadedDataRanges.push({ start: params.start, end: params.end, reportOnly: true });
+        appDataStatus(view, false);
+        window.refreshLaporanAutoPreview?.();
+        return data;
+      }
       const reset = includeBootstrap || permissionsChanged || loadedDataDay !== todayStr();
       applyBootstrap(mergeWorkspaceData(data, params, reset));
       if (reset) loadedDataRanges = [];
-      loadedDataRanges.push(data.scoped ? { start: params.start, end: params.end } : { start: "1900-01-01", end: "2999-12-31" });
+      loadedDataRanges.push(data.scoped ? { start: params.start, end: params.end, reportOnly: reportOnly && !data.workspace } : { start: "1900-01-01", end: "2999-12-31" });
       loadedDataDay = todayStr();
       appDataStatus(view, false);
       if (

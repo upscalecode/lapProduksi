@@ -172,6 +172,32 @@ test('refresh periode mengindeks Filling sekali untuk seluruh SPK', () => {
   assert.equal(state.fillingHistory.B1.count, 150);
 });
 
+test('tanggal Hasil mengambil laporan saja dan mempertahankan data workspace', async () => {
+  const { c, state, calls } = setup();
+  await c.loadAppData(true, 'dashboard');
+  state.entries = [{ id: 'production', tanggal: '2026-11-16' }];
+  state.spkEntries = [{ batchNo: 'active' }];
+  state.reportEntries = [{ id: 'current', tanggal: '2026-11-16' }, { id: 'deleted', tanggal: '2025-01-01' }];
+  let previews = 0;
+  c.window = { refreshLaporanAutoPreview: () => previews++ };
+  c.appDataParams = view => ({ view, reportView: 'hasil', start: '2025-01-01', end: '2025-01-31' });
+  c.apiGet = async (action, params) => {
+    calls.push(params);
+    return { scoped: true, workspace: false, reportEntries: [{ id: 'history', tanggal: '2025-01-02' }], apdEntries: [], entries: [], spkEntries: [] };
+  };
+  await c.ensureAppData('laporan');
+  assert.equal(calls[1].view, 'laporan');
+  assert.equal(calls[1].reportView, 'hasil');
+  assert.deepEqual(state.entries.map(row => row.id), ['production']);
+  assert.equal(state.spkEntries[0].batchNo, 'active');
+  assert.deepEqual(Array.from(state.reportEntries, row => row.id), ['current', 'history']);
+  assert.equal(previews, 1);
+  await c.ensureAppData('laporan');
+  assert.equal(calls.length, 2);
+  assert.equal(c.isAppDataLoaded({ view: 'press', start: '2025-01-01', end: '2025-01-31' }), false);
+  assert.equal(c.isAppDataLoaded({ view: 'laporan', reportView: 'kpi', start: '2025-01-01', end: '2025-01-31' }), false);
+});
+
 test('perubahan hak akses membuang data lama dan cakupan periode lama', async () => {
   const { c, state } = setup();
   await c.loadAppData(true, 'dashboard');

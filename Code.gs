@@ -544,7 +544,7 @@ function scopedAppData_(user, e) {
     const inPeriod = function (item) { return item.tanggal >= start && item.tanggal <= end; };
     const reportEntriesSameAsEntries = reports && (dashboard || (filling && press));
     return {
-      ok: true, scoped: true, workspace: workspace, user: workspace ? publicUser_(user) : undefined,
+      ok: true, scoped: true, workspace: workspace, user: publicUser_(user),
       entries: entries.filter(function (entry) {
         return dashboard || (entry.tab === "filling" ? filling : entry.tab === "press" && press);
       }),
@@ -552,7 +552,7 @@ function scopedAppData_(user, e) {
       reportEntriesSameAsEntries: reportEntriesSameAsEntries,
       adjustments: [], remainders: remainders, spkEntries: spkEntries,
       apdEntries: apd ? getApdEntries_(start, end) : [],
-      downtimeEntries: filling || dashboard || kpi ? getDowntimeEntries_().filter(inPeriod) : [],
+      downtimeEntries: filling || dashboard || (kpi && !(view === "laporan" && reportView === "hasil")) ? getDowntimeEntries_().filter(inPeriod) : [],
       users: (workspace || view === "master") && user.role === "superuser" ? getUsers_() : [], settings: getSettings_(),
     };
   });
