@@ -587,6 +587,7 @@
     } catch (err) {
       console.warn("Gagal menyimpan preview lokal:", err);
     }
+    schedulePreviewAutosave();
   }
 
   function loadPersistedPreview() {
@@ -604,6 +605,7 @@
       state.previewDeletedEntryAudits = Array.isArray(saved.deletedEntryAudits)
         ? saved.deletedEntryAudits
         : [];
+      schedulePreviewAutosave();
     } catch (err) {
       console.warn("Preview lokal tidak dapat dibaca:", err);
     }
@@ -12276,6 +12278,34 @@
 
   let autosaveRunning = false;
   let lastAutosaveAt = Date.now();
+  let previewAutosaveTimer = null;
+  const previewAutosaveCounts = {};
+
+  function schedulePreviewAutosave() {
+    let shouldSave = false;
+    ["spk", "filling", "press", "apd"].forEach((scope) => {
+      const count = state.preview[scope]?.length || 0;
+      if (count > 20 && count > (previewAutosaveCounts[scope] || 0) && canLevel(scope, "write"))
+        shouldSave = true;
+      previewAutosaveCounts[scope] = count;
+    });
+    if (!shouldSave || previewAutosaveTimer !== null) return;
+    // Tunggu render tombol selesai; perubahan preview saat save gagal tidak memicu retry tanpa henti.
+    previewAutosaveTimer = window.setTimeout(() => {
+      previewAutosaveTimer = null;
+      if (["spk", "filling", "press", "apd"].some((scope) =>
+        state.preview[scope]?.length > 20 && canLevel(scope, "write"),
+      )) return runAutosave();
+    }, 0);
+  }
+
+  async function waitForPendingWrites() {
+    let pending;
+    do {
+      pending = writeQueue;
+      await pending;
+    } while (pending !== writeQueue);
+  }
 
   async function runAutosave() {
     if (autosaveRunning || !state.currentUser) return;
@@ -12318,7 +12348,7 @@
 
       // Tunggu SPK/Filling/APD selesai. Press bergantung pada saldo Filling
       // tersimpan sehingga tidak boleh dimulai dalam waktu yang bersamaan.
-      await writeQueue;
+      await waitForPendingWrites();
 
       const pressButton = qs("#view-press .f-save-btn");
       if (
@@ -12328,7 +12358,7 @@
         !pressButton?.disabled
       ) {
         pressButton?.click();
-        await writeQueue;
+        await waitForPendingWrites();
       }
     } catch (error) {
       console.warn(
