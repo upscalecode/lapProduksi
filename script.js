@@ -1762,11 +1762,20 @@
     if (Array.isArray(data.spkEntries)) state.spkEntries = data.spkEntries;
     if (data.scoped) {
       if (!data.mergeWorkspace) state.fillingHistory = {};
+      const loadedFilling = new Map();
+      state.entries.forEach((entry) => {
+        if (entry.tab !== "filling") return;
+        const batch = entryBatchNo(entry);
+        const totals = loadedFilling.get(batch) || { qty: 0, count: 0 };
+        totals.qty += Number(entry.totalQty) || 0;
+        totals.count++;
+        loadedFilling.set(batch, totals);
+      });
       (data.snapshotSpkEntries || state.spkEntries).forEach((spk) => {
-        const loaded = state.entries.filter((entry) => entry.tab === "filling" && entryBatchNo(entry) === spk.batchNo);
+        const loaded = loadedFilling.get(spk.batchNo) || { qty: 0, count: 0 };
         state.fillingHistory[spk.batchNo] = {
-          qty: (Number(spk.fillingUsedQty) || 0) - loaded.reduce((sum, entry) => sum + (Number(entry.totalQty) || 0), 0),
-          count: (Number(spk.fillingCount) || 0) - loaded.length,
+          qty: (Number(spk.fillingUsedQty) || 0) - loaded.qty,
+          count: (Number(spk.fillingCount) || 0) - loaded.count,
         };
       });
     } else if (Array.isArray(data.entries)) state.fillingHistory = {};
@@ -3938,9 +3947,7 @@
         saveBtn.disabled = true;
         saveBtn.textContent = `Menyimpan ${previewRows.length} data...`;
 
-        // FAST SAVE: seluruh preview dikirim dalam SATU request.
-        // Backend membaca Pengerjaan sekali, menulis setValues sekali,
-        // lalu menghitung Sisa Press sekali untuk seluruh batch.
+        // Batasi ukuran request agar preview besar tidak melewati batas backend.
         const batchPayload = previewRows.map((item) => ({
           line: item.tab,
           batchNo: entryBatchNo(item),
@@ -3961,23 +3968,28 @@
         }));
 
         try {
-          const response = await enqueueWrite(() =>
-            apiPost("entry.batchCreate", {
-              data: batchPayload,
-            }),
-          );
+          const savedIds = new Set();
+          for (let offset = 0; offset < batchPayload.length; offset += 100) {
+            saveBtn.textContent = `Menyimpan ${offset + 1}-${Math.min(offset + 100, batchPayload.length)} dari ${batchPayload.length} data...`;
+            const response = await enqueueWrite(() =>
+              apiPost("entry.batchCreate", {
+                data: batchPayload.slice(offset, offset + 100),
+              }),
+            );
+            const confirmedIds = new Set(
+              Array.isArray(response.savedIds) ? response.savedIds : [],
+            );
+            confirmedIds.forEach((id) => savedIds.add(id));
+            (response.entries || []).forEach(upsertEntry);
+            if (Array.isArray(response.remainders))
+              state.remainders = response.remainders;
 
-          const savedIds = new Set(
-            Array.isArray(response.savedIds) ? response.savedIds : [],
-          );
-          (response.entries || []).forEach(upsertEntry);
-          if (Array.isArray(response.remainders))
-            state.remainders = response.remainders;
-
-          // Hapus dari preview hanya ID yang sudah dikonfirmasi server.
-          state.preview[line] = (state.preview[line] || []).filter(
-            (item) => !savedIds.has(item.id),
-          );
+            // Simpan kemajuan setiap batch agar aman jika request berikutnya gagal.
+            state.preview[line] = (state.preview[line] || []).filter(
+              (item) => !confirmedIds.has(item.id),
+            );
+            persistPreview();
+          }
           state.pages[line] = 1;
           persistPreview();
           renderPreview(line);
@@ -3996,12 +4008,13 @@
             );
           }
         } catch (err) {
-          // Batch bersifat aman: jika server menolak sebelum write, seluruh preview tetap ada.
+          // Batch yang gagal tetap di preview; batch sebelumnya sudah dikonfirmasi.
           // Jika koneksi putus sesudah server menulis, clientRequestId membuat retry tidak duplikat.
           state.pages[line] = 1;
           persistPreview();
           renderPreview(line);
           renderPressBalance();
+          renderEntries(line);
           toast(`Gagal menyimpan: ${err.message}`, true);
         }
       });
@@ -11334,6 +11347,9 @@
         const value = Number(item.percentage);
         if (Number.isFinite(value)) apdByOperatorDate.get(key).push(value);
       });
+      apdByOperatorDate.forEach((values, key) => {
+        apdByOperatorDate.set(key, averageKpiValues(values));
+      });
 
       rows = rows.map((entry) => {
         const isFilling = entry.tab === "filling";
@@ -11345,7 +11361,6 @@
           : KPI_VARIANT_DAILY_TARGETS.press;
 
         const apdKey = `${kpiOperatorKey(entry.operator)}||${String(entry.tanggal || "").trim()}`;
-        const apdValues = apdByOperatorDate.get(apdKey) || [];
 
         return {
           ...entry,
@@ -11356,7 +11371,7 @@
           _kpiBroken: !isFilling
             ? kpiVariantDefectPercent(qtyBroken, totalQty)
             : null,
-          _kpiApd: averageKpiValues(apdValues),
+          _kpiApd: apdByOperatorDate.get(apdKey) ?? null,
         };
       });
 

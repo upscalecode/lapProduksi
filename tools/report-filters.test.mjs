@@ -4,6 +4,33 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 
 const source = fs.readFileSync(new URL('../script.js', import.meta.url), 'utf8');
+test('filter tanggal menghitung rata-rata APD sekali per operator/tanggal untuk ribuan baris', () => {
+  let averages = 0;
+  const period = { start: '2026-11-16', end: '2026-11-16' };
+  const state = {
+    reportEntries: Array.from({ length: 2000 }, (_, i) => ({
+      tanggal: i < 1500 ? '2026-11-16' : '2026-11-15', tab: 'press',
+      operator: 'A', totalQty: 10, qtyBotolPecah: 1,
+    })),
+    apdEntries: [80, 100].map(percentage => ({ operator: 'A', tanggal: '2026-11-16', percentage })),
+  };
+  const c = vm.createContext({
+    state, el: () => null, kpiReportPeriodFromInputs: () => period,
+    dashboardDateInPeriod: (date, p) => date >= p.start && date <= p.end,
+    updateUniqueLaporanFilter() {}, matchesLaporanSearch: () => true,
+    kpiOperatorKey: String, KPI_VARIANT_DAILY_TARGETS: { filling: 7500, press: 3500 },
+    kpiVariantDefectPercent: (broken, total) => broken / total * 100,
+    averageKpiValues: values => { averages++; return values.reduce((a, b) => a + b, 0) / values.length; },
+  });
+  vm.runInContext(source.slice(source.indexOf('    function collectLaporanData('), source.indexOf('    function setReportExportState(')), c);
+  const result = c.collectLaporanData();
+  assert.equal(result.rows.length, 1500);
+  assert.ok(result.rows.every(row => row._kpiApd === 90));
+  assert.equal(averages, 1);
+  state.apdEntries = [];
+  assert.ok(c.collectLaporanData().rows.every(row => row._kpiApd === null));
+});
+
 function setup(line = 'all') {
   const header = { innerHTML: '' }, summary = {};
   const table = { dataset: { laporanFilterLine: line }, __excelFilterState: { filters: new Map(), sort: null }, querySelector: () => header };

@@ -44,6 +44,7 @@ function setup() {
   c.getPressRemainders_ = overview => c.decoratePressRemainders_([
     { id: 'old', tanggalAsal: '2026-10-01', sisaQty: 80 },
   ], overview, []);
+  c.getProductionSummary_ = () => c.buildProductionSummary_();
   const user = { username: 'admin', role: 'superuser', permissions: c.defaultPermissions_('superuser') };
   const request = (view, extra = {}) => c.scopedAppData_(user, { parameter: { view, start: '2026-11-16', end: '2026-11-16', ...extra } });
   return { c, values, cache, reads, entries, user, request };
@@ -59,6 +60,22 @@ test('Filling hanya mengirim hari pilihan, tetap menghitung Filling lama dan sal
   assert.equal(data.remainders[0].batchNo, '01-01102026');
   assert.equal(data.remainders[0].qtyBotolPerKardus, 10);
   assert.equal(reads.some(r => r.r === 2 && r.n === 3 && r.width === 19), false);
+});
+
+test('snapshot dari ringkasan tidak membaca riwayat lengkap atau SPK sumber', () => {
+  const { c, request, reads } = setup();
+  const summary = c.buildProductionSummary_();
+  reads.length = 0;
+  c.getProductionSummary_ = () => summary;
+  c.productionOverview_ = () => { throw Error('Riwayat lengkap tidak boleh dibaca'); };
+  c.getSpkEntries_ = () => { throw Error('SPK sumber tidak boleh dibaca'); };
+  c.getPressRemainders_ = () => { throw Error('Saldo sumber tidak boleh dibaca'); };
+  const data = request('workspace');
+  assert.equal(data.spkEntries.find(s => s.batchNo === '01-01102026').fillingUsedQty, 80);
+  assert.deepEqual(Array.from(data.entries, e => e.id), ['new', 'press']);
+  assert.equal(reads.length, 1);
+  assert.equal(reads[0].r, 3);
+  assert.equal(reads[0].n, 2);
 });
 
 test('laporan historis diambil sesuai periode dan setting tidak membaca produksi', () => {

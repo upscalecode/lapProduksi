@@ -154,6 +154,24 @@ test('mengambil riwayat tidak mengubah sisa kapasitas SPK yang sudah diedit loka
   assert.equal(c.spkFillingUsedQty('B'), 50);
 });
 
+test('refresh periode mengindeks Filling sekali untuk seluruh SPK', () => {
+  const { c, state } = setup();
+  let batchReads = 0;
+  state.entries = Array.from({ length: 2000 }, (_, i) => ({ tab: i % 2 ? 'press' : 'filling', batchNo: `B${i % 20}`, totalQty: 2 }));
+  state.spkEntries = Array.from({ length: 1000 }, (_, i) => ({ batchNo: `B${i}`, fillingUsedQty: 300, fillingCount: 150 }));
+  c.entryBatchNo = entry => { batchReads++; return entry.batchNo; };
+  c.el = () => null;
+  c.window = {};
+  for (const name of ['refreshAllDropdowns', 'loadPersistedPreview', 'restoreFormDraft', 'renderPreview', 'renderApdPreview', 'renderApdSavedToday', 'renderEntries', 'renderPressBalance', 'renderSpkToday', 'renderFillingSpkQueue', 'renderFillingDowntimeValidation', 'renderSpkReport', 'renderMasterChips', 'renderUsers', 'renderKpiPressSetting', 'renderKpiFillingSetting', 'renderUserHeader', 'applyAccessControl', 'maybeOpenFillingDowntimeModal', 'renderDashboard']) c[name] = () => {};
+  vm.runInContext(source.slice(source.indexOf('  function applyBootstrap('), source.indexOf('  function refreshKpiAfterApdChange(')), c);
+  c.applyBootstrap({ scoped: true });
+  assert.equal(batchReads, 1000);
+  assert.equal(state.fillingHistory.B0.qty, 100);
+  assert.equal(state.fillingHistory.B0.count, 50);
+  assert.equal(state.fillingHistory.B1.qty, 300);
+  assert.equal(state.fillingHistory.B1.count, 150);
+});
+
 test('perubahan hak akses membuang data lama dan cakupan periode lama', async () => {
   const { c, state } = setup();
   await c.loadAppData(true, 'dashboard');

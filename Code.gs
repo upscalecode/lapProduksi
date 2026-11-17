@@ -404,14 +404,84 @@ function productionOverview_() {
   }).filter(function (entry) { return entry.id; });
 }
 
+function buildProductionSummary_() {
+  const overview = productionOverview_();
+  const dates = Object.create(null), batches = Object.create(null);
+  overview.forEach(function (entry) {
+    const date = dates[entry.tanggal];
+    if (date) date.endRow = entry.row;
+    else dates[entry.tanggal] = { tanggal: entry.tanggal, row: entry.row, endRow: entry.row };
+    if (entry.tab !== "filling") return;
+    const batch = reportBatchNo_(entry.reportId);
+    if (!batches[batch]) batches[batch] = { qty: 0, count: 0 };
+    batches[batch].qty += number_(entry.totalQty);
+    batches[batch].count++;
+  });
+  return { dates: Object.keys(dates).map(function (key) { return dates[key]; }),
+    batches: batches, spkEntries: getSpkEntries_(), remainders: getPressRemainders_(overview, []) };
+}
+
+function writeProductionSummary_() {
+  // shortcut: bangun ulang setelah transaksi; gunakan delta per batch jika waktu simpan menjadi berat.
+  const data = buildProductionSummary_();
+  const rows = [[JSON.stringify({ type: "version", value: 1 })]];
+  ["dates", "spkEntries", "remainders"].forEach(function (type) {
+    data[type].forEach(function (value) { rows.push([JSON.stringify({ type: type, value: value })]); });
+  });
+  Object.keys(data.batches).forEach(function (batch) {
+    rows.push([JSON.stringify({ type: "batch", key: batch, value: data.batches[batch] })]);
+  });
+  const sh = ensureSheet_(spreadsheet_(), "Ringkasan Produksi", ["Data JSON v1"]);
+  if (sh.getMaxRows() < rows.length + 1) sh.insertRowsAfter(sh.getMaxRows(), rows.length + 1 - sh.getMaxRows());
+  const previous = sh.getLastRow();
+  sh.getRange(2, 1, rows.length, 1).setValues(rows);
+  if (previous > rows.length + 1) sh.getRange(rows.length + 2, 1, previous - rows.length - 1, 1).clearContent();
+  SpreadsheetApp.flush();
+  PropertiesService.getScriptProperties().setProperty("PPR_SUMMARY_DIRTY", "0");
+  return data;
+}
+
+function getProductionSummary_() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(APP.WRITE_LOCK_MS)) throw new Error("Data sedang diperbarui. Silakan coba lagi.");
+  try {
+    const sh = spreadsheet_().getSheetByName("Ringkasan Produksi");
+    if (PropertiesService.getScriptProperties().getProperty("PPR_SUMMARY_DIRTY") !== "0" || !sh || sh.getLastRow() < 2)
+      return writeProductionSummary_();
+    const data = { dates: [], batches: Object.create(null), spkEntries: [], remainders: [] };
+    const rows = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
+    try {
+      const version = JSON.parse(rows[0][0]);
+      if (version.type !== "version" || version.value !== 1) throw new Error("Versi ringkasan tidak valid.");
+      rows.slice(1).forEach(function (row) {
+        const item = JSON.parse(row[0]);
+        if (item.type === "batch") data.batches[item.key] = item.value;
+        else if (["dates", "spkEntries", "remainders"].indexOf(item.type) >= 0) data[item.type].push(item.value);
+        else throw new Error("Ringkasan tidak valid.");
+      });
+    } catch (_) { return writeProductionSummary_(); }
+    return data;
+  } finally { lock.releaseLock(); }
+}
+
+// Jalankan setelah perubahan langsung di Sheets; transaksi aplikasi memperbarui otomatis.
+function rebuildProductionSummary() {
+  return withWriteLock_(function () {
+    PropertiesService.getScriptProperties().setProperty("PPR_SUMMARY_DIRTY", "1");
+    const data = writeProductionSummary_();
+    invalidateAppData_();
+    return { dates: data.dates.length, batches: Object.keys(data.batches).length };
+  });
+}
+
 function entriesInPeriod_(overview, start, end) {
   const matches = overview.filter(function (entry) {
     return entry.tanggal >= start && entry.tanggal <= end;
   });
   if (!matches.length) return [];
   // Satu pembacaan Sheets lebih ringan daripada banyak panggilan untuk tanggal yang berselang-seling.
-  const first = matches[0].row;
-  const last = matches[matches.length - 1].row;
+  const first = Math.min.apply(null, matches.map(function (entry) { return entry.row; }));
+  const last = Math.max.apply(null, matches.map(function (entry) { return entry.endRow || entry.row; }));
   return entrySheet_().getRange(first, 1, last - first + 1, APP.ENTRY_HEADERS.length)
     .getValues().map(rowToEntry_).filter(function (entry) {
       return entry.tanggal >= start && entry.tanggal <= end;
@@ -441,16 +511,16 @@ function scopedAppData_(user, e) {
     const reports = (workspace || (view === "laporan" && reportView !== "spk")) && (can_(user, "accessWorkReport") || kpi);
     const spkReport = (workspace || (view === "laporan" && reportView === "spk")) && canLevel_(user, "spkReport", "read");
     const apd = ((workspace || view === "apd") && can_(user, "accessApd")) || dashboard || kpi;
-    const overview = dashboard || filling || press || spk || reports || spkReport ? productionOverview_() : [];
+    const summary = dashboard || filling || press || spk || reports || spkReport
+      ? getProductionSummary_() : { dates: [], batches: {}, spkEntries: [], remainders: [] };
+    const overview = summary.dates;
     const entries = dashboard || filling || press || reports ? entriesInPeriod_(overview, start, end) : [];
     const used = {}, counts = {};
-    overview.forEach(function (entry) {
-      if (entry.tab !== "filling") return;
-      const batch = reportBatchNo_(entry.reportId);
-      used[batch] = number_(used[batch]) + entry.totalQty;
-      counts[batch] = number_(counts[batch]) + 1;
+    Object.keys(summary.batches).forEach(function (batch) {
+      used[batch] = summary.batches[batch].qty;
+      counts[batch] = summary.batches[batch].count;
     });
-    const allSpk = dashboard || filling || press || spk || spkReport ? getSpkEntries_() : [];
+    const allSpk = dashboard || filling || press || spk || spkReport ? summary.spkEntries : [];
     const spkEntries = allSpk.map(function (item) {
       return Object.assign({}, item, { fillingUsedQty: number_(used[item.batchNo]), fillingCount: number_(counts[item.batchNo]) });
     }).filter(function (item) {
@@ -458,7 +528,7 @@ function scopedAppData_(user, e) {
         ((dashboard || filling || press) && !item.fillingClosedAt && (number_(item.qty) > 0 ? item.fillingUsedQty < number_(item.qty) : !item.fillingCount));
     });
     const remainders = (press || filling || dashboard) && can_(user, "accessPress")
-      ? getPressRemainders_(overview, []) : [];
+      ? summary.remainders : [];
     // Batch asal saldo tetap disertakan meskipun SPK-nya dibuat sebelum periode pilihan.
     if (remainders.length) {
       const known = {};
@@ -502,6 +572,7 @@ function doPost(e) {
 
     const session = requireSession_(param_(e, "token"));
     INVALIDATE_APP_DATA_ = true;
+    REFRESH_PRODUCTION_SUMMARY_ = /^(entry\.|spk\.|press\.adjustment\.|filling\.closeBatch$|maintenance\.inputData\.clear$)/.test(action);
 
     switch (action) {
       case "entry.create":
@@ -791,6 +862,7 @@ function doPost(e) {
 }
 
 let INVALIDATE_APP_DATA_ = false;
+let REFRESH_PRODUCTION_SUMMARY_ = false;
 
 function invalidateAppData_() {
   PropertiesService.getScriptProperties().setProperty("PPR_DATA_REVISION", Utilities.getUuid());
@@ -805,9 +877,14 @@ function withWriteLock_(fn) {
   }
   try {
     if (INVALIDATE_APP_DATA_) invalidateAppData_();
+    if (REFRESH_PRODUCTION_SUMMARY_) PropertiesService.getScriptProperties().setProperty("PPR_SUMMARY_DIRTY", "1");
     return fn();
   } finally {
     try {
+      if (REFRESH_PRODUCTION_SUMMARY_) {
+        // Simpan sukses tetap sukses jika ringkasan gagal; pembacaan berikutnya memperbaikinya.
+        try { writeProductionSummary_(); } catch (err) { console.error("Ringkasan produksi: " + err.message); }
+      }
       if (INVALIDATE_APP_DATA_) invalidateAppData_();
     } finally {
       lock.releaseLock();
